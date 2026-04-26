@@ -192,7 +192,7 @@ jobs:
       - name: 💾 Restore go-coverage binary cache (production)
         id: go-coverage-cache
         if: env.GO_COVERAGE_USE_LOCAL != 'true'
-        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: |
             ~/.cache/go-coverage-bin
@@ -203,7 +203,7 @@ jobs:
       - name: 💾 Restore go-coverage binary cache (local)
         id: go-coverage-local-cache
         if: env.GO_COVERAGE_USE_LOCAL == 'true'
-        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: |
             ~/.cache/go-coverage-local
@@ -2484,7 +2484,7 @@ jobs:
       # Upload to Codecov
       # --------------------------------------------------------------------
       - name: 📈 Upload coverage to Codecov
-        uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de # v5.5.2
+        uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2 # v6.0.0
         with:
           #file: ./coverage.txt # This is the old format
           files: ./coverage-artifacts/coverage-data/coverage.txt
