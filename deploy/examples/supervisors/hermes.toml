@@ -1,0 +1,41 @@
+[supervisor]
+name = "hermes"
+server = "http://100.90.223.110:7743"
+reason = "Hermes gateway (daemon)"
+scope = [
+  "ANTHROPIC_API_KEY",
+  "OPENAI_API_KEY",
+  "GEMINI_API_KEY",
+]
+
+[supervisor.child]
+argv = ["hermes", "gateway", "start"]
+auth_failure_exit_code = 78
+
+[supervisor.session]
+type = "supervisor"
+refresh_window_start = "09:00"
+refresh_window_end = "10:00"
+refresh_window_tz = "America/New_York"
+max_ttl = "20h"
+
+[supervisor.grace]
+cache_secrets_for_restart = true
+window = "60m"
+
+[supervisor.validators]
+ANTHROPIC_API_KEY = "anthropic"
+OPENAI_API_KEY = "openai"
+GEMINI_API_KEY = "google-ai"
+
+[supervisor.status_socket]
+path = "~/Library/Caches/hush/supervise-hermes.sock"
+
+[supervisor.log_patterns]
+auth_failure = [
+  "401 Unauthorized",
+  "invalid x-api-key",
+]
+
+[supervisor.bootstrap]
+boot_retry_timeout = "10m"

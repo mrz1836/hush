@@ -1,0 +1,31 @@
+# Ignore test private keys and addresses in test files
+# Format: file:rule:line
+
+# Agent tests
+internal/agent/agent_test.go:generic-api-key:49
+
+# Cache tests
+internal/cache/file_test.go:generic-api-key:166
+
+# Crypto tests
+internal/chain/eth/crypto/crypto_test.go:generic-api-key:58
+internal/chain/eth/crypto/crypto_test.go:generic-api-key:80
+internal/chain/eth/crypto/crypto_test.go:generic-api-key:96
+internal/chain/eth/crypto/crypto_test.go:generic-api-key:215
+internal/chain/eth/crypto/crypto_test.go:generic-api-key:263
+internal/chain/eth/crypto/crypto_test.go:generic-api-key:512
+
+# CLI tests
+internal/cli/balance_test.go:generic-api-key:379
+internal/cli/config_test.go:generic-api-key:527
+internal/cli/config_test.go:generic-api-key:594
+internal/cli/wallet_restore_test.go:generic-api-key:209
+internal/cli/wallet_test.go:generic-api-key:603
+
+# Config tests
+internal/config/env_test.go:generic-api-key:269
+internal/config/env_test.go:generic-api-key:278
+
+# BSV tests
+internal/chain/bsv/tx_test_helpers_test.go:generic-api-key:161
+internal/chain/bsv/tx_test_helpers_test.go:generic-api-key:197
