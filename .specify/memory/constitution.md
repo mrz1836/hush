@@ -10,9 +10,16 @@ Templates Requiring Updates:
   - ✅ docs/MVP.md (created in alignment)
   - ✅ docs/SECURITY.md (created in alignment)
   - ✅ docs/ARCHITECTURE.md (created in alignment)
+  - ✅ docs/API.md (aligned)
+  - ✅ docs/OPERATIONS.md (aligned)
+  - ✅ docs/CONFIG-SCHEMA.md (aligned)
+  - ✅ docs/PACKAGE-MAP.md (aligned)
+  - ✅ docs/LIFECYCLE-SCENARIOS.md (aligned)
+  - ✅ docs/IMPLEMENTATION-PLAN.md (aligned)
+  - ✅ docs/TESTING-STRATEGY.md (aligned)
   - ✅ docs/SDD-GUIDE.md (created in alignment)
-  - ✅ docs/TASKS.yaml (seeded from approved plan)
-Follow-up TODOs: None
+Follow-up TODOs:
+  - Create in-repo `tasks.yaml` when implementation execution starts
 -->
 
 # hush Constitution

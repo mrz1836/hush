@@ -12,7 +12,7 @@ Every implementation phase must keep these aligned:
 
 - approved todo
 - approved plan
-- tasks.yaml progress
+- execution progress tracker (create `tasks.yaml` when implementation starts)
 - constitution
 - architecture docs
 - code layout on disk
@@ -40,4 +40,5 @@ Phase 0 is done when:
 2. lock mission and constitution
 3. lock architecture and daemon model
 4. build phase-by-phase from the approved plan
-5. verify each security property with tests, not vibes
+5. create and maintain `tasks.yaml` once implementation execution starts
+6. verify each security property with tests, not vibes

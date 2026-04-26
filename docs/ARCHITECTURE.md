@@ -1,67 +1,320 @@
-# Architecture
+# ARCHITECTURE — hush
 
-## Overview
+> Component model, trust boundaries, data flow, and lifecycle for hush v0.1.0.
+> This document explains *how* the system is shaped. The *why* lives in
+> `docs/SECURITY.md`. The *what ships* lives in `docs/SPEC.md`.
 
-hush is a private, Tailscale-only secrets broker for AI agents.
+---
 
-It separates:
+## 1. One-paragraph overview
 
-1. **Secret custody** — encrypted vault on a single host
-2. **Approval** — Discord DM approval by Z on phone
-3. **Delivery** — short-lived session + scoped fetch over Tailscale
-4. **Consumption** — env injection into processes only
-5. **Lifecycle** — supervisor model for daemons, wrapped shell for humans
+hush is a Tailscale-only secrets broker. An encrypted vault file lives on a
+single trusted host. Agents request short-lived, scoped sessions over the
+Tailscale mesh; each request is approved by Z via Discord DM on his phone.
+Approved sessions yield ES256K-signed JWTs that are IP-bound and use-limited.
+Secret values are returned ECIES-encrypted to a per-session ephemeral key, then
+injected into the requesting process's environment. Long-running daemons use
+`hush supervise`, which holds session continuity across child restarts within
+a bounded TTL so a single approval covers a working day.
 
-## Primary modes
+---
 
-### Interactive mode
-`hush request --exec "zsh"`
+## 2. Trust boundaries
 
-This creates a human-approved session that injects secrets into a shell.
-The shell persists across tool restarts.
+| Zone | Trust | Notes |
+|------|-------|-------|
+| **Z (the human)** | Fully trusted | Approves via Discord on a 2FA-locked phone. |
+| **Discord** | Trusted as a delivery channel | Bot token is high-sensitivity; disconnects raise alerts. Discord is NOT a security boundary — it is the human's UI. |
+| **Tailscale mesh** | Trusted as transport | WireGuard-encrypted; ACL-restricted. |
+| **Vault host process** | Semi-trusted | Holds decrypted secrets in mlocked memory. Host root compromise does not enable issuing new sessions without Discord approval. |
+| **Agent machine processes** | Untrusted | Anything running as $USER may scan disk and process state. hush ensures there is nothing on disk to scan. |
+| **Public internet** | Hostile | The vault server MUST NOT be reachable here. |
 
-### Supervisor mode
-`hush supervise --config ~/.hush/supervisors/<name>.toml`
+**Trust transitions** are explicit: a request crosses from "agent process →
+Tailscale → vault server → Discord → Z's phone → Discord → vault server →
+agent process." Every hop has a verification step (signature, IP allowlist,
+JWT validation, ECIES decryption, button click). No hop trusts the previous
+without re-verifying.
 
-This decouples daemon restarts from repeated Discord prompts.
-The supervisor owns session continuity. The child does not.
+---
 
-## Architectural layers
+## 3. Top-level diagram
 
-### Vault layer
-- Argon2id key derivation
-- AES-256-GCM encrypted vault file
-- mlocked sensitive memory
+```
+                           TAILSCALE MESH
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │                                                                     │
+  │  ┌──────────────────────────┐     ┌───────────────────────────────┐ │
+  │  │  ANY AGENT MACHINE       │     │  VAULT HOST                   │ │
+  │  │  (untrusted, clean disk) │     │  (process-isolated)           │ │
+  │  │                          │     │                               │ │
+  │  │  hush request / supervise│     │  hush serve                   │ │
+  │  │  ┌─────────────────┐     │     │  ┌─────────────────────────┐  │ │
+  │  │  │ ECDSA-sign req  │──────────►│  │ verify client signature │  │ │
+  │  │  │ + ephemeral pubK│     │     │  │ check IP allowlist      │  │ │
+  │  │  └─────────────────┘     │     │  └──────────┬──────────────┘  │ │
+  │  │                          │     │             │                 │ │
+  │  │  blocks, waiting         │     │  Discord DM ──────► phone     │ │
+  │  │                          │     │  [Approve][Deny]              │ │
+  │  │                          │     │             │                 │ │
+  │  │  JWT (ES256K signed)     │     │  issue JWT ◄── approved       │ │
+  │  │  ◄──────────────────────────── │                               │ │
+  │  │                          │     │                               │ │
+  │  │  GET /secrets/{name}     │     │  validate JWT                 │ │
+  │  │  (JWT in header) ─────────────►│  check scope, IP, uses        │ │
+  │  │                          │     │  ECIES-encrypt with client    │ │
+  │  │  ECIES ciphertext        │     │  ephemeral pubkey             │ │
+  │  │  ◄──────────────────────────── │                               │ │
+  │  │  decrypt → env var       │     │  [mlocked memory, no swap]    │ │
+  │  │                          │     │  [no key files on disk]       │ │
+  │  └──────────────────────────┘     └───────────────────────────────┘ │
+  │                                                                     │
+  └─────────────────────────────────────────────────────────────────────┘
+```
 
-### Identity and session layer
-- BIP32 key hierarchy
-- ES256K JWT signing
-- ECDSA client request signing
-- IP-bound, scoped, short-lived sessions
+---
 
-### Transport layer
-- Tailscale network boundary
-- ECIES-encrypted secret responses
-- nonce + timestamp replay protection
+## 4. Components
 
-### Control plane
-- Discord approval bot
-- audit chain
-- token revocation
-- health/status visibility
+| Component | Binary surface | Responsibility |
+|-----------|----------------|----------------|
+| **Vault server** (`hush serve`) | `internal/server` | HTTP server on Tailscale; mlocked secret storage; JWT issue + validate; SIGHUP atomic reload; Discord-bot integration. |
+| **Vault file** | `internal/vault` | AES-256-GCM + Argon2id encrypted JSON of secrets. `HUSH` magic, version byte, salt, GCM nonce, ciphertext+tag. |
+| **Key hierarchy** | `internal/keys` | BIP32 derivation from passphrase. **No key files on disk.** |
+| **JWT/session** | `internal/token` | ES256K signing/verification, multi-use tracking, IP binding, cleanup goroutine, revocation table. |
+| **Transport crypto** | `internal/transport` | ECIES encrypt/decrypt for secret responses; ECDSA request signing; nonce + timestamp replay protection. |
+| **Discord bot** | `internal/discord` | `Approver` interface, DM dispatch, button handling, audit channel posting, disconnect monitoring. |
+| **Vault client** (`hush request`) | `internal/cli/request.go` | ECDSA-sign request; ephemeral keypair; ECIES-decrypt secrets; env-inject into child via `--exec`. |
+| **Supervisor** (`hush supervise`) | `internal/supervise` | Daemon-mode state machine; child lifecycle; validators; status socket; refresh scheduler; log-pattern watchdog. |
+| **Status client** (`hush client`) | `internal/cli/client_status.go` | Talks to local supervisor socket. |
+| **Management CLI** (`hush secret`, `init`, `revoke`, `health`, `version`) | `internal/cli` | Vault management; client/server bootstrap; ad-hoc operations. |
+| **Audit log** | `internal/discord/audit.go` + server hooks | Hash-chained, ECDSA-signed `~/.hush/audit.jsonl`; mirrored to optional Discord channel. |
 
-### Runtime lifecycle layer
-- supervisor state machine
-- validator-based stale credential detection
-- Unix status socket for agent visibility
-- graceful child restart path
+See `docs/PACKAGE-MAP.md` for file-level responsibilities.
 
-## Phase 0 architecture goals
+---
 
-Before deeper implementation, the architecture must already make these truths obvious:
+## 5. Architectural layers
 
-- the vault server is never public
-- approval is always human
-- secrets never persist on agent disks
-- daemon lifecycle uses `supervise`, not naive `request --exec`
-- staleness is surfaced proactively, not discovered by accident later
+### 5.1 Vault layer
+Argon2id-derived master seed → BIP32 derivation → AES-256-GCM-encrypted vault
+file. mlocked memory; explicit zeroing; `[]byte`-only secret handling. Atomic
+write + SIGHUP atomic swap via `atomic.Pointer[Vault]`.
+
+### 5.2 Identity + session layer
+- BIP32 HD key tree (`m/44'/7743'/...`)
+- ES256K JWT signing (server-side; private key only in memory)
+- ECDSA client request signing (per-machine registered key)
+- IP-bound, scope-limited, TTL-bound sessions (interactive: + max_uses)
+
+### 5.3 Transport layer
+- Tailscale mesh as the network perimeter
+- ECIES end-to-end encryption of secret responses
+- nonce + timestamp replay protection (60s nonce window, ±30s timestamp)
+- Request body capped at 64KB via `http.MaxBytesReader`
+
+### 5.4 Control plane
+- Discord approval bot (interactive buttons)
+- Hash-chained ECDSA-signed audit log
+- Token revocation endpoint
+- Health endpoint and Discord disconnect monitoring
+
+### 5.5 Runtime lifecycle layer
+- `hush supervise` state machine with PID + flock split-brain protection
+- Pluggable validators run on the supervisor (NEVER the vault server)
+- Local Unix status socket for agent-visible freshness
+- Refresh window scheduler anchored to waking hours
+- Optional grace-window cache (mlocked) for restart resilience
+
+---
+
+## 6. Primary modes
+
+### 6.1 Interactive mode — wrap the shell, not the app
+
+```bash
+hush request \
+  --server http://100.90.223.110:7743 \
+  --scope "ANTHROPIC_API_KEY,GITHUB_TOKEN" \
+  --reason "Morning dev session" \
+  --ttl 8h \
+  --exec "zsh"
+```
+
+One Discord approval covers the working day. Tools inside the shell inherit
+env vars. Tool crashes (Claude, gh, git) do NOT require re-approval — the
+shell persists.
+
+### 6.2 Supervisor mode — one approval covers the daemon's life
+
+```bash
+hush supervise --config ~/.hush/supervisors/openclaw.toml
+hush supervise --config ~/.hush/supervisors/hermes.toml
+```
+
+The supervisor owns auth state and refresh timing. Children that crash or are
+auto-updated restart silently within the session TTL. A single
+`[DAEMON]`-labeled Discord approval covers them all.
+
+### 6.3 One-shot batch — env injection into a single process tree
+
+```bash
+hush request --scope "ANTHROPIC_API_KEY" --reason "Overnight batch" --ttl 8h \
+  --exec "./run-batch.sh"
+```
+
+Or, with explicit opt-in to the less safe stdout-eval form:
+
+```bash
+eval $(hush request --scope ... --reason ... --format eval)
+```
+
+`--format eval` MUST be explicit and emits a stderr warning.
+
+---
+
+## 7. Data flow — interactive request
+
+1. Agent runs `hush request --scope X --reason Y --ttl 8h --exec ...`
+2. Client generates an **ephemeral secp256k1 keypair** for this session.
+3. Client builds a canonical-JSON payload (alphabetical keys, compact form),
+   SHA-256 hashes it, ECDSA-signs with its registered client key, and POSTs
+   to `/h/{prefix}/claim`.
+4. Server verifies: signature ↔ registered key, IP ↔ allowlist, nonce
+   uniqueness within 60s, timestamp within ±30s.
+5. Server sends Discord DM to Z with machine name, scope, reason, requested
+   TTL, and approval buttons.
+6. Z taps `Approve <ttl>` (or `Deny`).
+7. Server issues an ES256K-signed JWT with the approved scope, IP binding,
+   `max_uses`, ephemeral pubkey claim, and `session_type="interactive"`.
+8. Client receives the JWT and fetches each secret via
+   `GET /h/{prefix}/s/{name}` with `Authorization: Bearer <jwt>`.
+9. Server ECIES-encrypts each value with the client's ephemeral pubkey and
+   returns the raw ciphertext (`Content-Type: application/octet-stream`).
+10. Client decrypts each response with the ephemeral private key and injects
+    plaintext into the child via `os/exec` env.
+11. Ephemeral private key is zeroed; `--exec` child runs with secrets in env.
+12. Token expires after TTL or use-count exhaustion.
+
+---
+
+## 8. Data flow — supervisor lifecycle
+
+### 8.1 State machine
+
+```
+      ┌─────────────┐         Discord approved
+      │  fetching   │ ────────────────────────────┐
+      │  (startup)  │                             │
+      └──────┬──────┘                             │
+             │ approved                           │
+             ▼                                    │
+      ┌─────────────┐    child exits (clean)      │
+      │   running   │ ──────────────┐             │
+      │             │               │             │
+      └──────┬──────┘    ┌──────────▼──────────┐  │
+             ▲           │ silent refill       │  │
+             │           │ (cached JWT, TTL OK)│  │
+             │           └──────────┬──────────┘  │
+             └──────────────────────┘             │
+             │                                    │
+             │  child exit 78 (EX_CONFIG)         │
+             │  OR TTL expired                    │
+             │  OR vault returned 401-unknown-jti │
+             ▼                                    │
+      ┌──────────────────┐                        │
+      │ awaiting-approval│ ───────────────────────┘
+      │                  │
+      └──────────────────┘
+```
+
+### 8.2 First boot
+
+1. launchd starts `openclaw-hush-launch.sh` and `hermes-hush-launch.sh`.
+2. Each script `exec`s `hush supervise --config <path>`.
+3. Each supervisor POSTs `/claim` with `session_type=supervisor` →
+   server → Discord DM labeled `[DAEMON]`.
+4. Z taps Approve on each → JWTs issued.
+5. Supervisor runs validators, fetches secrets, forks child with env injected.
+6. Plaintext secrets zeroed from supervisor memory (unless grace cache enabled).
+
+### 8.3 Child exit within TTL
+
+1. `wait()` returns; supervisor checks state machine + remaining TTL + scope.
+2. Supervisor SILENTLY refetches each secret with the cached JWT.
+3. Refetched values injected into a new child fork. No Discord call.
+4. ACP threads / launchd dependents reconnect normally.
+
+### 8.4 Child exit 78 (stale credentials contract)
+
+1. Child exits with `code 78` (`EX_CONFIG`).
+2. Supervisor unconditionally enters `awaiting-approval`, regardless of TTL.
+3. Discord alert: `[STALE] Child Exit 78`.
+4. Z runs `hush secret rotate <name>` on vault host, then
+   `hush client refresh --supervisor <name>` on the agent host.
+5. Supervisor refetches and forks a fresh child.
+
+### 8.5 TTL refresh window
+
+1. At `[refresh_window_start, refresh_window_end]` local time, supervisor
+   sends `[DAEMON] Refresh` DM.
+2. Z taps Approve → new JWT covers next 20h.
+3. Child is **never** restarted purely because of TTL expiry.
+4. Ignored prompt → T-30min fallback nudge fires.
+
+### 8.6 Grace window (opt-in)
+
+When `cache_secrets_for_restart=true`, supervisor holds the last decrypted
+secret set in mlocked memory for `grace.window` (default 60m, capped 4h)
+beyond JWT validity. Inside the window, child restarts use cached secrets and
+defer Discord approval to the morning refresh window. Tradeoff: doubles
+on-host plaintext surface (child + supervisor); see `docs/SECURITY.md` §
+"Residual risks".
+
+---
+
+## 9. Failure mode handling
+
+| Failure | Behavior |
+|---------|----------|
+| Discord unreachable | Existing tokens validate normally. New `/claim` returns 503 with `Retry-After`. Health endpoint reports `discord_connected: false`. |
+| Tailscale disconnect on agent host | Supervisor backs off exponentially up to remaining TTL. **No Discord prompts** (network blips MUST NOT spam Z). |
+| Vault server restart | Supervisor's next silent refill returns 401 unknown-jti → transitions to `awaiting-approval` cleanly. Child keeps running (refill is what's gated, not the child). |
+| Boot ordering (hush before Tailscale) | Backoff up to `boot_retry_timeout` (default 10m), log WARN at each attempt. On exhaustion, exit non-zero so launchd retries. |
+| Clock skew at supervisor or server | Refuse to start if `systemsetup -getusingnetworktime` / `timedatectl show` reports unsynced. |
+| Split-brain launchd restart | PID file + flock at `~/.hush/run/supervise-{name}.pid`. Second instance waits or exits cleanly. |
+| Vault secret rotation mid-session | Child still has old value. `hush secret rotate` triggers SIGHUP on server. Then `hush client refresh --supervisor X` makes the supervisor refetch and gracefully restart the child. |
+| Discord DM rate-limit | Supervisor self-caps at 1 prompt per 5min per supervisor. Excess prompts log WARN and drop. |
+| Bot token theft + competing instance | Server detects unexpected WebSocket disconnect → log WARN + audit event + refuse `/claim` until reconnect (legitimate bot reconnects; rogue bot would have to keep displacing it, all visibly). |
+
+---
+
+## 10. Phase 0 architecture goals (this bootstrap)
+
+By the end of Phase 0, the architecture must already make the following truths
+unambiguous to anyone reading the repo cold:
+
+- The vault server is never public.
+- Approval is always human and out-of-band.
+- Secrets never persist on agent disks.
+- Daemons use `hush supervise` — not naive `hush request --exec`.
+- Staleness surfaces proactively via three independent channels.
+- The seven security layers are independent — no single failure leaks secrets.
+- The repo is private until the public-release gate is satisfied.
+
+---
+
+## 11. Cross-references
+
+| Topic | See |
+|-------|-----|
+| Spec, requirements, ACs | `docs/SPEC.md` |
+| Threat model + 7 layers | `docs/SECURITY.md` |
+| HTTP/socket schemas | `docs/API.md` |
+| Config formats | `docs/CONFIG-SCHEMA.md` |
+| Package layout | `docs/PACKAGE-MAP.md` |
+| Lifecycle scenarios | `docs/LIFECYCLE-SCENARIOS.md` |
+| Phase execution | `docs/IMPLEMENTATION-PLAN.md` |
+| Test plan | `docs/TESTING-STRATEGY.md` |
+| Operational runbooks | `docs/OPERATIONS.md` |
+| Constitutional principles | `.specify/memory/constitution.md` |
