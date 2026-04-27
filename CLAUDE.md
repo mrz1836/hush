@@ -3,5 +3,5 @@
 See [.github/CLAUDE.md](.github/CLAUDE.md) for the canonical agent guide.
 
 <!-- SPECKIT START -->
-Active feature plan: [specs/001-keys-derivation/plan.md](specs/001-keys-derivation/plan.md) — SDD-01 `internal/keys` (Argon2id + BIP32 HD derivation).
+Active feature plan: [specs/002-securebytes/plan.md](specs/002-securebytes/plan.md) — SDD-02 `internal/vault/securebytes` (mlocked memory + zero-on-destroy).
 <!-- SPECKIT END -->
