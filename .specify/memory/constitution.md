@@ -1,25 +1,35 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version Change: 0.0.0 → 1.0.0 (initial ratification)
-Modified Principles: N/A (initial)
-Added Sections: All sections (initial constitution)
+Version Change: 1.0.0 → 1.1.0 (MINOR amendment)
+Modified Principles:
+  - VIII (Testing Discipline) — expanded with AC→test mapping, mandatory fuzz
+    target list, and revised coverage bar (≥80% overall, 100% security-critical)
+    to align with the gate enforced by codecov.yml
+Added Principles:
+  - IX. Idiomatic Go Discipline
+  - X. Observability & Redaction
+  - XI. Native-First, Minimal Dependencies, Ephemeral Vault
+Added Sections: N/A
 Removed Sections: N/A
 Templates Requiring Updates:
-  - ✅ docs/SPEC.md (created in alignment)
-  - ✅ docs/MVP.md (created in alignment)
-  - ✅ docs/SECURITY.md (created in alignment)
-  - ✅ docs/ARCHITECTURE.md (created in alignment)
-  - ✅ docs/API.md (aligned)
-  - ✅ docs/OPERATIONS.md (aligned)
-  - ✅ docs/CONFIG-SCHEMA.md (aligned)
-  - ✅ docs/PACKAGE-MAP.md (aligned)
-  - ✅ docs/LIFECYCLE-SCENARIOS.md (aligned)
-  - ✅ docs/IMPLEMENTATION-PLAN.md (aligned)
-  - ✅ docs/TESTING-STRATEGY.md (aligned)
-  - ✅ docs/SDD-GUIDE.md (created in alignment)
+  - ✅ docs/SPEC.md (AC-10 scenario count corrected: 11 → 15, aligned with
+    docs/LIFECYCLE-SCENARIOS.md)
+  - ✅ docs/MVP.md (aligned, no change required)
+  - ✅ docs/SECURITY.md (aligned, no change required)
+  - ✅ docs/ARCHITECTURE.md (aligned, no change required)
+  - ✅ docs/API.md (aligned, no change required)
+  - ✅ docs/OPERATIONS.md (aligned, no change required)
+  - ✅ docs/CONFIG-SCHEMA.md (aligned, no change required)
+  - ✅ docs/PACKAGE-MAP.md (aligned, no change required)
+  - ✅ docs/LIFECYCLE-SCENARIOS.md (15 scenarios — source of truth)
+  - ✅ docs/IMPLEMENTATION-PLAN.md (aligned, no change required)
+  - ✅ docs/TESTING-STRATEGY.md (aligned with new AC→test mapping)
+  - ✅ docs/SDD-GUIDE.md (aligned, no change required)
+  - ✅ .specify/templates/constitution-template.md (structure unchanged)
 Follow-up TODOs:
-  - Create in-repo `tasks.yaml` when implementation execution starts
+  - Instantiate .specify/templates/tasks-template.md → tasks.md when
+    implementation execution starts
 -->
 
 # hush Constitution
@@ -197,15 +207,33 @@ and reduces the chance of misuse via wrong invocation.
 ### VIII. Testing Discipline
 
 Security-critical code requires 100% test coverage. Fuzz testing is mandatory for all
-parsers and crypto entry points.
+parsers and crypto entry points. Every acceptance criterion in `docs/SPEC.md`
+must map to a concrete, runnable test.
 
 **Non-negotiables:**
-- Table-driven unit tests for all core functions
-- Fuzz tests for: vault decrypt, ECIES decrypt, JWT validate, request signature verify,
-  TOML config parse
+- Table-driven unit tests for all core functions, named per
+  `.github/tech-conventions/testing-standards.md`
+  (`TestFunctionName_Scenario`, PascalCase)
 - Integration tests gated by `//go:build integration`
 - Pre-commit MUST run `golangci-lint` + `go test -race`
-- 90%+ overall coverage required before v0.1.0 tag
+- Coverage is tracked by `codecov.yml`. No PR may regress overall coverage by
+  more than 2%
+- v0.1.0 tag requires **≥80% overall coverage** AND **100% on security-critical
+  packages** (vault, keys, token, transport — i.e. the crypto/key/JWT/ECIES/
+  signing surface called out in `docs/SPEC.md` AC-9)
+
+**Mandatory fuzz targets** (from `docs/TESTING-STRATEGY.md` §2; required to run
+clean for ≥60s each in CI before v0.1.0 tag):
+
+1. Vault file decode
+2. JWT parse/validate
+3. ECIES decrypt input handling
+4. Request signature payload parsing
+5. Supervisor config TOML parsing
+6. Status socket JSON encoding (when custom parsing exists)
+
+Fuzz goals: no panics, no unbounded memory growth, malformed input returns
+explicit errors, no partial secret exposure in error messages.
 
 **Test Priority:**
 | Priority | Scope | Coverage |
@@ -215,7 +243,171 @@ parsers and crypto entry points.
 | Medium | Discord bot logic, CLI flags, config parsing | 85% |
 | Low | Help text, log formatting | 70% |
 
+**Acceptance Criteria → required test types:**
+| AC | Title | Unit | Fuzz | Integration |
+|----|-------|------|------|-------------|
+| AC-1 | `hush serve` startup | ✅ | — | ✅ |
+| AC-2 | Vault round-trip + SIGHUP reload | ✅ | ✅ (vault decode) | ✅ |
+| AC-3 | Discord approval flow | ✅ | — | ✅ |
+| AC-4 | JWT lifecycle (IP-bind, max-uses, revoke, claims) | ✅ | ✅ (JWT parse) | ✅ |
+| AC-5 | `--exec` injection safety | ✅ | — | ✅ |
+| AC-6 | Per-machine client keys + Keychain ACL | ✅ | — | ✅ |
+| AC-7 | End-to-end ECIES, no plaintext on the wire | ✅ | ✅ (ECIES decrypt) | ✅ |
+| AC-8 | Server hardening (bind, ACL, perms, NTP) | ✅ | ✅ (TOML parse) | ✅ |
+| AC-9 | Coverage + fuzz targets | — | ✅ (all six) | — |
+| AC-10 | Supervisor lifecycle (15 scenarios) | ✅ | ✅ (request signature, status socket) | ✅ |
+
+**Authoritative references:** `.github/tech-conventions/testing-standards.md`,
+`docs/TESTING-STRATEGY.md`.
+
 **Rationale:** Bugs in a secrets broker leak secrets. Testing is not optional.
+Coverage gates are aligned with `codecov.yml` so the policy and the tooling
+agree — a green CI must mean the constitutional bar was met, not a softer one.
+
+### IX. Idiomatic Go Discipline
+
+hush is a Go project. Every line of Go in this repo MUST follow the patterns
+encoded in `.github/tech-conventions/go-essentials.md` and enforced by
+`.golangci.json`. The constitution makes the rules explicit so deviations
+require a written justification, not a silent override.
+
+**Non-negotiables:**
+- **Context propagation:** `context.Context` is the first parameter of any
+  function that does I/O, can be cancelled, or has a timeout. Never store a
+  `Context` in a struct field. (Linters: `contextcheck`, `containedctx`,
+  `noctx`.)
+- **Error handling:** wrap with `%w`, compare with `errors.Is` /
+  `errors.As`, declare sentinel errors as exported package-level
+  `var Err... = errors.New(...)`. Never compare error strings.
+- **No globals, no `init()`:** mutable package-level state is forbidden;
+  side-effectful `init` functions are forbidden. Pass dependencies explicitly.
+  (Linters: `gochecknoglobals`, `gochecknoinits`.)
+- **Panic policy:** panics are reserved for `main` startup wiring and for
+  unrecoverable invariant violations. Library code returns errors. Every
+  spawned goroutine MUST `recover()` at its top frame.
+- **Goroutine discipline:** every goroutine has a clear owner, an explicit
+  cancellation path (context), and a documented termination condition. No
+  fire-and-forget goroutines.
+- **Interfaces:** accept interfaces, return concrete types. Define interfaces
+  at the consumer, not the producer. Prefer single-method interfaces.
+- **Package layout:** all non-`main` code lives under `internal/`. The public
+  surface area is `cmd/hush` only; nothing under `internal/` is part of any
+  external API contract.
+- **Modules-only:** Go modules are the single dependency manager. The repo
+  does NOT vendor (`/vendor` is forbidden). `go.mod` and `go.sum` are
+  authoritative.
+- **CGO disabled:** all release binaries are pure Go (`CGO_ENABLED=0`,
+  enforced by `.goreleaser.yml`). Adding a CGO dependency requires a
+  constitutional amendment.
+- **Go version:** the version pinned in `go.mod` is the floor. Do not use
+  language features newer than that toolchain supports.
+- **Generics:** use generics for type-safe containers and small utilities
+  where they remove duplication. Do not reach for generics in business
+  logic when a concrete type is clearer.
+
+**Authoritative references:** `.github/tech-conventions/go-essentials.md`,
+`.github/tech-conventions/testing-standards.md`, `.golangci.json`.
+
+**Rationale:** Idiomatic Go is a force-multiplier for correctness. The
+linters can catch most of these mechanically; codifying them here means the
+human reviewer is not the last line of defence and the AI agent contributing
+code knows exactly which patterns are non-negotiable.
+
+### X. Observability & Redaction
+
+A secrets broker that logs the secrets it brokers is worse than no logging
+at all. Observability is mandatory; secret leakage in logs is unforgivable.
+
+**Non-negotiables:**
+- **Structured logging via `log/slog`** (Go stdlib). No third-party logger.
+  Output is JSON for non-TTY destinations, text for TTYs.
+- **Secret redaction is type-driven.** `SecureBytes` and any type holding
+  secret material MUST implement `LogValue() slog.Value` returning
+  `slog.StringValue("[redacted]")`. Plain `[]byte` carrying secret material
+  MUST be wrapped before any code path can log it.
+- **No secret values in errors.** Error messages return failure mode and
+  identifier (e.g. secret name, jti, scope) — never the secret value, never
+  a partial of it. Fuzz tests assert this (Principle VIII).
+- **Audit log is separate from operational log.** The hash-chained,
+  ECDSA-signed audit chain (Principle III, layer 6) is the source of truth
+  for "who fetched what, when". Operational logs are for debugging and MUST
+  NOT duplicate audit entries.
+- **Discord alert tiers** (matches `docs/OPERATIONS.md`):
+  - **Critical (page Z):** vault server unreachable, NTP drift > 60s on
+    startup, audit-chain signature break, repeated denied requests from a
+    single client.
+  - **Warning (Discord channel, no page):** validator failure, single denied
+    request, log-pattern watchdog auth-failure detection, supervisor
+    grace-cache hit.
+  - **Info (audit log only, no Discord):** routine approve/deny, JWT
+    issuance, secret rotation.
+- **Metrics:** processes expose minimal counters/gauges only over the local
+  Unix status socket (`$XDG_RUNTIME_DIR/hush-supervise-{name}.sock` per
+  Principle V) — no Prometheus endpoint, no remote metrics in v0.1.0.
+
+**Authoritative references:** `docs/OPERATIONS.md`,
+`.github/tech-conventions/security-practices.md`.
+
+**Rationale:** Logs are the most common accidental secret leak. Type-driven
+redaction means a developer cannot forget to redact a value because the type
+itself refuses to render in plaintext. Tiered alerts mean Z's phone only
+rings when the system actually needs a human — anything noisier trains the
+operator to ignore it (Principle V).
+
+### XI. Native-First, Minimal Dependencies, Ephemeral Vault
+
+The smallest dependency surface is the strongest dependency surface. The
+vault file is treated as ephemeral, not as a backed-up artifact, because the
+secrets it holds are rebuildable from upstream sources.
+
+**Native-first / minimal dependencies:**
+- Prefer the Go standard library. Reach for a third-party package only when
+  the stdlib equivalent is missing or materially worse for security.
+- Every NEW direct dependency requires a written justification in the PR
+  covering: maintainer activity, supply-chain provenance, transitive
+  dependency footprint, and why no stdlib option suffices.
+- New direct dependencies MUST follow the trusted-sources hierarchy: stdlib
+  first, then the sigil baseline (`github.com/mrz1836/sigil`), then the
+  `bsv-blockchain` GitHub organization, and only then the wider ecosystem.
+  See `dependency-management.md` for the full rule.
+- The crypto stack pinned in Principle III (BIP32, secp256k1, ECIES) is the
+  ONLY cryptographic dependency surface — adding another crypto library
+  requires a constitutional amendment.
+- `govulncheck` runs in CI on every PR; any reported vulnerability blocks
+  merge until upgraded, patched, or explicitly waived in the PR description.
+- `gitleaks` runs pre-commit and in CI; zero findings are required to merge.
+- Dependabot updates direct dependencies weekly; transitive-only updates are
+  grouped. Direct-dep PRs require maintainer review.
+
+**Ephemeral vault — secrets are rebuildable, not backed up:**
+- The vault file at the trusted host is **explicitly NOT backed up**. No
+  off-host copies. No cloud snapshot of `~/.hush/vault`. No Time Machine
+  inclusion (the install path adds an exclusion).
+- All secrets stored in the vault MUST be rebuildable from their upstream
+  source within minutes (Anthropic console regenerate, GitHub PAT regen,
+  AWS rotate, OAuth re-consent). This is the only acceptable source of
+  truth.
+- Loss of the vault file is a recoverable operational event: re-run
+  `hush init`, re-add each secret from its upstream source, re-issue client
+  keys. It is NOT a disaster.
+- Backups would expand the attack surface (an offline copy could leak years
+  later). We accept the rebuild cost in exchange for zero archived
+  ciphertext.
+- The passphrase is held in the macOS Keychain on the trusted host only and
+  is regenerable by the operator. There is no escrow, no Shamir split, no
+  recovery seed in v0.1.0.
+
+**Authoritative references:**
+`.github/tech-conventions/dependency-management.md`,
+`.github/tech-conventions/security-practices.md`,
+`.github/tech-conventions/release-versioning.md`,
+`.github/tech-conventions/pre-commit.md`.
+
+**Rationale:** Every dependency is a future supply-chain incident waiting
+to happen; every backup is a future leak waiting to be found. Treating the
+vault as ephemeral inverts the usual durability/secrecy trade — we accept
+the rebuild cost so an attacker who finds an old backup gains nothing. The
+upstream providers are our durability layer; we do not duplicate their job.
 
 ## Security Requirements
 
@@ -233,6 +425,7 @@ These constraints apply to ALL code in the repository:
 | Audit log | Append-only, hash-chained, ECDSA-signed; rotation strategy documented |
 | File permissions | Vault: 0600. Supervisor sockets: 0600. Configs: 0640. Dirs: 0750. |
 | Clock sync | Startup check against NTP; refuse to start if drift >60s |
+| Supply-chain | `govulncheck` runs in CI on every PR; `gitleaks` runs pre-commit and in CI with zero-finding requirement; dependabot updates direct deps weekly |
 
 **Keychain ACLs (macOS):** The passphrase entry MUST restrict access to the `hush`
 binary path only. Wildcard ACLs are forbidden.
@@ -266,7 +459,8 @@ All code MUST pass before merge:
   security-aware review
 - New dependencies require justification and basic supply-chain audit
 - The supervisor state machine and Discord bot interaction logic require integration
-  test coverage of all 11 lifecycle scenarios documented in `docs/SPEC.md` AC-10
+  test coverage of all 15 lifecycle scenarios documented in `docs/SPEC.md` AC-10
+  (source of truth: `docs/LIFECYCLE-SCENARIOS.md`)
 
 ## Governance
 
@@ -293,4 +487,4 @@ after:
 - `go-pre-commit` zero gitleaks findings
 - README, ARCHITECTURE, SECURITY docs polished
 
-**Version:** 1.0.0 | **Ratified:** 2026-04-26 | **Last Amended:** 2026-04-26
+**Version:** 1.1.0 | **Ratified:** 2026-04-26 | **Last Amended:** 2026-04-26
