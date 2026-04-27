@@ -10,14 +10,18 @@
 ## How to use this file
 
 - This is the at-a-glance progress dashboard.
-- For the full prompt and contract of each chunk, open `docs/SDD-CATALOG.md`
-  and search for `### SDD-NN`.
+- For the full contract + the 5-prompt session set of each chunk,
+  open `docs/sdd/SDD-NN.md` (linked from
+  [`docs/SDD-CATALOG.md`](SDD-CATALOG.md)).
 - For the AC ↔ chunk ↔ test mapping, open `docs/AC-MATRIX.md`.
 - Status column values: `pending`, `in-progress`, `done`, `skipped`. Update
   this file when a chunk's status changes; commit the change with the chunk's
   PR.
 
 ---
+
+> Tables are in **execution order** (earliest-unblocked first), not numeric ID order.
+> See [`docs/SDD-CATALOG.md`](SDD-CATALOG.md) for the `Blocked by` column.
 
 ## Phase 1 — Cryptographic and storage core
 
@@ -26,17 +30,17 @@
 | SDD-01 | Argon2id + BIP32 HD derivation | `internal/keys` | pending | AC-7 |
 | SDD-02 | mlocked secure memory + redaction | `internal/vault/securebytes` | pending | AC-7 |
 | SDD-03 | HUSH file format + AES-256-GCM + atomic write | `internal/vault` | pending | AC-2 |
-| SDD-04 | Test fixtures + sentinel helpers + harness primitives | `internal/testutil` | pending | (AC-9 support) |
 | SDD-05 | slog setup + redaction enforcement | `internal/logging` | pending | (Principle X) |
+| SDD-04 | Test fixtures + sentinel helpers + harness primitives | `internal/testutil` | pending | (AC-9 support) |
 | SDD-06 | Server TOML schema + validation | `internal/config` | pending | AC-1, AC-8 |
 
 ## Phase 2 — Session and transport core
 
 | ID | Title | Package | Status | AC |
 |----|-------|---------|--------|-----|
-| SDD-07 | ES256K JWT issue/validate + claims + store | `internal/token` | pending | AC-4 |
 | SDD-08 | ECDSA canonical-JSON request signing + nonce + timestamp | `internal/transport/sign` | pending | AC-7 |
 | SDD-09 | ECIES encrypt/decrypt for secret responses | `internal/transport/ecies` | pending | AC-7 |
+| SDD-07 | ES256K JWT issue/validate + claims + store | `internal/token` | pending | AC-4 |
 
 ## Phase 3 — Server control plane
 
@@ -66,15 +70,15 @@
 | SDD-21 | Refill + refresh + grace cache | `internal/supervise` | pending | AC-10 |
 | SDD-22 | PID file + flock + Unix status socket | `internal/supervise` | pending | AC-10 |
 | SDD-23 | `hush supervise` + `hush client status` + `hush client refresh` | `internal/cli` | pending | AC-10 |
-| SDD-24 | (reserved — orchestration glue if SDD-25 surfaces gaps; default skipped) | — | skipped | — |
 | SDD-25 | Lifecycle integration harness (15 scenarios — explicit AC-10 owner) | `tests/integration/` | pending | AC-9, AC-10 |
+| SDD-24 | (reserved — orchestration glue if SDD-25 surfaces gaps; default skipped) | — | skipped | — |
 
 ## Phase 6 — Validators + alerts
 
 | ID | Title | Package | Status | AC |
 |----|-------|---------|--------|-----|
-| SDD-26 | 5 builtin validators (anthropic, anthropic-oauth, openai, google-ai, github) | `internal/supervise/validators` | pending | AC-10 |
 | SDD-27 | Log-pattern watchdog (alert-only) | `internal/supervise` | pending | AC-10 |
+| SDD-26 | 5 builtin validators (anthropic, anthropic-oauth, openai, google-ai, github) | `internal/supervise/validators` | pending | AC-10 |
 | SDD-28 | 8 alert classes + tiered routing + DM rate limit | `internal/discord/alerts` | pending | AC-3, AC-10 |
 
 ## Phase 7 — Deployment
@@ -86,33 +90,56 @@
 
 ## Phase 8 — Release
 
+> Phase 8 ordering: SDD-31 (CI gates) → SDD-33 (final overhaul) → SDD-32 (release tag).
+> SDD-32 is explicitly blocked on SDD-33 so the v0.1.0 tag captures the overhauled state.
+
 | ID | Title | Files | Status | AC |
 |----|-------|-------|--------|-----|
 | SDD-31 | Release gates (coverage + 6 fuzz + magex + go-pre-commit + govulncheck + gitleaks + CGO=0 + no /vendor) | `.github/workflows/*` | pending | AC-9 |
-| SDD-32 | OSS-grade README + DAEMONS.md + repo-level OSS files + docs polish + GoReleaser + v0.1.0 tag | `README.md` + repo root + `docs/*` + `.goreleaser.yml` | partial (DAEMONS.md done; README + supporting files done; tag pending SDD-31) | AC-1 |
+| SDD-33 | Final repo + docs overhaul (drift reconciliation, dead-code sweep, README rewrite) | repo-wide | pending | AC-1 (+ tightens every other AC) |
+| SDD-32 | OSS-grade README + DAEMONS.md + repo-level OSS files + docs polish + GoReleaser + v0.1.0 tag | `README.md` + repo root + `docs/*` + `.goreleaser.yml` | partial (DAEMONS.md done; README + supporting files done; tag pending SDD-31 + SDD-33) | AC-1 |
 
 ---
 
 ## Workflow
 
-For each chunk, in dependency order from `docs/SDD-CATALOG.md`:
+For each chunk, in dependency order:
 
-1. Open `docs/SDD-CATALOG.md`, find `### SDD-NN`.
-2. Copy the **Agent Prompt** block at the bottom of that chunk.
-3. Open a fresh Claude Code session in `/Users/mrz/projects/hush/`.
-4. Paste the prompt verbatim.
-5. The agent runs `/speckit-specify` → `/speckit-plan` → `/speckit-tasks`,
-   then implements TDD-style, then runs gates (`magex format:fix`,
-   `magex lint`, `magex test:race`, fuzz where applicable).
-6. The agent updates this file (`SDD-PLAYBOOK.md`) — mark the chunk done.
-7. The agent updates `docs/AC-MATRIX.md` with the test paths it produced.
-8. Open a PR. Reviewer verifies the AC-MATRIX rows + gates.
+1. Open `docs/sdd/SDD-NN.md`.
+2. Open a fresh Claude Code session in `/Users/mrz/projects/hush/`.
+   Paste **Prompt 1 (Specify)** verbatim. Let the session finish and
+   close it.
+3. Open ANOTHER fresh Claude Code session. Paste **Prompt 2
+   (Clarify)**. Close it.
+4. Repeat for **Prompt 3 (Plan)**, **Prompt 4 (Tasks)**, **Prompt 5
+   (Implement)** — one fresh session each.
+5. Prompt 5 updates this file (mark the chunk `done`), updates
+   `docs/AC-MATRIX.md`, and makes one combined commit covering code
+   + doc updates.
+6. Open a PR. Reviewer verifies the AC-MATRIX rows + gates.
+
+**Why 5 sessions instead of 1:** each speckit phase produces a
+substantial artifact (`spec.md`, `plan.md`, `tasks.md`). Chaining
+them in one session guarantees compaction on larger chunks (SDD-13,
+SDD-20, SDD-25, SDD-33), and post-compaction code reliably drifts
+from the chunk's locked contracts. Speckit persists every artifact
+to disk; fresh sessions reload context from disk without losing
+fidelity.
+
+The `extensions.yml` git hooks auto-commit each artifact. Accept
+those in Prompts 1, 3, 4. In Prompt 2 accept only if `spec.md`
+changed. **Decline** the `after_implement` auto-commit in Prompt 5
+— that prompt makes one combined commit covering code + doc updates.
+
+See [`docs/sdd/SDD-01.md`](sdd/SDD-01.md) for the canonical
+template each chunk file follows.
 
 ---
 
 ## Cross-references
 
-- Full chunk prompts & contracts: [`docs/SDD-CATALOG.md`](SDD-CATALOG.md)
+- Chunk index + cross-cutting requirements: [`docs/SDD-CATALOG.md`](SDD-CATALOG.md)
+- Per-chunk contracts + 5-prompt sets: [`docs/sdd/`](sdd/)
 - AC ↔ chunk ↔ test mapping: [`docs/AC-MATRIX.md`](AC-MATRIX.md)
 - Phase rationale: [`docs/IMPLEMENTATION-PLAN.md`](IMPLEMENTATION-PLAN.md)
 - Package responsibilities: [`docs/PACKAGE-MAP.md`](PACKAGE-MAP.md)
