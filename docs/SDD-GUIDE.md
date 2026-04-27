@@ -34,7 +34,7 @@ Phase 0 is done when:
 - New behavior should map back to an acceptance criterion
 - If implementation contradicts the constitution, implementation is wrong
 
-## Build sequence for T-173
+## Build sequence for hush
 
 1. bootstrap repo structure
 2. lock mission and constitution

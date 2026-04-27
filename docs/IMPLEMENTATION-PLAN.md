@@ -1,9 +1,42 @@
 # Implementation Plan
 
-This file converts the approved T-173 spec into a practical build sequence.
+This file converts the approved hush spec into a practical build sequence.
 
 It is not the todo plan file.
 It is the in-repo implementation roadmap an execution agent should follow once coding begins.
+
+---
+
+## SDD chunk catalog
+
+The phase-by-phase narrative below is paired with a concrete **32-chunk
+SDD catalog**. Each phase's deliverables are split into chunks sized to
+roughly one AI-agent session, with full ready-to-paste agent prompts.
+
+| Resource | Purpose |
+|----------|---------|
+| [`docs/SDD-CATALOG.md`](SDD-CATALOG.md) | All 32 chunks: scope, files, contracts, tests, AC mapping, agent prompt |
+| [`docs/SDD-PLAYBOOK.md`](SDD-PLAYBOOK.md) | At-a-glance index + status dashboard |
+| [`docs/AC-MATRIX.md`](AC-MATRIX.md) | AC-1..AC-10 ↔ chunk ↔ test path mapping (the v0.1.0 release gate) |
+
+### Phase-to-chunk map
+
+| Phase | Title (this doc) | Chunks |
+|-------|------------------|--------|
+| 0 | Documentation hardening | (no chunks — Phase 0 is this doc set itself) |
+| 1 | Cryptographic and storage core | SDD-01..SDD-06 |
+| 2 | Session and transport core | SDD-07..SDD-09 |
+| 3 | Server control plane | SDD-10..SDD-14 |
+| 4 | Interactive CLI path | SDD-15..SDD-17 |
+| 5 | Supervisor lifecycle | SDD-18..SDD-25 (SDD-25 owns AC-10's 15-scenario integration suite) |
+| 6 | Validator and alerting hardening | SDD-26..SDD-28 |
+| 7 | Deployment artifacts | SDD-29..SDD-30 |
+| 8 | Release hardening | SDD-31..SDD-32 |
+
+To start a chunk: open `docs/SDD-CATALOG.md`, find the chunk, copy its
+**Agent Prompt** block into a fresh Claude Code session, run the
+speckit cycle, implement TDD-style, run the gates. See
+[`docs/SDD-PLAYBOOK.md`](SDD-PLAYBOOK.md) §Workflow for the full loop.
 
 ---
 
@@ -178,7 +211,7 @@ Do not start Phase 5 until:
 ## Phase 5 — supervisor lifecycle
 
 Purpose:
-- solve the hard daemon problem for OpenClaw and Hermes
+- solve the hard daemon problem for any long-running daemon (one supervisor per daemon)
 
 Core deliverables:
 - `hush supervise`
@@ -242,7 +275,7 @@ Purpose:
 
 Core deliverables:
 - `hush init`
-- deploy examples/scripts for OpenClaw and Hermes
+- deploy examples/scripts (generic supervisor launcher template + example supervisor TOML)
 - launchd + systemd examples
 - clean-machine checklist enforcement/docs
 - client registration/bootstrap docs

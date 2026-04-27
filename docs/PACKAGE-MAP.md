@@ -59,6 +59,12 @@ Must not contain:
 - vault parsing
 - supervisor logic
 
+### Exported API — locked
+
+> Filled by SDD-14 once cmd/hush is implemented. Until then, this section is
+> a placeholder. Consumers (none — this is `package main`) MUST NOT depend
+> on internal exports beyond the locked sections of `internal/cli`.
+
 ---
 
 ## `internal/cli/`
@@ -90,6 +96,11 @@ Must not contain:
 - Discord SDK logic
 - session store implementation
 
+### Exported API — locked
+
+> Filled by SDD-14, SDD-15, SDD-16, SDD-17, SDD-23 as each `internal/cli/*.go`
+> file is implemented. Until then, this section is a placeholder.
+
 ---
 
 ## `internal/config/`
@@ -119,6 +130,11 @@ Must not contain:
 - crypto primitives
 - provider API calls
 
+### Exported API — locked
+
+> Filled by SDD-06 (server config) and SDD-18 (supervisor config). Until
+> then, this section is a placeholder.
+
 ---
 
 ## `internal/keys/`
@@ -144,6 +160,11 @@ Must not contain:
 - HTTP request logic
 - vault storage format
 - Discord approval code
+
+### Exported API — locked
+
+> Filled by SDD-01 once `internal/keys` is implemented. Until then, this
+> section is a placeholder.
 
 ---
 
@@ -174,6 +195,11 @@ Must not contain:
 - child-process supervision
 - HTTP router setup
 
+### Exported API — locked
+
+> Filled by SDD-02 (`internal/vault/securebytes`) and SDD-03
+> (`internal/vault`). Until then, this section is a placeholder.
+
 ---
 
 ## `internal/token/`
@@ -201,6 +227,10 @@ Must not contain:
 - Discord UI formatting
 - launchd/systemd specifics
 
+### Exported API — locked
+
+> Filled by SDD-07. Until then, this section is a placeholder.
+
 ---
 
 ## `internal/transport/`
@@ -227,6 +257,11 @@ Must not contain:
 - token issuance decisions
 - handler routing
 - provider validator logic
+
+### Exported API — locked
+
+> Filled by SDD-08 (`internal/transport/sign`) and SDD-09
+> (`internal/transport/ecies`). Until then, this section is a placeholder.
 
 ---
 
@@ -258,6 +293,12 @@ Must not contain:
 - Argon2id/BIP32 implementation
 - supervisor child restart logic
 
+### Exported API — locked
+
+> Filled by SDD-10 (server skeleton + SIGHUP reload), SDD-12 (claim
+> handler), and SDD-13 (other handlers + audit). Until then, this section
+> is a placeholder.
+
 ---
 
 ## `internal/discord/`
@@ -285,12 +326,17 @@ Must not contain:
 - JWT signing
 - supervisor process management
 
+### Exported API — locked
+
+> Filled by SDD-11 (Approver interface + bot + monitor) and SDD-28 (alert
+> classes + tiered routing). Until then, this section is a placeholder.
+
 ---
 
 ## `internal/supervise/`
 
 Purpose:
-- implement the daemon lifecycle model that makes hush viable for OpenClaw and Hermes
+- implement the daemon lifecycle model that makes hush viable for any long-running daemon under launchd/systemd
 
 Expected responsibilities:
 - supervisor state machine
@@ -320,6 +366,13 @@ Must not contain:
 - generic cobra wiring
 - vault file parser details
 
+### Exported API — locked
+
+> Filled by SDD-18..SDD-23 (config, state machine, child lifecycle, refill
+> + refresh + grace cache, pidfile + status socket, CLI orchestrator) and
+> SDD-26 + SDD-27 (validators, watchdog). Until then, this section is a
+> placeholder.
+
 ---
 
 ## `internal/logging/`
@@ -341,6 +394,10 @@ Likely files:
 
 Must not contain:
 - business decisions about approval or auth policy
+
+### Exported API — locked
+
+> Filled by SDD-05. Until then, this section is a placeholder.
 
 ---
 
