@@ -53,9 +53,10 @@ coverage.html
 node_modules/
 
 # Speckit
-.specify/scripts/
-.specify/templates/
-.claude/
+.specify/*
+!.specify/memory/
+.claude/*
+!.claude/memory/
 
 # Hush
 /hush
