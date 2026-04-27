@@ -128,6 +128,7 @@ private key fails cleanly.
 | Owning chunk | Test path | Status |
 |--------------|-----------|--------|
 | SDD-01 (BIP32 derivation + ephemeral keys) | `internal/keys/derive_test.go`, `internal/keys/paths_test.go`, `internal/keys/client_test.go`, `internal/keys/fingerprint_test.go`, `internal/keys/derive_fuzz_test.go` | done |
+| SDD-02 (Layer 5 — mlocked secure memory + zero-on-destroy) | `internal/vault/securebytes/securebytes_test.go` — `TestSecureBytes_New_CopiesAndZeroesInput`, `TestSecureBytes_Use_DeliversPayload`, `TestSecureBytes_Render_RedactsAllPaths`, `TestSecureBytes_RedactionSentinel`, `TestSecureBytes_Destroy_ZeroesAndIdempotent`, `TestSecureBytes_PostDestroy_ReturnsErrDestroyed`, `TestSecureBytes_FinalizerZerosOnGC`, `TestSecureBytes_ConcurrentUse` | done |
 | SDD-08 (request signing) | `internal/transport/sign/*_test.go` | pending |
 | SDD-08 fuzz | `internal/transport/sign/verify_fuzz_test.go::FuzzVerifyRequest` | pending |
 | SDD-09 (ECIES) | `internal/transport/ecies/ecies_test.go::TestECIES_*`, `TestECIES_NoLeakOnError` (sentinel-leak) | pending |

@@ -232,10 +232,45 @@ Must not contain:
 - child-process supervision
 - HTTP router setup
 
-### Exported API — locked
+### Exported API — locked at SDD-02 (`securebytes` subpackage)
 
-> Filled by SDD-02 (`internal/vault/securebytes`) and SDD-03
-> (`internal/vault`). Until then, this section is a placeholder.
+Path: `github.com/mrz1836/hush/internal/vault/securebytes`
+
+```go
+// SecureBytes wraps a binary payload under memory pinning (mlock), type-driven
+// render redaction, and zero-on-destroy. Zero value is NOT valid; construct via New.
+type SecureBytes struct{ /* unexported */ }
+
+// New copies b into a fresh mlocked buffer, zeroes b, and returns the container.
+// Registers a runtime finalizer that calls Destroy if the reference becomes unreachable.
+func New(b []byte) (*SecureBytes, error)
+
+// Use invokes fn with the container's mlocked buffer. fn MUST NOT retain the slice.
+// Returns ErrDestroyed if the container has already been destroyed.
+func (sb *SecureBytes) Use(fn func(b []byte)) error
+
+// Len returns the payload length, or 0 after Destroy.
+func (sb *SecureBytes) Len() int
+
+// Destroy zeroes the buffer, munlocks it, and marks the container destroyed. Idempotent.
+func (sb *SecureBytes) Destroy() error
+
+// LogValue implements slog.LogValuer. Always returns slog.StringValue("[redacted]").
+func (sb *SecureBytes) LogValue() slog.Value
+
+// String implements fmt.Stringer. Always returns "[redacted]".
+func (sb *SecureBytes) String() string
+
+// MarshalJSON implements json.Marshaler. Always returns []byte(`"[redacted]"`).
+func (sb *SecureBytes) MarshalJSON() ([]byte, error)
+
+// ErrDestroyed is returned by Use on a destroyed container.
+var ErrDestroyed = errors.New("hush/vault/securebytes: destroyed")
+```
+
+### Exported API — locked (`internal/vault` package)
+
+> Filled by SDD-03 (`internal/vault`). Until then, this section is a placeholder.
 
 ---
 
