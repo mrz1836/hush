@@ -139,7 +139,7 @@ For the full architecture treatment, see [`docs/ARCHITECTURE.md`](docs/ARCHITECT
 
 - **[Go 1.26+](https://go.dev/)** — single static binary, `CGO_ENABLED=0`
   exclusively (Constitution Principle IX).
-- **[go-bitcoin](https://github.com/bitcoinschema/go-bitcoin)** — secp256k1
+- **[go-bitcoin v2](https://github.com/bitcoinschema/go-bitcoin)** — secp256k1
   primitives, BIP32 HD derivation, ECIES, and message signing. The single
   sanctioned cryptographic dependency surface (Constitution Principle III).
 - **[sigil](https://github.com/mrz1836/sigil)** — `SecureBytes` mlock
@@ -148,9 +148,9 @@ For the full architecture treatment, see [`docs/ARCHITECTURE.md`](docs/ARCHITECT
   the vault server. WireGuard underneath; identity-based ACLs above.
 - **[Discord](https://discord.com/)** + **[discordgo](https://github.com/bwmarrin/discordgo)**
   — phone-based approval channel; the v0.1.0 reference Approver.
-- **[golang-jwt/jwt](https://github.com/golang-jwt/jwt)** — JWT framework;
+- **[golang-jwt/jwt v5](https://github.com/golang-jwt/jwt)** — JWT framework;
   hush registers a custom `ES256K` signing method.
-- **[go-toml](https://github.com/pelletier/go-toml)** — strict TOML
+- **[go-toml v2](https://github.com/pelletier/go-toml)** — strict TOML
   parsing for server and supervisor configs.
 - **[zalando/go-keyring](https://github.com/zalando/go-keyring)** — OS
   keychain access with ACL support.
