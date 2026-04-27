@@ -33,9 +33,9 @@
 
 ## How to run this chunk
 
-Run **5 separate Claude Code sessions**, one per prompt below. The
-`extensions.yml` hooks auto-commit each artifact (accept in Prompts 1,
-3, 4; conditionally in Prompt 2; **decline** in Prompt 5).
+Run **5 separate Claude Code sessions**, one per prompt below. All
+commits for this chunk are deferred to a single combined commit at the
+end of Prompt 5 (Implement). Do not commit between phases.
 
 ---
 
@@ -94,7 +94,6 @@ If /speckit-specify produces [NEEDS CLARIFICATION] markers, check
 each against the chunk contract / constitution. Otherwise leave
 the marker — /speckit-clarify will handle it next session.
 
-When the after_specify hook offers to auto-commit spec.md, accept.
 ```
 
 ---
@@ -108,7 +107,6 @@ Read /Users/mrz/projects/hush/docs/sdd/SDD-23.md.
 
 Run: /speckit-clarify
 
-Accept the after_clarify auto-commit only if spec.md actually changed.
 ```
 
 ---
@@ -176,7 +174,6 @@ Constitutional principles in scope: IV, V, VII, IX.
 
 Run: /speckit-plan
 
-Accept the after_plan auto-commit.
 ```
 
 ---
@@ -191,7 +188,6 @@ Read /Users/mrz/projects/hush/docs/sdd/SDD-23.md.
 Run:
   /speckit-tasks "TDD-mandatory per Constitution VIII: include a test-writing task for every behaviour contract BEFORE the implementation task. Coverage target: 85%. Tests required: TestSupervise_DryRunPrintsCanonicalPayload, TestSupervise_DryRunExitsZero, TestSupervise_GraceWindowOverrideTakesPrecedence, TestSupervise_NoCacheForcesStrict, TestSupervise_OrchestrationDelegatesToInternalSupervise (assert no business logic in this file via grep — no state table, no exit-code mapping), TestClientStatus_TTYHumanSummary, TestClientStatus_PipeJSON, TestClientStatus_SocketUnreachableExitErr, TestClientRefresh_AckMapsToExitOK, TestClientRefresh_ErrorMapsToExitErr. Integration test: full dry-run with a fake supervisor config + DiscordStub. Final phase MUST include magex format:fix, magex lint, magex test:race, and magex test:race -tags=integration."
 
-Accept the after_tasks auto-commit.
 ```
 
 ---
@@ -227,8 +223,7 @@ After /speckit-implement completes, do these steps from repo root:
 8. Update docs/AC-MATRIX.md AC-10 row with the new test file paths.
 9. Mark SDD-23 status `done` in docs/SDD-PLAYBOOK.md.
 
-DECLINE the after_implement auto-commit. Make one combined commit
-instead:
+Make one combined commit:
   git add internal/cli/ docs/PACKAGE-MAP.md docs/AC-MATRIX.md \
           docs/SDD-PLAYBOOK.md specs/<feature-dir>/tasks.md
   git commit -m "feat(cli): hush supervise + client status/refresh (SDD-23)"

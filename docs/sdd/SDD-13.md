@@ -42,9 +42,9 @@
 
 ## How to run this chunk
 
-Run **5 separate Claude Code sessions**, one per prompt below. The
-`extensions.yml` hooks auto-commit each artifact (accept in Prompts 1,
-3, 4; conditionally in Prompt 2; **decline** in Prompt 5).
+Run **5 separate Claude Code sessions**, one per prompt below. All
+commits for this chunk are deferred to a single combined commit at the
+end of Prompt 5 (Implement). Do not commit between phases.
 
 This chunk introduces TWO packages (handlers in internal/server,
 audit in internal/audit/new). Treat both as one cohesive deliverable
@@ -117,7 +117,6 @@ If /speckit-specify produces [NEEDS CLARIFICATION] markers, check
 each against the chunk contract / constitution. Otherwise leave
 the marker — /speckit-clarify will handle it next session.
 
-When the after_specify hook offers to auto-commit spec.md, accept.
 ```
 
 ---
@@ -131,7 +130,6 @@ Read /Users/mrz/projects/hush/docs/sdd/SDD-13.md.
 
 Run: /speckit-clarify
 
-Accept the after_clarify auto-commit only if spec.md actually changed.
 ```
 
 ---
@@ -210,7 +208,6 @@ Constitutional principles in scope: III (Layer 6), IV, VIII, X.
 
 Run: /speckit-plan
 
-Accept the after_plan auto-commit.
 ```
 
 ---
@@ -225,7 +222,6 @@ Read /Users/mrz/projects/hush/docs/sdd/SDD-13.md.
 Run:
   /speckit-tasks "TDD-mandatory per Constitution VIII: include a test-writing task for every behaviour contract BEFORE the implementation task. Coverage target: 95% for handlers, 100% for internal/audit. Tests required (handlers): TestSecret_HappyPath_ECIESPayload, TestSecret_ExpiredJWT_401, TestSecret_OutOfScope_403, TestSecret_WrongIP_401, TestSecret_ExhaustedInteractive_401, TestSecret_SupervisorIgnoresMaxUses, TestRevoke_HappyPath, TestRevoke_BadSignature_403, TestRevoke_UnknownJTI_404, TestHealth_NoAuth_OK, TestHealth_DiscordConnectedFlag. Tests required (audit): TestAuditChain_HashLinkContiguous, TestAuditChain_SignatureValid, TestAuditChain_BreakDetectedOnTamper, TestAuditWriter_BlocksOnBackpressure, TestAuditWriter_ConcurrentAppendMonotonicSeq (race-clean, exactly N records), TestDiscordMirror_FailureLogsWarnNoBlock. Sentinel-leak: TestSecret_ErrorBodyNoSentinel and TestAudit_RecordNoSecretValue (both use SECRET_SHOULD_NEVER_APPEAR_13). Final phase MUST include magex format:fix, magex lint, magex test:race."
 
-Accept the after_tasks auto-commit.
 ```
 
 ---
@@ -262,8 +258,7 @@ After /speckit-implement completes, do these steps from repo root:
    new test file paths.
 7. Mark SDD-13 status `done` in docs/SDD-PLAYBOOK.md.
 
-DECLINE the after_implement auto-commit. Make one combined commit
-instead:
+Make one combined commit:
   git add internal/server/ internal/audit/ docs/PACKAGE-MAP.md \
           docs/AC-MATRIX.md docs/SDD-PLAYBOOK.md \
           specs/<feature-dir>/tasks.md

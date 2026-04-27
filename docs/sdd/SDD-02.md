@@ -52,10 +52,8 @@ chain them in one session — speckit persists each artifact to disk
 (`spec.md`, `plan.md`, `tasks.md`, plus `.specify/feature.json`) so
 fresh sessions reload state without losing fidelity.
 
-The `extensions.yml` git hooks auto-commit each artifact. Accept those
-in Prompts 1, 3, 4. In Prompt 2 accept only if `spec.md` changed.
-**Decline** the `after_implement` auto-commit in Prompt 5 — that prompt
-makes one combined commit covering code + doc updates.
+All commits for this chunk are deferred to a single combined commit at
+the end of Prompt 5 (Implement). Do not commit between phases.
 
 ---
 
@@ -116,7 +114,6 @@ each against the chunk contract / constitution. If the contract
 dictates the answer, fill it in. Otherwise leave the marker —
 /speckit-clarify will handle it next session.
 
-When the after_specify hook offers to auto-commit spec.md, accept.
 ```
 
 ---
@@ -132,7 +129,6 @@ contract already answers).
 
 Run: /speckit-clarify
 
-Accept the after_clarify auto-commit only if spec.md actually changed.
 ```
 
 ---
@@ -200,7 +196,6 @@ beyond the documented design.
 
 Run: /speckit-plan
 
-Accept the after_plan auto-commit.
 ```
 
 ---
@@ -219,7 +214,6 @@ Pass TDD as the command argument.
 Run:
   /speckit-tasks "TDD-mandatory per Constitution VIII: include a test-writing task for every behaviour contract BEFORE the implementation task. Coverage target: 100%. The test list MUST cover: zeroing on Destroy, redaction in slog/fmt/json, double-Destroy idempotency, post-Destroy ErrDestroyed, Use scope-bounding, TestSecureBytes_FinalizerZerosOnGC (force GC), TestSecureBytes_ConcurrentUse (race-clean), and the sentinel-leak test TestSecureBytes_RedactionSentinel wrapping SECRET_SHOULD_NEVER_APPEAR_2. Final phase MUST include magex format:fix, magex lint, magex test:race."
 
-Accept the after_tasks auto-commit.
 ```
 
 ---
@@ -250,8 +244,7 @@ After /speckit-implement completes, do these steps from repo root:
    (Layer 5 entry).
 6. Mark SDD-02 status `done` in docs/SDD-PLAYBOOK.md.
 
-DECLINE the after_implement auto-commit. Make one combined commit
-instead:
+Make one combined commit:
   git add internal/vault/securebytes/ docs/PACKAGE-MAP.md \
           docs/AC-MATRIX.md docs/SDD-PLAYBOOK.md \
           specs/<feature-dir>/tasks.md

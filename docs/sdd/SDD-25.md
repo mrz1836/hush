@@ -40,10 +40,9 @@ Run **5 separate Claude Code sessions**, one per prompt below. **This
 is the largest test deliverable in the project — plan carefully and
 do NOT chain prompts in one session.**
 
-The `extensions.yml` git hooks auto-commit each artifact (accept in
-Prompts 1, 3, 4; conditionally in Prompt 2; **decline** in Prompt 5
-— Prompt 5 makes one combined commit covering harness + scenarios +
-doc updates).
+All commits for this chunk are deferred to a single combined commit
+at the end of Prompt 5 (Implement) covering harness + scenarios + doc
+updates. Do not commit between phases.
 
 ---
 
@@ -116,7 +115,6 @@ each against the chunk contract / constitution / scenarios doc.
 Otherwise leave the marker — /speckit-clarify will handle it
 next session.
 
-When the after_specify hook offers to auto-commit spec.md, accept.
 ```
 
 ---
@@ -133,7 +131,6 @@ say?").
 
 Run: /speckit-clarify
 
-Accept the after_clarify auto-commit only if spec.md actually changed.
 ```
 
 ---
@@ -202,7 +199,6 @@ Constitutional principles in scope: VIII, IX, X.
 
 Run: /speckit-plan
 
-Accept the after_plan auto-commit.
 ```
 
 ---
@@ -219,7 +215,6 @@ scenario names; each becomes a task).
 Run:
   /speckit-tasks "TDD-mandatory per Constitution VIII: include a test-writing task for every scenario BEFORE any harness-builder task that scenario depends on (so each scenario fails first, then we build the harness piece that makes it pass — keeps scope honest). Coverage target: 15/15 scenarios green, suite < 120s, no flake on 5 consecutive runs. Tasks required: one harness-helper task per file (vault.go, supervisor.go, discord.go, child.go, server.go, log_capture.go) and one Test_Scenario_NN_<slug> task per scenario from docs/LIFECYCLE-SCENARIOS.md (15 tasks). Every scenario task MUST assert: final state, audit-event ordering, status-socket JSON shape (where applicable), AssertSentinelAbsent over captured logs. Final phase MUST include magex test:race -tags=integration and 5 consecutive runs of the suite to confirm zero flake."
 
-Accept the after_tasks auto-commit.
 ```
 
 ---
@@ -267,8 +262,7 @@ After /speckit-implement completes, do these steps from repo root:
    message describing the gap that motivated activation.
    Otherwise leave SDD-24 status `skipped`.
 
-DECLINE the after_implement auto-commit. Make one combined commit
-instead:
+Make one combined commit:
   git add tests/integration/ docs/PACKAGE-MAP.md docs/AC-MATRIX.md \
           docs/SDD-PLAYBOOK.md specs/<feature-dir>/tasks.md
   git commit -m "test(integration): 15-scenario lifecycle harness (SDD-25)"

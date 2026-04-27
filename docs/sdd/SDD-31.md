@@ -33,9 +33,9 @@
 
 ## How to run this chunk
 
-Run **5 separate Claude Code sessions**, one per prompt below. The
-`extensions.yml` hooks auto-commit each artifact (accept in Prompts 1,
-3, 4; conditionally in Prompt 2; **decline** in Prompt 5).
+Run **5 separate Claude Code sessions**, one per prompt below. All
+commits for this chunk are deferred to a single combined commit at the
+end of Prompt 5 (Implement). Do not commit between phases.
 
 This chunk is CI plumbing. The "test" is a green CI run on a
 sample PR — implement carefully and validate iteratively.
@@ -106,7 +106,6 @@ each against the chunk contract / constitution / existing CI
 files. Otherwise leave the marker — /speckit-clarify will handle
 it next session.
 
-When the after_specify hook offers to auto-commit spec.md, accept.
 ```
 
 ---
@@ -120,7 +119,6 @@ Read /Users/mrz/projects/hush/docs/sdd/SDD-31.md.
 
 Run: /speckit-clarify
 
-Accept the after_clarify auto-commit only if spec.md actually changed.
 ```
 
 ---
@@ -192,7 +190,6 @@ Constitutional principles in scope: VIII, IX, X, XI.
 
 Run: /speckit-plan
 
-Accept the after_plan auto-commit.
 ```
 
 ---
@@ -207,7 +204,6 @@ Read /Users/mrz/projects/hush/docs/sdd/SDD-31.md.
 Run:
   /speckit-tasks "Tasks: write the coverage-threshold script in .github/scripts/ FIRST (so we can test it in isolation against a sample cover.out fixture), then write each workflow YAML, then validate. Per-workflow tasks: ci.yml (format check + lint + test:race + go-pre-commit + govulncheck + gitleaks + 30s fuzz × 6 targets + codecov upload + no-vendor check + no-cgo check), fuzz-cron.yml (5min × 6 targets nightly), release.yml (tag → GoReleaser). Plus tasks: review .golangci.json, review .goreleaser.yml. Test tasks: TestCoverageThreshold_ProjectGEThreshold, TestCoverageThreshold_SecurityCriticalEQ100, TestCoverageThreshold_FailsBelowThreshold. Validation: run a sample PR through CI; assert all gates pass. Final phase MUST include magex format:fix, magex lint, magex test:race, AND a manual verification that a sample PR triggers all CI steps."
 
-Accept the after_tasks auto-commit.
 ```
 
 ---
@@ -255,8 +251,7 @@ After /speckit-implement completes, do these steps from repo root:
    files (this chunk IS the AC-9 owner).
 9. Mark SDD-31 status `done` in docs/SDD-PLAYBOOK.md.
 
-DECLINE the after_implement auto-commit. Make one combined commit
-instead:
+Make one combined commit:
   git add .github/ .golangci.json .goreleaser.yml \
           docs/PACKAGE-MAP.md docs/AC-MATRIX.md docs/SDD-PLAYBOOK.md \
           specs/<feature-dir>/tasks.md
