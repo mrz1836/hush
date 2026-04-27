@@ -161,10 +161,47 @@ Must not contain:
 - vault storage format
 - Discord approval code
 
-### Exported API — locked
+### Exported API — locked at SDD-01
 
-> Filled by SDD-01 once `internal/keys` is implemented. Until then, this
-> section is a placeholder.
+```go
+package keys
+
+import (
+    "context"
+    "crypto/ecdsa"
+)
+
+// DeriveMasterSeed derives the 64-byte hush master seed from a passphrase and a
+// 16-byte salt using Argon2id (time=4, memory=256 MiB, threads=4, keyLen=64).
+// ctx is inspected once at entry; pre-cancellation returns ctx.Err() immediately.
+func DeriveMasterSeed(ctx context.Context, passphrase, salt []byte) ([]byte, error)
+
+// DeriveJWTSigningKey derives the secp256k1 ECDSA private key for JWT signing.
+// BIP32 path: m/44'/7743'/0'.
+func DeriveJWTSigningKey(seed []byte) (*ecdsa.PrivateKey, error)
+
+// DeriveVaultEncKey derives the 32-byte AES-256-GCM vault encryption key.
+// BIP32 path: m/44'/7743'/1'.
+func DeriveVaultEncKey(seed []byte) ([]byte, error)
+
+// DeriveAuditSigningKey derives the secp256k1 ECDSA private key for audit-log signing.
+// BIP32 path: m/44'/7743'/2'.
+func DeriveAuditSigningKey(seed []byte) (*ecdsa.PrivateKey, error)
+
+// DeriveClientKey derives the per-machine client signing keypair.
+// BIP32 path: m/44'/7743'/3'/{machineIndex}.
+func DeriveClientKey(seed []byte, machineIndex uint32) (*ecdsa.PrivateKey, error)
+
+// PublicKeyFingerprint returns the 16-char lowercase hex fingerprint of a secp256k1 public key.
+// Algorithm: hex(sha256(SEC1_compressed(pub))[:8]).
+func PublicKeyFingerprint(pub *ecdsa.PublicKey) string
+
+// Sentinel errors — compare with errors.Is.
+var (
+    ErrPassphraseTooShort = errors.New("hush/keys: passphrase too short")
+    ErrSaltMissing        = errors.New("hush/keys: salt missing or wrong length")
+)
+```
 
 ---
 

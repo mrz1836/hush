@@ -127,7 +127,7 @@ private key fails cleanly.
 
 | Owning chunk | Test path | Status |
 |--------------|-----------|--------|
-| SDD-01 (BIP32 derivation + ephemeral keys) | `internal/keys/derive_test.go` | pending |
+| SDD-01 (BIP32 derivation + ephemeral keys) | `internal/keys/derive_test.go`, `internal/keys/paths_test.go`, `internal/keys/client_test.go`, `internal/keys/fingerprint_test.go`, `internal/keys/derive_fuzz_test.go` | done |
 | SDD-08 (request signing) | `internal/transport/sign/*_test.go` | pending |
 | SDD-08 fuzz | `internal/transport/sign/verify_fuzz_test.go::FuzzVerifyRequest` | pending |
 | SDD-09 (ECIES) | `internal/transport/ecies/ecies_test.go::TestECIES_*`, `TestECIES_NoLeakOnError` (sentinel-leak) | pending |

@@ -23,8 +23,8 @@ description: "Task list for SDD-01 internal/keys (Argon2id + BIP32 HD derivation
 
 **Purpose**: Land the package directory and confirm the locked crypto dependencies are present. No new crypto deps may be added (Constitution XI).
 
-- [ ] T001 Create package directory `internal/keys/` at the repository root (no files yet — those are created in Phase 2).
-- [ ] T002 Verify `go.mod` already pins `golang.org/x/crypto` (for `argon2`) and `github.com/bitcoinschema/go-bitcoin/v2` (for secp256k1 + BIP32). Run `go mod why golang.org/x/crypto` and `go mod why github.com/bitcoinschema/go-bitcoin/v2`. Add them via `go get` ONLY if absent. Do NOT introduce any other crypto dependency (Constitution XI prohibition).
+- [X] T001 Create package directory `internal/keys/` at the repository root (no files yet — those are created in Phase 2).
+- [X] T002 Verify `go.mod` already pins `golang.org/x/crypto` (for `argon2`) and `github.com/bitcoinschema/go-bitcoin/v2` (for secp256k1 + BIP32). Run `go mod why golang.org/x/crypto` and `go mod why github.com/bitcoinschema/go-bitcoin/v2`. Add them via `go get` ONLY if absent. Do NOT introduce any other crypto dependency (Constitution XI prohibition).
 
 ---
 
@@ -34,10 +34,10 @@ description: "Task list for SDD-01 internal/keys (Argon2id + BIP32 HD derivation
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T003 [P] Create [internal/keys/derive.go](internal/keys/derive.go) with: `package keys` declaration; Argon2id constants `argon2Time = 4`, `argon2MemoryK = 256 * 1024`, `argon2Threads = 4`, `argon2KeyLen = 64`; validation constants `minPassphraseLen = 12`, `saltLen = 16`; sentinel errors `ErrPassphraseTooShort = errors.New("hush/keys: passphrase too short")` and `ErrSaltMissing = errors.New("hush/keys: salt missing or wrong length")`; stub signature `func DeriveMasterSeed(ctx context.Context, passphrase, salt []byte) ([]byte, error) { panic("not implemented") }`.
-- [ ] T004 [P] Create [internal/keys/paths.go](internal/keys/paths.go) with: `package keys` declaration; BIP32 path constants `bip44Purpose = 44`, `hushCoinType = 7743`, `pathJWTSigning = "m/44'/7743'/0'"`, `pathVaultEnc = "m/44'/7743'/1'"`, `pathAuditSigning = "m/44'/7743'/2'"`, `pathClientKeyBase = "m/44'/7743'/3'"`; stub signatures `DeriveJWTSigningKey(seed []byte) (*ecdsa.PrivateKey, error)`, `DeriveVaultEncKey(seed []byte) ([]byte, error)`, `DeriveAuditSigningKey(seed []byte) (*ecdsa.PrivateKey, error)` — all stubs `panic("not implemented")`.
-- [ ] T005 [P] Create [internal/keys/client.go](internal/keys/client.go) with: `package keys` declaration; stub signature `func DeriveClientKey(seed []byte, machineIndex uint32) (*ecdsa.PrivateKey, error) { panic("not implemented") }`.
-- [ ] T006 [P] Create [internal/keys/fingerprint.go](internal/keys/fingerprint.go) with: `package keys` declaration; stub signature `func PublicKeyFingerprint(pub *ecdsa.PublicKey) string { panic("not implemented") }`.
+- [X] T003 [P] Create [internal/keys/derive.go](internal/keys/derive.go) with: `package keys` declaration; Argon2id constants `argon2Time = 4`, `argon2MemoryK = 256 * 1024`, `argon2Threads = 4`, `argon2KeyLen = 64`; validation constants `minPassphraseLen = 12`, `saltLen = 16`; sentinel errors `ErrPassphraseTooShort = errors.New("hush/keys: passphrase too short")` and `ErrSaltMissing = errors.New("hush/keys: salt missing or wrong length")`; stub signature `func DeriveMasterSeed(ctx context.Context, passphrase, salt []byte) ([]byte, error) { panic("not implemented") }`.
+- [X] T004 [P] Create [internal/keys/paths.go](internal/keys/paths.go) with: `package keys` declaration; BIP32 path constants `bip44Purpose = 44`, `hushCoinType = 7743`, `pathJWTSigning = "m/44'/7743'/0'"`, `pathVaultEnc = "m/44'/7743'/1'"`, `pathAuditSigning = "m/44'/7743'/2'"`, `pathClientKeyBase = "m/44'/7743'/3'"`; stub signatures `DeriveJWTSigningKey(seed []byte) (*ecdsa.PrivateKey, error)`, `DeriveVaultEncKey(seed []byte) ([]byte, error)`, `DeriveAuditSigningKey(seed []byte) (*ecdsa.PrivateKey, error)` — all stubs `panic("not implemented")`.
+- [X] T005 [P] Create [internal/keys/client.go](internal/keys/client.go) with: `package keys` declaration; stub signature `func DeriveClientKey(seed []byte, machineIndex uint32) (*ecdsa.PrivateKey, error) { panic("not implemented") }`.
+- [X] T006 [P] Create [internal/keys/fingerprint.go](internal/keys/fingerprint.go) with: `package keys` declaration; stub signature `func PublicKeyFingerprint(pub *ecdsa.PublicKey) string { panic("not implemented") }`.
 
 **Checkpoint**: `go build ./internal/keys/` succeeds; `go vet ./internal/keys/` is clean; no behaviour implemented yet.
 
@@ -51,17 +51,17 @@ description: "Task list for SDD-01 internal/keys (Argon2id + BIP32 HD derivation
 
 ### Tests for User Story 1 (write FIRST — must FAIL before any implementation in this phase)
 
-- [ ] T007 [P] [US1] Add `TestDeriveMasterSeed_Deterministic` to [internal/keys/derive_test.go](internal/keys/derive_test.go): table-driven; for each `(passphrase, salt)` pair, two re-derivations with `context.Background()` MUST yield byte-identical 64-byte seeds; include a known-answer-vector (KAT) entry that pins one fixed `(passphrase, salt) → seed_hex` to guard cross-architecture determinism per research §B6 (G1 + FR-002 + SC-003).
-- [ ] T008 [P] [US1] Add `TestDeriveJWTSigningKey_Path` to [internal/keys/paths_test.go](internal/keys/paths_test.go): derive a seed, derive the JWT key, assert the returned `*ecdsa.PrivateKey` (a) is on the secp256k1 curve, (b) its scalar matches go-bitcoin/v2's BIP32 derivation at `m/44'/7743'/0'`, (c) is byte-identical across two re-derivations from the same seed (G5 + FR-005).
-- [ ] T009 [P] [US1] Add `TestDeriveVaultEncKey_Length` to [internal/keys/paths_test.go](internal/keys/paths_test.go): assert the returned `[]byte` length is exactly 32 and equals the 32-byte private scalar of the BIP32 child node at `m/44'/7743'/1'`; assert determinism on re-derivation (G6 + FR-006).
-- [ ] T010 [P] [US1] Add `TestDeriveAuditSigningKey_Path` to [internal/keys/paths_test.go](internal/keys/paths_test.go): assert secp256k1 key derived at `m/44'/7743'/2'`, deterministic, and the audit private scalar is DISTINCT from the JWT private scalar derived at `m/44'/7743'/0'` (G7 + FR-007 + AC-7 distinctness).
-- [ ] T011 [P] [US1] Add background-ctx subcase to `TestDeriveMasterSeed_Deterministic` in [internal/keys/derive_test.go](internal/keys/derive_test.go) covering the happy-path ctx contract: a non-cancelled `context.Background()` does NOT abort the derivation; verify by asserting a successful 64B return for a valid `(passphrase, salt)` pair (G4 happy-path subcase + FR-013).
+- [X] T007 [P] [US1] Add `TestDeriveMasterSeed_Deterministic` to [internal/keys/derive_test.go](internal/keys/derive_test.go): table-driven; for each `(passphrase, salt)` pair, two re-derivations with `context.Background()` MUST yield byte-identical 64-byte seeds; include a known-answer-vector (KAT) entry that pins one fixed `(passphrase, salt) → seed_hex` to guard cross-architecture determinism per research §B6 (G1 + FR-002 + SC-003).
+- [X] T008 [P] [US1] Add `TestDeriveJWTSigningKey_Path` to [internal/keys/paths_test.go](internal/keys/paths_test.go): derive a seed, derive the JWT key, assert the returned `*ecdsa.PrivateKey` (a) is on the secp256k1 curve, (b) its scalar matches go-bitcoin/v2's BIP32 derivation at `m/44'/7743'/0'`, (c) is byte-identical across two re-derivations from the same seed (G5 + FR-005).
+- [X] T009 [P] [US1] Add `TestDeriveVaultEncKey_Length` to [internal/keys/paths_test.go](internal/keys/paths_test.go): assert the returned `[]byte` length is exactly 32 and equals the 32-byte private scalar of the BIP32 child node at `m/44'/7743'/1'`; assert determinism on re-derivation (G6 + FR-006).
+- [X] T010 [P] [US1] Add `TestDeriveAuditSigningKey_Path` to [internal/keys/paths_test.go](internal/keys/paths_test.go): assert secp256k1 key derived at `m/44'/7743'/2'`, deterministic, and the audit private scalar is DISTINCT from the JWT private scalar derived at `m/44'/7743'/0'` (G7 + FR-007 + AC-7 distinctness).
+- [X] T011 [P] [US1] Add background-ctx subcase to `TestDeriveMasterSeed_Deterministic` in [internal/keys/derive_test.go](internal/keys/derive_test.go) covering the happy-path ctx contract: a non-cancelled `context.Background()` does NOT abort the derivation; verify by asserting a successful 64B return for a valid `(passphrase, salt)` pair (G4 happy-path subcase + FR-013).
 
 ### Implementation for User Story 1
 
-- [ ] T012 [US1] Implement `DeriveMasterSeed` in [internal/keys/derive.go](internal/keys/derive.go) per research §B4: step 1 `if err := ctx.Err(); err != nil { return nil, err }`; step 2 `if len(passphrase) < minPassphraseLen { return nil, ErrPassphraseTooShort }`; step 3 `if len(salt) != saltLen { return nil, ErrSaltMissing }`; step 4 `seed := argon2.IDKey(passphrase, salt, argon2Time, argon2MemoryK, argon2Threads, argon2KeyLen)`; step 5 `return seed, nil`. No logging. No `string(passphrase)` / `string(salt)` / `string(seed)` conversion (Constitution X).
-- [ ] T013 [US1] Implement unexported helper `scalarToECDSAKey(scalar []byte) (*ecdsa.PrivateKey, error)` in [internal/keys/paths.go](internal/keys/paths.go) per research §B1: take the 32-byte BIP32 child scalar, set `D = new(big.Int).SetBytes(scalar)`, derive `PublicKey.X / Y` via `curve.ScalarBaseMult(scalar)` using go-bitcoin/v2's secp256k1 curve, populate `PublicKey.Curve` with the same curve instance; return the resulting `*ecdsa.PrivateKey`. Reused by US2 (T015).
-- [ ] T014 [US1] Implement `DeriveJWTSigningKey`, `DeriveVaultEncKey`, `DeriveAuditSigningKey` in [internal/keys/paths.go](internal/keys/paths.go): build a go-bitcoin/v2 BIP32 master from `seed`, walk hardened path `m/44'/7743'/{0,1,2}'` for each, then for `0'` and `2'` call `scalarToECDSAKey` (T013); for `1'` return the 32-byte child scalar directly as `[]byte` per research §B2.
+- [X] T012 [US1] Implement `DeriveMasterSeed` in [internal/keys/derive.go](internal/keys/derive.go) per research §B4: step 1 `if err := ctx.Err(); err != nil { return nil, err }`; step 2 `if len(passphrase) < minPassphraseLen { return nil, ErrPassphraseTooShort }`; step 3 `if len(salt) != saltLen { return nil, ErrSaltMissing }`; step 4 `seed := argon2.IDKey(passphrase, salt, argon2Time, argon2MemoryK, argon2Threads, argon2KeyLen)`; step 5 `return seed, nil`. No logging. No `string(passphrase)` / `string(salt)` / `string(seed)` conversion (Constitution X).
+- [X] T013 [US1] Implement unexported helper `scalarToECDSAKey(scalar []byte) (*ecdsa.PrivateKey, error)` in [internal/keys/paths.go](internal/keys/paths.go) per research §B1: take the 32-byte BIP32 child scalar, set `D = new(big.Int).SetBytes(scalar)`, derive `PublicKey.X / Y` via `curve.ScalarBaseMult(scalar)` using go-bitcoin/v2's secp256k1 curve, populate `PublicKey.Curve` with the same curve instance; return the resulting `*ecdsa.PrivateKey`. Reused by US2 (T015).
+- [X] T014 [US1] Implement `DeriveJWTSigningKey`, `DeriveVaultEncKey`, `DeriveAuditSigningKey` in [internal/keys/paths.go](internal/keys/paths.go): build a go-bitcoin/v2 BIP32 master from `seed`, walk hardened path `m/44'/7743'/{0,1,2}'` for each, then for `0'` and `2'` call `scalarToECDSAKey` (T013); for `1'` return the 32-byte child scalar directly as `[]byte` per research §B2.
 
 **Checkpoint**: T007–T011 GREEN; the bootstrap flow from [quickstart.md](./quickstart.md) §1 works end-to-end.
 
@@ -75,11 +75,11 @@ description: "Task list for SDD-01 internal/keys (Argon2id + BIP32 HD derivation
 
 ### Tests for User Story 2 (write FIRST — must FAIL before implementation)
 
-- [ ] T015 [P] [US2] Add `TestDeriveClientKey_MachineIndexIsolation` to [internal/keys/client_test.go](internal/keys/client_test.go) with subtests: (a) distinct indexes from the SAME seed → distinct private scalars, (b) the SAME index from distinct seeds → distinct private scalars, (c) the same `(seed, machineIndex)` re-derived → byte-identical scalar, (d) `machineIndex = 0` and `machineIndex = math.MaxUint32` both succeed and produce distinct valid keypairs (no silent wrap or truncation), (e) the public scalar lies on secp256k1 (G8 + FR-008 + spec edge-case "Maximum machine index" + AC-6).
+- [X] T015 [P] [US2] Add `TestDeriveClientKey_MachineIndexIsolation` to [internal/keys/client_test.go](internal/keys/client_test.go) with subtests: (a) distinct indexes from the SAME seed → distinct private scalars, (b) the SAME index from distinct seeds → distinct private scalars, (c) the same `(seed, machineIndex)` re-derived → byte-identical scalar, (d) `machineIndex = 0` and `machineIndex = math.MaxUint32` both succeed and produce distinct valid keypairs (no silent wrap or truncation), (e) the public scalar lies on secp256k1 (G8 + FR-008 + spec edge-case "Maximum machine index" + AC-6).
 
 ### Implementation for User Story 2
 
-- [ ] T016 [US2] Implement `DeriveClientKey` in [internal/keys/client.go](internal/keys/client.go): build a go-bitcoin/v2 BIP32 master from `seed`, walk hardened `m/44'/7743'/3'`, then derive the NON-hardened child at index `machineIndex` (so the full `uint32` space is valid; hardened index would cap at `2^31 - 1`), pass the resulting child scalar through `scalarToECDSAKey` (T013), return the `*ecdsa.PrivateKey`.
+- [X] T016 [US2] Implement `DeriveClientKey` in [internal/keys/client.go](internal/keys/client.go): build a go-bitcoin/v2 BIP32 master from `seed`, walk hardened `m/44'/7743'/3'`, then derive the NON-hardened child at index `machineIndex` (so the full `uint32` space is valid; hardened index would cap at `2^31 - 1`), pass the resulting child scalar through `scalarToECDSAKey` (T013), return the `*ecdsa.PrivateKey`.
 
 **Checkpoint**: T015 GREEN; the per-machine registration flow from [quickstart.md](./quickstart.md) §2 works.
 
@@ -95,9 +95,9 @@ description: "Task list for SDD-01 internal/keys (Argon2id + BIP32 HD derivation
 
 ### Tests for User Story 3 (write FIRST — must FAIL before T012 implementation lands)
 
-- [ ] T017 [P] [US3] Add `TestDeriveMasterSeed_RejectsShortPassphrase` to [internal/keys/derive_test.go](internal/keys/derive_test.go): table-driven over passphrase lengths `{0, 1, 11}` plus a `salt` of valid length 16; each row asserts `errors.Is(err, ErrPassphraseTooShort)`, `seed == nil`, and `time.Since(start) < 100*time.Millisecond` (proves Argon2id was NOT invoked); include a 12-byte boundary subcase that MUST succeed (G2 + FR-003 + SC-004).
-- [ ] T018 [P] [US3] Add `TestDeriveMasterSeed_RejectsBadSalt` to [internal/keys/derive_test.go](internal/keys/derive_test.go): table-driven over salt lengths `{0, 8, 15, 17, 24, 32}` plus a passphrase of valid length 12; each row asserts `errors.Is(err, ErrSaltMissing)`, `seed == nil`, and `time.Since(start) < 100*time.Millisecond`; include a 16-byte boundary subcase that MUST succeed (G3 + FR-004 + SC-004).
-- [ ] T019 [P] [US3] Add `TestDeriveMasterSeed_RespectsCancelledContext` to [internal/keys/derive_test.go](internal/keys/derive_test.go): construct `ctx, cancel := context.WithCancel(context.Background()); cancel()` BEFORE calling `DeriveMasterSeed`; assert `errors.Is(err, context.Canceled)`, `seed == nil`, and `time.Since(start) < 100*time.Millisecond` (proves the validation order from research §B4: ctx is checked at entry, before any Argon2id work) (G4 cancellation subcase + FR-013).
+- [X] T017 [P] [US3] Add `TestDeriveMasterSeed_RejectsShortPassphrase` to [internal/keys/derive_test.go](internal/keys/derive_test.go): table-driven over passphrase lengths `{0, 1, 11}` plus a `salt` of valid length 16; each row asserts `errors.Is(err, ErrPassphraseTooShort)`, `seed == nil`, and `time.Since(start) < 100*time.Millisecond` (proves Argon2id was NOT invoked); include a 12-byte boundary subcase that MUST succeed (G2 + FR-003 + SC-004).
+- [X] T018 [P] [US3] Add `TestDeriveMasterSeed_RejectsBadSalt` to [internal/keys/derive_test.go](internal/keys/derive_test.go): table-driven over salt lengths `{0, 8, 15, 17, 24, 32}` plus a passphrase of valid length 12; each row asserts `errors.Is(err, ErrSaltMissing)`, `seed == nil`, and `time.Since(start) < 100*time.Millisecond`; include a 16-byte boundary subcase that MUST succeed (G3 + FR-004 + SC-004).
+- [X] T019 [P] [US3] Add `TestDeriveMasterSeed_RespectsCancelledContext` to [internal/keys/derive_test.go](internal/keys/derive_test.go): construct `ctx, cancel := context.WithCancel(context.Background()); cancel()` BEFORE calling `DeriveMasterSeed`; assert `errors.Is(err, context.Canceled)`, `seed == nil`, and `time.Since(start) < 100*time.Millisecond` (proves the validation order from research §B4: ctx is checked at entry, before any Argon2id work) (G4 cancellation subcase + FR-013).
 
 **Checkpoint**: T017–T019 GREEN once T012 lands; the validation paths from [quickstart.md](./quickstart.md) §4 work; SC-004 latency cap satisfied.
 
@@ -111,11 +111,11 @@ description: "Task list for SDD-01 internal/keys (Argon2id + BIP32 HD derivation
 
 ### Tests for User Story 4 (write FIRST — must FAIL before implementation)
 
-- [ ] T020 [P] [US4] Add `TestPublicKeyFingerprint_Stable` to [internal/keys/fingerprint_test.go](internal/keys/fingerprint_test.go) with subtests: (a) two invocations on the same `*ecdsa.PublicKey` return byte-identical strings, (b) length is exactly 16, (c) matches regex `^[0-9a-f]{16}$` (lowercase hex only), (d) two distinct public keys (e.g. JWT key vs audit key derived in T014) produce DIFFERENT fingerprints, (e) one KAT subcase pins a fixed public key (constructed via `scalarToECDSAKey` over a hard-coded 32-byte scalar) to a fixed fingerprint hex string (G9 + FR-009 + SC-006).
+- [X] T020 [P] [US4] Add `TestPublicKeyFingerprint_Stable` to [internal/keys/fingerprint_test.go](internal/keys/fingerprint_test.go) with subtests: (a) two invocations on the same `*ecdsa.PublicKey` return byte-identical strings, (b) length is exactly 16, (c) matches regex `^[0-9a-f]{16}$` (lowercase hex only), (d) two distinct public keys (e.g. JWT key vs audit key derived in T014) produce DIFFERENT fingerprints, (e) one KAT subcase pins a fixed public key (constructed via `scalarToECDSAKey` over a hard-coded 32-byte scalar) to a fixed fingerprint hex string (G9 + FR-009 + SC-006).
 
 ### Implementation for User Story 4
 
-- [ ] T021 [US4] Implement `PublicKeyFingerprint` in [internal/keys/fingerprint.go](internal/keys/fingerprint.go) per research §B3: SEC1-compress the `*ecdsa.PublicKey` (33 bytes: prefix `0x02` if `pub.Y` is even, `0x03` if odd, followed by `pub.X` left-padded to 32 bytes), `digest := sha256.Sum256(compressed)`, return `hex.EncodeToString(digest[:8])`. Result: 16 lowercase hex chars.
+- [X] T021 [US4] Implement `PublicKeyFingerprint` in [internal/keys/fingerprint.go](internal/keys/fingerprint.go) per research §B3: SEC1-compress the `*ecdsa.PublicKey` (33 bytes: prefix `0x02` if `pub.Y` is even, `0x03` if odd, followed by `pub.X` left-padded to 32 bytes), `digest := sha256.Sum256(compressed)`, return `hex.EncodeToString(digest[:8])`. Result: 16 lowercase hex chars.
 
 **Checkpoint**: T020 GREEN; the registration UX from [quickstart.md](./quickstart.md) §2 returns a 16-hex fingerprint.
 
@@ -125,19 +125,19 @@ description: "Task list for SDD-01 internal/keys (Argon2id + BIP32 HD derivation
 
 **Purpose**: Cross-story tests, the negative-space contract from [contracts/keys-api.md](./contracts/keys-api.md), and the four mandatory final-phase gates.
 
-- [ ] T022 [P] Add `FuzzDeriveMaster` to [internal/keys/derive_fuzz_test.go](internal/keys/derive_fuzz_test.go): seed corpus with mixed valid `(passphrase ≥ 12B, salt = 16B)` and invalid pairs; the fuzz body MUST (i) call `DeriveMasterSeed` with `context.Background()` and recover no panic, (ii) for valid pairs assert `len(seed) == 64` AND a second invocation with the same inputs yields a byte-identical seed (deterministic re-derivation in the same iteration), (iii) for invalid pairs assert the returned error is `ErrPassphraseTooShort` or `ErrSaltMissing` (not a panic, not a different error) (G10 + AC-9 + SC-002).
-- [ ] T023 Negative-space verification per [contracts/keys-api.md](./contracts/keys-api.md): from repo root, run and confirm each command returns NO matches (or, for `go list -deps`, returns ONLY stdlib + `golang.org/x/crypto/...` + `github.com/bitcoinschema/go-bitcoin/v2/...`):
+- [X] T022 [P] Add `FuzzDeriveMaster` to [internal/keys/derive_fuzz_test.go](internal/keys/derive_fuzz_test.go): seed corpus with mixed valid `(passphrase ≥ 12B, salt = 16B)` and invalid pairs; the fuzz body MUST (i) call `DeriveMasterSeed` with `context.Background()` and recover no panic, (ii) for valid pairs assert `len(seed) == 64` AND a second invocation with the same inputs yields a byte-identical seed (deterministic re-derivation in the same iteration), (iii) for invalid pairs assert the returned error is `ErrPassphraseTooShort` or `ErrSaltMissing` (not a panic, not a different error) (G10 + AC-9 + SC-002).
+- [X] T023 Negative-space verification per [contracts/keys-api.md](./contracts/keys-api.md): from repo root, run and confirm each command returns NO matches (or, for `go list -deps`, returns ONLY stdlib + `golang.org/x/crypto/...` + `github.com/bitcoinschema/go-bitcoin/v2/...`):
   - `grep -nE 'log/slog|logging' internal/keys/*.go`
   - `grep -n 'math/rand' internal/keys/*.go`
   - `grep -nE 'string\([^)]*passphrase|string\(seed|string\(salt' internal/keys/*.go`
   - `grep -nE '^func init\(\)' internal/keys/*.go`
   - `grep -nE 'github.com/mrz1836/hush/internal/' internal/keys/*.go` (leaf-package rule)
   - `go list -deps ./internal/keys/`
-- [ ] T024 Run `magex format:fix` from repo root; stage any whitespace/import-ordering fixes it produces.
-- [ ] T025 Run `magex lint` from repo root; resolve every finding for `./internal/keys/...`. NO `//nolint:` waivers without an SDD amendment; in particular `gochecknoglobals` MUST stay clean (sentinel errors are exempt by lint config).
-- [ ] T026 Run `magex test:race` from repo root; the race detector MUST be clean for `./internal/keys/` with no data-race reports (G11 + Constitution VIII).
-- [ ] T027 Run `go test -fuzz=FuzzDeriveMaster -fuzztime=60s ./internal/keys/` from repo root; require ZERO panics, ZERO crashes, ZERO new entries written under `internal/keys/testdata/fuzz/FuzzDeriveMaster/` (G10 + AC-9 + SC-002).
-- [ ] T028 Run `go test -cover ./internal/keys/` from repo root; require coverage report `coverage: 100.0% of statements` exactly (G12 + Constitution VIII; codecov gate for security-critical packages).
+- [X] T024 Run `magex format:fix` from repo root; stage any whitespace/import-ordering fixes it produces.
+- [X] T025 Run `magex lint` from repo root; resolve every finding for `./internal/keys/...`. NO `//nolint:` waivers without an SDD amendment; in particular `gochecknoglobals` MUST stay clean (sentinel errors are exempt by lint config).
+- [X] T026 Run `magex test:race` from repo root; the race detector MUST be clean for `./internal/keys/` with no data-race reports (G11 + Constitution VIII).
+- [X] T027 Run `go test -fuzz=FuzzDeriveMaster -fuzztime=60s ./internal/keys/` from repo root; require ZERO panics, ZERO crashes, ZERO new entries written under `internal/keys/testdata/fuzz/FuzzDeriveMaster/` (G10 + AC-9 + SC-002).
+- [X] T028 Run `go test -cover ./internal/keys/` from repo root; require coverage report `coverage: 100.0% of statements` exactly (G12 + Constitution VIII; codecov gate for security-critical packages).
 
 ---
 
