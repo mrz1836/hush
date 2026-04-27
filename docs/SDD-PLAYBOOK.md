@@ -27,7 +27,7 @@
 
 | ID | Title | Package | Status | AC |
 |----|-------|---------|--------|-----|
-| SDD-01 | Argon2id + BIP32 HD derivation | `internal/keys` | pending | AC-7 |
+| SDD-01 | Argon2id + BIP32 HD derivation | `internal/keys` | done | AC-7 |
 | SDD-02 | mlocked secure memory + redaction | `internal/vault/securebytes` | pending | AC-7 |
 | SDD-03 | HUSH file format + AES-256-GCM + atomic write | `internal/vault` | pending | AC-2 |
 | SDD-05 | slog setup + redaction enforcement | `internal/logging` | pending | (Principle X) |
