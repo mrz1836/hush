@@ -10,7 +10,8 @@
 
 hush is a Tailscale-only secrets broker. An encrypted vault file lives on a
 single trusted host. Agents request short-lived, scoped sessions over the
-Tailscale mesh; each request is approved by Z via Discord DM on his phone.
+Tailscale mesh; each request is approved by the configured human approver via
+Discord DM on their phone.
 Approved sessions yield ES256K-signed JWTs that are IP-bound and use-limited.
 Secret values are returned ECIES-encrypted to a per-session ephemeral key, then
 injected into the requesting process's environment. Long-running daemons use
@@ -23,7 +24,7 @@ a bounded TTL so a single approval covers a working day.
 
 | Zone | Trust | Notes |
 |------|-------|-------|
-| **Z (the human)** | Fully trusted | Approves via Discord on a 2FA-locked phone. |
+| **The operator (human approver)** | Fully trusted | Approves via Discord on a 2FA-locked phone. v0.1.0 supports a single configured approver. |
 | **Discord** | Trusted as a delivery channel | Bot token is high-sensitivity; disconnects raise alerts. Discord is NOT a security boundary — it is the human's UI. |
 | **Tailscale mesh** | Trusted as transport | WireGuard-encrypted; ACL-restricted. |
 | **Vault host process** | Semi-trusted | Holds decrypted secrets in mlocked memory. Host root compromise does not enable issuing new sessions without Discord approval. |
@@ -31,8 +32,8 @@ a bounded TTL so a single approval covers a working day.
 | **Public internet** | Hostile | The vault server MUST NOT be reachable here. |
 
 **Trust transitions** are explicit: a request crosses from "agent process →
-Tailscale → vault server → Discord → Z's phone → Discord → vault server →
-agent process." Every hop has a verification step (signature, IP allowlist,
+Tailscale → vault server → Discord → approver's phone → Discord → vault
+server → agent process." Every hop has a verification step (signature, IP allowlist,
 JWT validation, ECIES decryption, button click). No hop trusts the previous
 without re-verifying.
 
@@ -148,8 +149,9 @@ shell persists.
 ### 6.2 Supervisor mode — one approval covers the daemon's life
 
 ```bash
-hush supervise --config ~/.hush/supervisors/openclaw.toml
-hush supervise --config ~/.hush/supervisors/hermes.toml
+hush supervise --config ~/.hush/supervisors/<daemon>.toml
+# (one supervisor per daemon; the operator copies deploy/examples/supervisors/example-daemon.toml
+#  and renames per-daemon, then registers a launchd/systemd unit per daemon)
 ```
 
 The supervisor owns auth state and refresh timing. Children that crash or are
@@ -182,9 +184,9 @@ eval $(hush request --scope ... --reason ... --format eval)
    to `/h/{prefix}/claim`.
 4. Server verifies: signature ↔ registered key, IP ↔ allowlist, nonce
    uniqueness within 60s, timestamp within ±30s.
-5. Server sends Discord DM to Z with machine name, scope, reason, requested
-   TTL, and approval buttons.
-6. Z taps `Approve <ttl>` (or `Deny`).
+5. Server sends Discord DM to the configured approver with machine name,
+   scope, reason, requested TTL, and approval buttons.
+6. The approver taps `Approve <ttl>` (or `Deny`).
 7. Server issues an ES256K-signed JWT with the approved scope, IP binding,
    `max_uses`, ephemeral pubkey claim, and `session_type="interactive"`.
 8. Client receives the JWT and fetches each secret via
@@ -230,11 +232,12 @@ eval $(hush request --scope ... --reason ... --format eval)
 
 ### 8.2 First boot
 
-1. launchd starts `openclaw-hush-launch.sh` and `hermes-hush-launch.sh`.
+1. launchd/systemd starts each `<daemon>-hush-launch.sh` (a copy of the
+   committed `deploy/supervise-launch.sh.template` renamed per-daemon).
 2. Each script `exec`s `hush supervise --config <path>`.
 3. Each supervisor POSTs `/claim` with `session_type=supervisor` →
    server → Discord DM labeled `[DAEMON]`.
-4. Z taps Approve on each → JWTs issued.
+4. The approver taps Approve on each → JWTs issued.
 5. Supervisor runs validators, fetches secrets, forks child with env injected.
 6. Plaintext secrets zeroed from supervisor memory (unless grace cache enabled).
 
@@ -250,7 +253,7 @@ eval $(hush request --scope ... --reason ... --format eval)
 1. Child exits with `code 78` (`EX_CONFIG`).
 2. Supervisor unconditionally enters `awaiting-approval`, regardless of TTL.
 3. Discord alert: `[STALE] Child Exit 78`.
-4. Z runs `hush secret rotate <name>` on vault host, then
+4. The operator runs `hush secret rotate <name>` on the vault host, then
    `hush client refresh --supervisor <name>` on the agent host.
 5. Supervisor refetches and forks a fresh child.
 
@@ -258,7 +261,7 @@ eval $(hush request --scope ... --reason ... --format eval)
 
 1. At `[refresh_window_start, refresh_window_end]` local time, supervisor
    sends `[DAEMON] Refresh` DM.
-2. Z taps Approve → new JWT covers next 20h.
+2. The approver taps Approve → new JWT covers next 20h.
 3. Child is **never** restarted purely because of TTL expiry.
 4. Ignored prompt → T-30min fallback nudge fires.
 
@@ -278,7 +281,7 @@ on-host plaintext surface (child + supervisor); see `docs/SECURITY.md` §
 | Failure | Behavior |
 |---------|----------|
 | Discord unreachable | Existing tokens validate normally. New `/claim` returns 503 with `Retry-After`. Health endpoint reports `discord_connected: false`. |
-| Tailscale disconnect on agent host | Supervisor backs off exponentially up to remaining TTL. **No Discord prompts** (network blips MUST NOT spam Z). |
+| Tailscale disconnect on agent host | Supervisor backs off exponentially up to remaining TTL. **No Discord prompts** (network blips MUST NOT spam the approver). |
 | Vault server restart | Supervisor's next silent refill returns 401 unknown-jti → transitions to `awaiting-approval` cleanly. Child keeps running (refill is what's gated, not the child). |
 | Boot ordering (hush before Tailscale) | Backoff up to `boot_retry_timeout` (default 10m), log WARN at each attempt. On exhaustion, exit non-zero so launchd retries. |
 | Clock skew at supervisor or server | Refuse to start if `systemsetup -getusingnetworktime` / `timedatectl show` reports unsynced. |

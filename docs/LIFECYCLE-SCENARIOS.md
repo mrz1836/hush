@@ -40,8 +40,8 @@ Flow:
 2. client derives its machine key and ephemeral ECIES keypair
 3. client sends signed `/claim`
 4. vault server verifies signature, IP, nonce, timestamp
-5. Discord DM is sent to Z
-6. Z approves
+5. Discord DM is sent to the configured approver
+6. the approver approves
 7. server returns scoped interactive JWT
 8. client fetches secrets one by one via `/s/<name>`
 9. each response is ECIES-encrypted to the ephemeral client key
@@ -59,12 +59,12 @@ Expected outcomes:
 ## Scenario 2 — first daemon bootstrap
 
 Flow:
-1. launchd/systemd starts `hush supervise --config ~/.hush/supervisors/openclaw.toml`
+1. launchd/systemd starts `hush supervise --config ~/.hush/supervisors/<daemon>.toml`
 2. supervisor validates config, NTP, pid file, server reachability, and Tailscale presence
 3. supervisor enters `fetching`
 4. supervisor sends signed `/claim` with `session_type=supervisor`
-5. Discord DM labeled `[DAEMON]` reaches Z
-6. Z approves requested TTL
+5. Discord DM labeled `[DAEMON]` reaches the configured approver
+6. the approver approves requested TTL
 7. supervisor stores JWT + ephemeral ECIES key in mlocked memory
 8. supervisor fetches all scoped secrets
 9. configured validators run before child start
@@ -121,9 +121,9 @@ Flow:
 3. supervisor does not silently restart the child with the same session
 4. supervisor enters `awaiting-approval`
 5. supervisor sends a `[STALE] Child Exit 78` alert
-6. Z rotates/fixes the secret and either:
+6. the operator rotates/fixes the secret and either:
    - approves a fresh session request, or
-   - triggers `hush client refresh --supervisor openclaw`
+   - triggers `hush client refresh --supervisor <daemon>`
 7. supervisor refetches fresh secrets, validates them, and restarts child
 
 Expected outcomes:
@@ -173,7 +173,7 @@ Flow:
 1. supervisor tracks `session_expires_at`
 2. next refresh window arrives (default `09:00-10:00` local)
 3. supervisor sends `[DAEMON] Refresh` prompt
-4. Z approves from phone
+4. the approver approves from phone
 5. supervisor updates JWT for next session window
 6. child keeps running throughout; no forced restart solely for refresh
 
@@ -191,13 +191,13 @@ Without grace cache:
 3. child later crashes before the morning refresh approval
 4. supervisor cannot silently refill because session is expired
 5. supervisor enters `awaiting-approval`
-6. child stays down until Z approves in the morning
+6. child stays down until the approver approves in the morning
 
 With grace cache enabled:
 1. session expires overnight
 2. child later crashes within `cache_grace_ttl`
 3. supervisor uses cached plaintext secret set from mlocked memory
-4. child restarts without waking Z at 3am
+4. child restarts without paging the approver at 3am
 5. supervisor still prompts for fresh approval in the next refresh window
 
 Expected outcomes:
@@ -241,7 +241,7 @@ Expected outcomes:
 ## Scenario 12 — agent checks status before long task
 
 Flow:
-1. downstream agent runs `hush client status --supervisor openclaw --json`
+1. downstream agent runs `hush client status --supervisor <daemon> --json`
 2. local status socket returns freshness/health state
 3. agent sees required scopes healthy and proceeds
    or
@@ -256,11 +256,11 @@ Expected outcomes:
 ## Scenario 13 — secret rotated on vault host during active daemon session
 
 Flow:
-1. Z updates a secret via `hush secret rotate ...`
+1. the operator updates a secret via `hush secret rotate ...`
 2. vault file is atomically rewritten
 3. server reloads vault via SIGHUP or equivalent atomic swap path
 4. running child still has old env vars until next restart/refetch
-5. Z or automation runs `hush client refresh --supervisor <name>`
+5. the operator or automation runs `hush client refresh --supervisor <name>`
 6. supervisor refetches the rotated secret, validates it, and restarts child cleanly
 
 Expected outcomes:

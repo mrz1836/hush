@@ -8,7 +8,7 @@ Ship a working private hush system that proves:
 - Discord can gate fresh access cleanly
 - short-lived scoped sessions work
 - supervisor lifecycle solves daemon restart pain
-- stale credentials are visible to both Z and agents
+- stale credentials are visible to both the operator and agents
 
 This is a private-system MVP first, not a public-launch MVP.
 
@@ -20,7 +20,8 @@ This is a private-system MVP first, not a public-launch MVP.
 - ES256K JWT sessions with scope, TTL, IP binding, and interactive use limits
 - ECIES-encrypted secret delivery
 - `hush request --exec` shell/process injection flow
-- `hush supervise` daemon lifecycle for OpenClaw and Hermes
+- `hush supervise` daemon lifecycle for any long-running daemon (the operator
+  configures one supervisor TOML per daemon)
 - validator-based stale-credential detection
 - local status socket plus `hush client status` / `hush client refresh`
 - atomic vault rotation + reload path

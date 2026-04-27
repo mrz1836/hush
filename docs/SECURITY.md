@@ -28,7 +28,7 @@ find ~ -name "signing.key" -o -name "*.pem" -o -name "*.key"
 
 | Zone | Trust |
 |------|-------|
-| Z (the human) via Discord on a 2FA-protected phone | Fully trusted |
+| The operator (the configured human approver) via Discord on a 2FA-protected phone | Fully trusted |
 | Discord (delivery channel) | Trusted as transport, NOT as a security boundary |
 | Tailscale mesh | Trusted as transport |
 | Vault host process (mlocked, ACL-restricted Keychain) | Semi-trusted — root compromise still cannot issue new sessions |
@@ -63,7 +63,7 @@ find ~ -name "signing.key" -o -name "*.pem" -o -name "*.key"
 | Token replayed | `max_uses` tracked server-side. After exhaustion, token is dead. |
 | Token used from wrong machine | JWT `client_ip` claim is checked against requesting Tailscale IP every fetch. |
 | Request replay attack | Client nonce + timestamp on every request; nonce cache rejects duplicates within 60s; timestamps must be ±30s. |
-| Attacker approves via Discord | Requires Z's authenticated Discord session on his phone. Discord account is 2FA. |
+| Attacker approves via Discord | Requires the operator's authenticated Discord session on their phone. Discord account is 2FA. |
 | Brute-force vault passphrase | Argon2id (time=4, memory=256MB, threads=4). Impractical even with 2026 GPU capabilities. |
 | Vault file stolen from disk/backup | AES-256-GCM. Useless without passphrase. Safe to back up. |
 | Audit trail tampered with | Every event ECDSA-signed and hash-chained. Modification breaks the chain. |
@@ -256,7 +256,7 @@ and reliability concern.
 - Crashes trigger new approvals repeatedly.
 - Overnight failures become outages.
 - Humans get trained to auto-approve.
-- A 3am OpenClaw crash blocks the gateway until morning.
+- A 3am daemon crash blocks the service until morning.
 
 **With a supervisor:**
 - One approval covers a bounded session.

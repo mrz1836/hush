@@ -239,7 +239,7 @@ If a scenario exists in docs but not in tests, the implementation is incomplete.
 
 ## Required gates before public release
 
-Before Z makes the repo public, all of these should pass:
+Before the project owner makes the repo public, all of these should pass:
 
 - `magex format:fix`
 - `magex lint`

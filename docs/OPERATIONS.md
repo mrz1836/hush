@@ -67,7 +67,7 @@ These are the operational topics the final implementation must cover:
 - vault server start/stop/reload
 - client registration / machine-index assignment
 - interactive session request workflow
-- daemon supervisor deployment for OpenClaw and Hermes
+- daemon supervisor deployment (one supervisor TOML per long-running daemon)
 - vault secret rotation
 - `hush client refresh` flow after rotation
 - validator failure response

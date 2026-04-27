@@ -41,14 +41,14 @@ to enforce them.
 
 | User | Role | Primary interaction |
 |------|------|---------------------|
-| Z (the human) | Vault owner, sole approver | Discord DMs on phone; `hush secret` on vault host |
-| OpenClaw daemon | Long-running agent runtime on the Mac Mini | Receives secrets via env vars from `hush supervise` |
-| Hermes daemon | Long-running gateway on the Mac Mini (T-161) | Receives secrets via env vars from `hush supervise` |
-| Interactive shells | Z's day-to-day dev sessions | `hush request --exec "zsh"` wraps the shell, not the app |
-| Downstream agents | Claude Code, cron jobs, ACP threads | Query `hush client status --json` to refuse running on stale creds |
+| The operator (vault owner) | Sole configured approver in v0.1.0 | Discord DMs on phone; `hush secret` on vault host |
+| Long-running daemons | Any service started by launchd/systemd that needs secrets at process startup (e.g. AI-agent runtimes, gateway services) | Receives secrets via env vars from `hush supervise` |
+| Interactive shells | The operator's day-to-day dev sessions | `hush request --exec "zsh"` wraps the shell, not the app |
+| Downstream agents | CLI tools, cron jobs, AI-agent processes | Query `hush client status --json` to refuse running on stale creds |
 
 Out-of-band users are explicitly excluded: there is no service account, no
-remote API for third parties, no shared Discord approval pool. Only Z approves.
+remote API for third parties, no shared Discord approval pool. Only the
+single configured operator approves.
 
 ---
 
@@ -104,7 +104,7 @@ allowlist, nonce uniqueness within a 60s window, and timestamp freshness
 (±30s).
 
 ### FR-7 — Discord approval flow
-A dedicated Discord bot named `hush` sends interactive DMs to Z's user ID
+A dedicated Discord bot named `hush` sends interactive DMs to the configured owner's user ID
 when `/claim` is hit. DMs show machine name, client IP, scope, reason,
 requested TTL, and `[Approve <ttl>] [Deny]` buttons. Supervisor sessions get a
 distinct `[DAEMON]` label with `[Approve <ttl>]` only (no 15-minute button).
@@ -157,7 +157,7 @@ Each running supervisor binds a Unix socket at:
 `GET /status` returns JSON:
 ```json
 {
-  "supervisor": "openclaw",
+  "supervisor": "<daemon>",
   "session_expires_at": "2026-04-15T06:12:00-07:00",
   "refresh_window_next": "2026-04-15T09:00:00-07:00",
   "scope_healthy": ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"],
@@ -262,9 +262,9 @@ value with no in-flight request failures.
 
 ### AC-3 — Discord approval flow (interactive)
 `hush request --scope X --reason Y --ttl 1h --exec "env | grep X"` triggers a
-DM to Z, waits for approval, and on approval injects the secret into the child
-process whose stdout shows the secret value. Denial returns exit 3 with no
-secret leak.
+DM to the configured approver, waits for approval, and on approval injects
+the secret into the child process whose stdout shows the secret value. Denial
+returns exit 3 with no secret leak.
 
 ### AC-4 — JWT lifecycle
 After approval, the issued JWT (a) is rejected from a different IP, (b) is
@@ -299,8 +299,8 @@ secret value. Decrypting with the wrong ephemeral private key fails cleanly.
 ECIES/signing packages. `magex fuzz` runs vault decrypt + ECIES decrypt + JWT
 validate fuzz targets for ≥ 60s each without crash.
 
-### AC-10 — Supervisor lifecycle (11 named scenarios)
-The supervisor integration suite passes the 11 scenarios documented in
+### AC-10 — Supervisor lifecycle (15 named scenarios)
+The supervisor integration suite passes the 15 scenarios documented in
 `docs/LIFECYCLE-SCENARIOS.md`:
 
 | # | Scenario |
@@ -316,6 +316,10 @@ The supervisor integration suite passes the 11 scenarios documented in
 | 9 | Overnight expiry with and without grace cache |
 | 10 | Discord unavailable during new claim |
 | 11 | Tailscale boot retry / startup ordering recovery |
+| 12 | Agent status check before long task |
+| 13 | Secret rotated on vault host during active daemon session |
+| 14 | Duplicate supervisor start attempt |
+| 15 | Log-pattern watchdog sees auth failure string |
 
 ---
 
