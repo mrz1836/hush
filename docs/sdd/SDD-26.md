@@ -38,9 +38,9 @@
 
 ## How to run this chunk
 
-Run **5 separate Claude Code sessions**, one per prompt below. The
-`extensions.yml` hooks auto-commit each artifact (accept in Prompts 1,
-3, 4; conditionally in Prompt 2; **decline** in Prompt 5).
+Run **5 separate Claude Code sessions**, one per prompt below. All
+commits for this chunk are deferred to a single combined commit at the
+end of Prompt 5 (Implement). Do not commit between phases.
 
 ---
 
@@ -102,7 +102,6 @@ If /speckit-specify produces [NEEDS CLARIFICATION] markers, check
 each against the chunk contract / constitution. Otherwise leave
 the marker — /speckit-clarify will handle it next session.
 
-When the after_specify hook offers to auto-commit spec.md, accept.
 ```
 
 ---
@@ -116,7 +115,6 @@ Read /Users/mrz/projects/hush/docs/sdd/SDD-26.md.
 
 Run: /speckit-clarify
 
-Accept the after_clarify auto-commit only if spec.md actually changed.
 ```
 
 ---
@@ -204,7 +202,6 @@ Constitutional principles in scope: V, VIII, IX, X.
 
 Run: /speckit-plan
 
-Accept the after_plan auto-commit.
 ```
 
 ---
@@ -219,7 +216,6 @@ Read /Users/mrz/projects/hush/docs/sdd/SDD-26.md.
 Run:
   /speckit-tasks "TDD-mandatory per Constitution VIII: include a test-writing task for every behaviour contract BEFORE the implementation task. Coverage target: 90%. For each of the five providers (anthropic, anthropic-oauth, openai, google-ai, github), tasks required: TestValidator_<Name>_HappyPath_200, TestValidator_<Name>_StaleCredential_401, TestValidator_<Name>_StaleCredential_403, TestValidator_<Name>_Timeout, TestValidator_<Name>_NetworkError, TestValidator_<Name>_NoLeakOnError (sentinel SECRET_SHOULD_NEVER_APPEAR_26). Plus shared tests: TestRegistry_GetByName, TestRegistry_GetUnknownName_FalseFound, TestValidator_NeverMaterializesString (manual code review checklist task — assert Use(fn) pattern in every provider). All tests use httptest.Server — NEVER live providers. Final phase MUST include magex format:fix, magex lint, magex test:race."
 
-Accept the after_tasks auto-commit.
 ```
 
 ---
@@ -255,8 +251,7 @@ After /speckit-implement completes, do these steps from repo root:
    (FR-13 entry).
 7. Mark SDD-26 status `done` in docs/SDD-PLAYBOOK.md.
 
-DECLINE the after_implement auto-commit. Make one combined commit
-instead:
+Make one combined commit:
   git add internal/supervise/validators/ docs/PACKAGE-MAP.md \
           docs/AC-MATRIX.md docs/SDD-PLAYBOOK.md \
           specs/<feature-dir>/tasks.md

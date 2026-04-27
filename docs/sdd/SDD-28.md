@@ -39,9 +39,9 @@
 
 ## How to run this chunk
 
-Run **5 separate Claude Code sessions**, one per prompt below. The
-`extensions.yml` hooks auto-commit each artifact (accept in Prompts 1,
-3, 4; conditionally in Prompt 2; **decline** in Prompt 5).
+Run **5 separate Claude Code sessions**, one per prompt below. All
+commits for this chunk are deferred to a single combined commit at the
+end of Prompt 5 (Implement). Do not commit between phases.
 
 ---
 
@@ -101,7 +101,6 @@ If /speckit-specify produces [NEEDS CLARIFICATION] markers, check
 each against the chunk contract / constitution. Otherwise leave
 the marker — /speckit-clarify will handle it next session.
 
-When the after_specify hook offers to auto-commit spec.md, accept.
 ```
 
 ---
@@ -115,7 +114,6 @@ Read /Users/mrz/projects/hush/docs/sdd/SDD-28.md.
 
 Run: /speckit-clarify
 
-Accept the after_clarify auto-commit only if spec.md actually changed.
 ```
 
 ---
@@ -200,7 +198,6 @@ Constitutional principles in scope: V, VIII, IX, X.
 
 Run: /speckit-plan
 
-Accept the after_plan auto-commit.
 ```
 
 ---
@@ -216,7 +213,6 @@ docs/LIFECYCLE-SCENARIOS.md (the 8 alert class names live there).
 Run:
   /speckit-tasks "TDD-mandatory per Constitution VIII: include a test-writing task for every behaviour contract BEFORE the implementation task. Coverage target: 90%. For each of the 8 alert classes (names per docs/LIFECYCLE-SCENARIOS.md): TestAlert_<Name>_RenderSnapshot (assert label prefix + body format) and TestAlert_<Name>_TierBinding (assert the class maps to the documented tier). Plus tier-routing tests: TestRoute_CriticalSendsDM, TestRoute_WarningPostsToAuditChannel, TestRoute_InfoLogsOnly_NoDiscordCall (use a fake discord.Approver that fails the test if called for an Info-tier alert). Plus rate-limit tests: TestRateLimit_PerSupervisorBlocksExcess, TestRateLimit_PerPatternBlocksExcess. Plus negative tests: TestRoute_UnknownClass_TypedError. Final phase MUST include magex format:fix, magex lint, magex test:race."
 
-Accept the after_tasks auto-commit.
 ```
 
 ---
@@ -254,8 +250,7 @@ After /speckit-implement completes, do these steps from repo root:
    file paths.
 8. Mark SDD-28 status `done` in docs/SDD-PLAYBOOK.md.
 
-DECLINE the after_implement auto-commit. Make one combined commit
-instead:
+Make one combined commit:
   git add internal/discord/alerts/ docs/PACKAGE-MAP.md \
           docs/AC-MATRIX.md docs/SDD-PLAYBOOK.md \
           specs/<feature-dir>/tasks.md

@@ -45,9 +45,9 @@
 ## How to run this chunk
 
 Run **5 separate Claude Code sessions**, one per prompt below. Do NOT
-chain them in one session. The `extensions.yml` git hooks auto-commit
-each artifact (accept in Prompts 1, 3, 4; conditionally in Prompt 2;
-**decline** in Prompt 5 — Prompt 5 makes one combined commit).
+chain them in one session. All commits for this chunk are deferred
+to a single combined commit at the end of Prompt 5 (Implement). Do
+not commit between phases.
 
 ---
 
@@ -113,7 +113,6 @@ each against the chunk contract / constitution. If the contract
 dictates the answer, fill it in. Otherwise leave the marker —
 /speckit-clarify will handle it next session.
 
-When the after_specify hook offers to auto-commit spec.md, accept.
 ```
 
 ---
@@ -129,7 +128,6 @@ contract already answers).
 
 Run: /speckit-clarify
 
-Accept the after_clarify auto-commit only if spec.md actually changed.
 ```
 
 ---
@@ -195,7 +193,6 @@ Constitutional principles in scope: III, VIII, X, XI.
 
 Run: /speckit-plan
 
-Accept the after_plan auto-commit.
 ```
 
 ---
@@ -214,7 +211,6 @@ Pass TDD as the command argument.
 Run:
   /speckit-tasks "TDD-mandatory per Constitution VIII: include a test-writing task for every behaviour contract BEFORE the implementation task. Coverage target: 100%. Tests required: TestVault_RoundTrip_{0,1,5,500}Secrets, TestVault_LoadWrongPass_ReturnsAuthFailed, TestVault_LoadTruncatedAtMagic_ShortHeader, TestVault_LoadTruncatedAtSalt_ShortHeader, TestVault_LoadTruncatedAtNonce_ShortHeader, TestVault_LoadTruncatedCiphertext_AuthFailed, TestVault_LoadLooseFileMode_PermsLoose, TestVault_LoadLooseParentMode_PermsLoose, TestVault_SaveAtomic_NoIntermediate, TestVault_SaveSetsMode0600, TestStore_ConcurrentGet (100 goroutines, race-clean), and FuzzVaultDecode (no panic, no >50MB allocation, every error typed). Sentinel-leak: TestVault_NoLeakInError packs SECRET_SHOULD_NEVER_APPEAR_3 and asserts absence from err.Error() AND captured log. Final phase MUST include magex format:fix, magex lint, magex test:race, and go test -fuzz=FuzzVaultDecode -fuzztime=60s ./internal/vault/"
 
-Accept the after_tasks auto-commit.
 ```
 
 ---
@@ -247,8 +243,7 @@ After /speckit-implement completes, do these steps from repo root:
    (note: SIGHUP reload remains SDD-10's responsibility).
 7. Mark SDD-03 status `done` in docs/SDD-PLAYBOOK.md.
 
-DECLINE the after_implement auto-commit. Make one combined commit
-instead:
+Make one combined commit:
   git add internal/vault/ docs/PACKAGE-MAP.md docs/AC-MATRIX.md \
           docs/SDD-PLAYBOOK.md specs/<feature-dir>/tasks.md
   git commit -m "feat(vault): HUSH file format + AES-256-GCM + atomic write (SDD-03)"

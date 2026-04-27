@@ -33,9 +33,9 @@
 
 ## How to run this chunk
 
-Run **5 separate Claude Code sessions**, one per prompt below. The
-`extensions.yml` hooks auto-commit each artifact (accept in Prompts 1,
-3, 4; conditionally in Prompt 2; **decline** in Prompt 5).
+Run **5 separate Claude Code sessions**, one per prompt below. All
+commits for this chunk are deferred to a single combined commit at the
+end of Prompt 5 (Implement). Do not commit between phases.
 
 This is a config + docs chunk — the spec and plan are short.
 
@@ -101,7 +101,6 @@ If /speckit-specify produces [NEEDS CLARIFICATION] markers, check
 each against the chunk contract / constitution. Otherwise leave
 the marker — /speckit-clarify will handle it next session.
 
-When the after_specify hook offers to auto-commit spec.md, accept.
 ```
 
 ---
@@ -115,7 +114,6 @@ Read /Users/mrz/projects/hush/docs/sdd/SDD-30.md.
 
 Run: /speckit-clarify
 
-Accept the after_clarify auto-commit only if spec.md actually changed.
 ```
 
 ---
@@ -186,7 +184,6 @@ Constitutional principles in scope: I, VI.
 
 Run: /speckit-plan
 
-Accept the after_plan auto-commit.
 ```
 
 ---
@@ -201,7 +198,6 @@ Read /Users/mrz/projects/hush/docs/sdd/SDD-30.md.
 Run:
   /speckit-tasks "Tasks: write TestExamples_GenericTOMLValidates BEFORE writing the example file (test fails until file exists, then passes). Then write deploy/examples/supervisors/example-daemon.toml. Then verify docs/TAILSCALE-ACLS.md is accurate (compare to docs/SECURITY.md Layer 0 + docs/CONFIG-SCHEMA.md listen_addr). Then verify docs/CLEAN-MACHINE.md is accurate (compare to deploy/install.sh from SDD-29). Final tasks: TestExamples_NoOperatorSpecificNames (grep the example for any name that looks operator-specific — should match zero). Final phase MUST include magex format:fix, magex lint, magex test:race."
 
-Accept the after_tasks auto-commit.
 ```
 
 ---
@@ -237,8 +233,7 @@ After /speckit-implement completes, do these steps from repo root:
    example file path.
 8. Mark SDD-30 status `done` in docs/SDD-PLAYBOOK.md.
 
-DECLINE the after_implement auto-commit. Make one combined commit
-instead:
+Make one combined commit:
   git add deploy/examples/ docs/TAILSCALE-ACLS.md docs/CLEAN-MACHINE.md \
           docs/PACKAGE-MAP.md docs/AC-MATRIX.md docs/SDD-PLAYBOOK.md \
           internal/supervise/config/ specs/<feature-dir>/tasks.md

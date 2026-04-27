@@ -41,9 +41,9 @@
 
 ## How to run this chunk
 
-Run **5 separate Claude Code sessions**, one per prompt below. The
-`extensions.yml` hooks auto-commit each artifact (accept in Prompts 1,
-3, 4; conditionally in Prompt 2; **decline** in Prompt 5).
+Run **5 separate Claude Code sessions**, one per prompt below. All
+commits for this chunk are deferred to a single combined commit at the
+end of Prompt 5 (Implement). Do not commit between phases.
 
 This is the "second-to-last" chunk by design — it MUST run after
 SDD-31 (CI gates locked) and BEFORE SDD-32 (v0.1.0 tag). The point
@@ -127,7 +127,6 @@ If /speckit-specify produces [NEEDS CLARIFICATION] markers, check
 each against the chunk contract / constitution. Otherwise leave
 the marker — /speckit-clarify will handle it next session.
 
-When the after_specify hook offers to auto-commit spec.md, accept.
 ```
 
 ---
@@ -141,7 +140,6 @@ Read /Users/mrz/projects/hush/docs/sdd/SDD-33.md.
 
 Run: /speckit-clarify
 
-Accept the after_clarify auto-commit only if spec.md actually changed.
 ```
 
 ---
@@ -274,7 +272,6 @@ every principle.
 
 Run: /speckit-plan
 
-Accept the after_plan auto-commit.
 ```
 
 ---
@@ -289,7 +286,6 @@ Read /Users/mrz/projects/hush/docs/sdd/SDD-33.md.
 Run:
   /speckit-tasks "Tasks (audit-then-fix loop). The audit categories A..K from the plan each become a task block. Audit tasks come first (produce the FINDINGS list); fix tasks follow (one fix task per finding, or one batched fix task per category). Specific tasks required: A1 audit-internal-exports (go doc per package), A2 audit-symbol-usage (grep), A3 audit-todo-fixme-xxx, A4 audit-naming-consistency, B5 reorganize-package-map, C6 verify-ac-matrix-paths, D7 verify-architecture-diagram, E8 verify-fuzz-targets, F9 rewrite-readme-if-needed (with manual quick-start dry-run sub-task), G10 update-implementation-plan-actuals, H11 decide-specs-cleanup-policy, I12 write-check-package-map-vs-code-script (with self-test), J13 operator-name-leak-check-whole-tree, K14 constitution-recompliance-check. Plus one summary task: SUMMARY produce-findings-report. Final phase MUST include magex format:fix, magex lint, magex test:race, magex test:race -tags=integration, AND scripts/check-package-map-vs-code.sh."
 
-Accept the after_tasks auto-commit.
 ```
 
 ---
@@ -336,9 +332,8 @@ these steps from repo root:
    chunk done or skipped).
 9. Mark SDD-33 status `done` in docs/SDD-PLAYBOOK.md.
 
-DECLINE the after_implement auto-commit. Make one combined commit
-instead (or split per category if the diff is too large to review;
-note your choice in the final message):
+Make one combined commit (or split per category if the diff is too
+large to review; note your choice in the final message):
 
   git add -A   (be careful — review with git status first)
   git commit -m "chore: final repo + docs overhaul (SDD-33)

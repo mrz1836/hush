@@ -41,9 +41,9 @@
 
 ## How to run this chunk
 
-Run **5 separate Claude Code sessions**, one per prompt below. The
-`extensions.yml` hooks auto-commit each artifact (accept in Prompts 1,
-3, 4; conditionally in Prompt 2; **decline** in Prompt 5).
+Run **5 separate Claude Code sessions**, one per prompt below. All
+commits for this chunk are deferred to a single combined commit at the
+end of Prompt 5 (Implement). Do not commit between phases.
 
 This is a verify-and-polish-and-tag chunk — most files already
 exist; this chunk closes the loop with the v0.1.0 release tag.
@@ -117,7 +117,6 @@ each against the chunk contract / constitution / existing files.
 Otherwise leave the marker — /speckit-clarify will handle it
 next session.
 
-When the after_specify hook offers to auto-commit spec.md, accept.
 ```
 
 ---
@@ -131,7 +130,6 @@ Read /Users/mrz/projects/hush/docs/sdd/SDD-32.md.
 
 Run: /speckit-clarify
 
-Accept the after_clarify auto-commit only if spec.md actually changed.
 ```
 
 ---
@@ -214,7 +212,6 @@ Constitutional principles in scope: I, VIII.
 
 Run: /speckit-plan
 
-Accept the after_plan auto-commit.
 ```
 
 ---
@@ -229,7 +226,6 @@ Read /Users/mrz/projects/hush/docs/sdd/SDD-32.md.
 Run:
   /speckit-tasks "Tasks (verify-and-polish-and-tag): write the three verification scripts FIRST (check-ac-matrix.sh, check-playbook.sh, check-no-operator-names.sh) so we can run them as gates. Then for each existing file in scope, do a verify task (read it; cross-check against current code/docs/AC) followed by a polish task (apply needed corrections). Quick-start tasks: write a fresh-VM quick-start procedure into CONTRIBUTING.md if not already there; perform the procedure on a clean macOS or Linux VM/container and record the result. Link-check task: run markdown-link-check over docs/ and README.md. Pre-tag verification tasks (MUST all pass before tagging): scripts/check-ac-matrix.sh, scripts/check-playbook.sh, scripts/check-no-operator-names.sh, CI green on master, repo-root SECURITY.md != docs/SECURITY.md content. Final tasks: .goreleaser.yml signing review; git tag -a v0.1.0; goreleaser dry-run produces signed darwin+linux × amd64+arm64 artefacts; verify tag annotation. Final phase MUST include magex format:fix, magex lint, magex test:race, magex test:race -tags=integration."
 
-Accept the after_tasks auto-commit.
 ```
 
 ---
@@ -286,8 +282,7 @@ Only after all 15 steps above pass:
 16. Cut the annotated tag:
      git tag -a v0.1.0 -m "hush v0.1.0"
      git tag -v v0.1.0   (confirm annotation; signature if signed)
-17. DECLINE the after_implement auto-commit. Make one combined
-    commit instead:
+17. Make one combined commit:
      git add docs/ scripts/ .goreleaser.yml \
              specs/<feature-dir>/tasks.md
      git commit -m "release: hush v0.1.0 (SDD-32)"
