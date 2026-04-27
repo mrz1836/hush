@@ -32,6 +32,12 @@ the foundation of the seven-layer crypto stack documented in the project's
 constitution; correctness here is load-bearing for every later acceptance
 criterion that depends on a hush key.
 
+## Clarifications
+
+### Session 2026-04-27
+
+- Q: When `DeriveMasterSeed(ctx, ...)` is invoked and `ctx` is cancelled — at entry or mid-Argon2id — what should the caller observe? → A: Check `ctx.Err()` at entry only; if non-nil, return it. Otherwise run Argon2id to completion regardless of subsequent cancellation.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 — Bootstrap: derive a fresh key hierarchy (Priority: P1)
@@ -185,6 +191,11 @@ two strings differ. No persistence or network involvement.
 - **Determinism under concurrent calls**: parallel derivations from the
   same inputs MUST return identical outputs; no shared mutable state may
   cause divergence.
+- **Pre-cancelled context**: a context that is already cancelled or
+  expired at the moment of the derivation call MUST cause the function
+  to return the context error before any key-derivation work is
+  performed. A context that becomes cancelled after the call has begun
+  MUST NOT abort the in-progress derivation.
 - **No partial success**: if any input validation fails, no derived material
   is returned to the caller — the error path leaks nothing about the
   passphrase or seed.
@@ -249,6 +260,15 @@ two strings differ. No persistence or network involvement.
   before the key-derivation function is invoked. A rejected call MUST
   return promptly (no multi-second delay caused by running Argon2id on
   invalid input).
+- **FR-013**: Master-seed derivation MUST inspect the caller-supplied
+  context exactly once, at function entry. If the context is already
+  cancelled or expired at that point, the function MUST return the
+  context error without invoking the key-derivation function. Otherwise
+  the function MUST run the key-derivation function to completion;
+  cancellation arriving after entry MUST NOT abort the derivation, since
+  the underlying Argon2id primitive is not interruptible. This is the
+  cancellation contract for every exported derivation function in this
+  feature that accepts a context.
 
 ### Key Entities
 
