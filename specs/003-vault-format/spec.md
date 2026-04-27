@@ -5,6 +5,16 @@
 **Status**: Draft
 **Input**: User description: "internal/vault: load and save the hush vault file (binary HUSH format, AES-256-GCM, atomic write with 0600 mode and 0700 parent), and serve secrets as SecureBytes-wrapped values via an in-memory Store"
 
+## Clarifications
+
+### Session 2026-04-27
+
+- Q: How should `Store.Get` behave after `Store.Destroy()` has been called? → A: Add a new sentinel `ErrStoreDestroyed` as a distinct, programmatically-distinguishable failure mode (option A); FR-028 list grows to 7 entries and the chunk-contract exported-API list is amended at impl time.
+- Q: How should `Save` handle a duplicate name in its input list? → A: Reject up-front with a new typed sentinel `ErrDuplicateName` before any encryption or write occurs (option A); FR-028 list grows by one; pre-pass de-duplication check runs before the AES-GCM seal step.
+- Q: Should `Load` enforce a hard upper bound on vault file size before reading? → A: Yes — pre-stat the file and reject anything larger than 64 MiB with a new typed sentinel `ErrFileTooLarge` before any allocation or read (option A); FR-028 list grows by one; this defends the production Load path directly rather than relying on the fuzz harness alone.
+- Q: Should `Save` clean up its own working file on a controlled mid-flight error (fsync failure, seal failure, post-tmp-create permission check failure)? → A: Yes — best-effort `os.Remove(<path>.tmp)` on every error path inside `Save` (option A); remove-error itself is logged but not surfaced; the SIGKILL case still leaves orphans for the upstream sweep.
+- Q: Should the spec define minimal validation rules for the `name` and `description` fields of a secret entry? → A: Yes — enforce at the vault package boundary (option A): name is non-empty, ≤256 bytes, printable ASCII excluding control/NUL; description is ≤4096 bytes, no NUL/control; violations return a new typed sentinel `ErrInvalidName`; checked in `Save` alongside the duplicate-name pre-pass.
+
 ## Overview
 
 The `internal/vault` package owns the on-disk vault file: a binary
@@ -300,10 +310,11 @@ from every other named failure in the package's surface.
   byte sequence (for example, a private-key bundle) must save and
   load with the value intact.
 - **Duplicate names within a save call**: Two entries in the input
-  list that share a name are an input error of the calling code
-  (rotation, init); behaviour for duplicate names is undefined for
-  this package and not relied upon by callers. Documented as a
-  caller-side invariant.
+  list that share a name MUST cause `Save` to return the named
+  "duplicate name" failure before any encryption is performed and
+  before any file (including the working file) is written. The
+  failure text MAY name the duplicated key; it MUST NOT include any
+  secret value.
 - **Get on the empty string**: Treated as any other unknown name —
   returns the "secret not found" failure.
 - **Concurrent retrievals during destruction**: The behaviour of the
@@ -314,11 +325,14 @@ from every other named failure in the package's surface.
   wins). Either outcome is safe; what the store must not do is
   return a partially-zeroed or otherwise corrupted payload.
 - **Save's intermediate working file is left behind**: If the
-  save process is killed between writing the working file and
-  committing it, the working file remains on disk but the target
-  path is unchanged. The next save, init, or cleanup pass clears
-  the orphan; the package itself does not enumerate or remove
-  prior orphans.
+  save process is killed (SIGKILL, host crash, OOM) between
+  writing the working file and committing it, the working file
+  remains on disk but the target path is unchanged. The next save,
+  init, or cleanup pass clears the orphan; the package itself does
+  not enumerate or remove prior orphans. For a controlled mid-flight
+  error (fsync failure, seal failure, post-tmp-create permission
+  check failure), the package DOES attempt a best-effort removal of
+  its own working file — see FR-013.
 - **Symlink at the target path**: Out of scope for this package —
   the parent layers (init, secret-CLI) place the vault file at the
   documented path; this package treats the target path as a regular
@@ -328,9 +342,9 @@ from every other named failure in the package's surface.
   with the wrong encryption key, must produce a failure whose
   rendered text contains zero occurrences of the sentinel and whose
   captured log output contains zero occurrences of the sentinel.
-- **Get is called after the store has been destroyed**: Returns a
-  distinct, named failure indicating the store is no longer usable;
-  no payload is materialised.
+- **Get is called after the store has been destroyed**: Returns
+  the named "store destroyed" failure (distinct from "secret not
+  found"); no payload is materialised.
 
 ## Requirements *(mandatory)*
 
@@ -376,7 +390,15 @@ from every other named failure in the package's surface.
 - **FR-008**: Each secret entry MUST carry exactly three fields: a
   human-readable name (the identifier callers use to retrieve it),
   a human-readable description (operator-facing context), and a
-  binary value (the secret material).
+  binary value (the secret material). The name MUST be non-empty,
+  at most 256 bytes long, and consist only of printable ASCII
+  characters (byte values `0x20`–`0x7E` inclusive); control
+  characters and NUL bytes are forbidden. The description MUST be
+  at most 4096 bytes long and MUST NOT contain NUL bytes or other
+  ASCII control characters (byte values `0x00`–`0x1F` and `0x7F`).
+  These rules close a log-injection / display-corruption class for
+  every downstream renderer (CLI listings, HTTP handlers,
+  structured-log lines).
 - **FR-009**: At no point during save or load MUST a secret value
   be materialised as a string-typed value. The decode path MUST
   place each secret value directly into a secure container (the
@@ -402,7 +424,14 @@ from every other named failure in the package's surface.
 - **FR-013**: If the save path fails partway through (any
   filesystem-level failure during the write or commit), the file
   at the target path MUST be unchanged from its pre-call state.
-  No partial or zero-length file MUST replace it.
+  No partial or zero-length file MUST replace it. Additionally,
+  the save path MUST attempt a best-effort removal of any working
+  file it created (typically `<path>.tmp` in the target directory)
+  before returning the error. A failure of this best-effort
+  removal MUST NOT be surfaced to the caller and MUST NOT mask the
+  original error; it MAY be logged. The SIGKILL case (process
+  death between working-file creation and rename) is unchanged: the
+  working file remains for the upstream cleanup sweep.
 - **FR-014**: After a successful save, the file at the target path
   MUST have mode `0600` (owner read+write only). The mode MUST be
   set by the save path itself rather than left to the umask.
@@ -430,6 +459,13 @@ from every other named failure in the package's surface.
 - **FR-019**: The load path MUST also stat the parent directory and
   refuse to proceed if its mode is laxer than `0700`. The failure
   MUST be the same named "permissions loose" failure.
+- **FR-019a**: As part of the same stat call, the load path MUST
+  reject any file whose size exceeds 64 MiB (67,108,864 bytes)
+  with the named "file too large" failure, before any read or
+  allocation of the file's contents. The cap is chosen to comfortably
+  exceed the in-scope worst case (≈500 secrets × multi-kilobyte
+  values) while bounding the per-call memory footprint of an
+  attacker-controlled file at the vault path.
 - **FR-020**: The load path MUST validate the on-disk envelope in
   order: identifying header → version byte → minimum length to
   contain salt + nonce + minimum authenticated ciphertext. A
@@ -468,8 +504,9 @@ from every other named failure in the package's surface.
   observable under race-detector instrumentation.
 - **FR-027**: The store MUST expose an explicit destroy operation
   that zeroes every internally-held secure container. After
-  destruction, retrieve-by-name operations MUST return a distinct,
-  named failure indicating the store is no longer usable; the
+  destruction, retrieve-by-name operations MUST return the named
+  "store destroyed" failure (programmatically distinguishable from
+  every other named failure on the package's surface); the
   destruction MUST be idempotent.
 
 **Failure classification**
@@ -492,6 +529,14 @@ from every other named failure in the package's surface.
     is laxer than this package permits)
   - secret not found (a retrieve-by-name targets a name that is
     not in the loaded store)
+  - store destroyed (a retrieve-by-name targets a store on which
+    the destroy operation has already been called)
+  - duplicate name (a save call's input list contains two or more
+    entries that share a name)
+  - file too large (the file at the load target path exceeds the
+    package's per-call size cap of 64 MiB)
+  - invalid name (a save call's input list contains an entry whose
+    name or description violates the FR-008 constraints)
 - **FR-029**: Every failure path on the load and retrieve surface
   MUST produce one of these named failures (or a wrapped
   underlying I/O failure with one of these as its top-level
@@ -517,6 +562,24 @@ from every other named failure in the package's surface.
   read of the secure container returned by the retrieve-by-name
   operation.
 
+**Input validation**
+
+- **FR-033**: Before performing any encryption or filesystem write
+  (including the working file used for the atomic-rename commit),
+  the save path MUST scan its input list for duplicate names. If
+  any name appears more than once, the save MUST return the named
+  "duplicate name" failure and MUST NOT touch the filesystem. The
+  failure text MAY identify the duplicated name; it MUST NOT
+  include any secret value.
+- **FR-034**: As part of the same pre-write validation pass, the
+  save path MUST verify that every entry's name and description
+  satisfy the constraints in FR-008 (name non-empty, ≤256 bytes,
+  printable ASCII excluding control/NUL; description ≤4096 bytes,
+  no NUL/control). Any violation MUST cause the save to return the
+  named "invalid name" failure and MUST NOT touch the filesystem.
+  The failure text MAY identify the offending field and entry
+  position; it MUST NOT include any secret value.
+
 ### Key Entities
 
 - **Vault file** — A single file at a documented path on the
@@ -540,7 +603,7 @@ from every other named failure in the package's surface.
   held names without value material), destroy (zeroes every
   internally-held secure container, idempotent). Has these
   observable lifecycle states: live (retrievals succeed), destroyed
-  (retrievals return the named "destroyed" failure).
+  (retrievals return the named "store destroyed" failure).
 - **Failure mode** — The package's classified, named outcome of any
   load or retrieve attempt that does not produce a usable result.
   Each named failure mode is programmatically distinguishable from
