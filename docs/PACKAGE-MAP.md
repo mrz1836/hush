@@ -268,9 +268,55 @@ func (sb *SecureBytes) MarshalJSON() ([]byte, error)
 var ErrDestroyed = errors.New("hush/vault/securebytes: destroyed")
 ```
 
-### Exported API — locked (`internal/vault` package)
+### Exported API — locked at SDD-03 (`internal/vault` package)
 
-> Filled by SDD-03 (`internal/vault`). Until then, this section is a placeholder.
+Path: `github.com/mrz1836/hush/internal/vault`
+
+```go
+// Secret is one named, described, value-bearing entry in the vault.
+//
+// Value MUST be non-nil and live (not destroyed) at the moment Save is called.
+// Save does not retain a reference to the caller's *SecureBytes after it returns.
+type Secret struct {
+    Name        string
+    Description string
+    Value       *securebytes.SecureBytes
+}
+
+// Store is the in-memory view of a loaded vault. Implementations are safe for
+// concurrent Get and Names from many goroutines. Get returns a fresh,
+// independently-owned *SecureBytes per call. Destroy is idempotent.
+type Store interface {
+    // Get returns ErrSecretNotFound if name is absent, ErrStoreDestroyed after Destroy.
+    Get(name string) (*securebytes.SecureBytes, error)
+    // Names returns a defensive copy in stable load order.
+    Names() []string
+    // Destroy zeroes every internally-held *SecureBytes. Idempotent.
+    Destroy() error
+}
+
+// Load reads, validates, and decrypts the vault file at path using vaultKey,
+// returning a Store from which secrets can be retrieved.
+func Load(ctx context.Context, path string, vaultKey *securebytes.SecureBytes) (Store, error)
+
+// Save encrypts secrets to the vault file at path using vaultKey,
+// committing the result atomically (write to <path>.tmp → fsync → rename → chmod 0600).
+func Save(ctx context.Context, path string, vaultKey *securebytes.SecureBytes, secrets []Secret) error
+
+// Sentinel errors — compare with errors.Is.
+var (
+    ErrBadMagic       = errors.New("hush/vault: bad magic")
+    ErrBadVersion     = errors.New("hush/vault: bad version")
+    ErrShortHeader    = errors.New("hush/vault: short header")
+    ErrAuthFailed     = errors.New("hush/vault: authentication failed")
+    ErrFilePermsLoose = errors.New("hush/vault: file permissions loose")
+    ErrSecretNotFound = errors.New("hush/vault: secret not found")
+    ErrStoreDestroyed = errors.New("hush/vault: store destroyed")
+    ErrDuplicateName  = errors.New("hush/vault: duplicate secret name")
+    ErrFileTooLarge   = errors.New("hush/vault: file too large")
+    ErrInvalidName    = errors.New("hush/vault: invalid secret name or description")
+)
+```
 
 ---
 
