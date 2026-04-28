@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("[server]\nlisten_addr = 12345\npath_prefix = true\n")

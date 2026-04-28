@@ -1,0 +1,32 @@
+[server]
+listen_addr = "100.96.10.4:7743"
+path_prefix = "a8k2f9"
+state_dir = "__STATE_DIR__"
+audit_log = "__STATE_DIR__/audit.jsonl"
+discord_owner_id = "123456789012345678"
+client_registry = "__STATE_DIR__/clients.json"
+
+[discord]
+bot_token_keychain_item = "hush-discord"
+application_id = "345678901234567890"
+
+[crypto]
+argon_time = 4
+argon_memory_mb = 256
+argon_threads = 4
+jwt_default_ttl = "8h"
+max_interactive_ttl = "12h"
+max_supervisor_ttl = "20h"
+default_max_uses = 50
+nonce_ttl = "60s"
+clock_skew = "30s"
+
+[network]
+require_tailscale = true
+allowed_cidrs = ["100.64.0.0/10"]
+
+[security]
+require_file_mode_checks = true
+require_keychain_acl = true
+require_ntp_sync = true
+max_clock_drift = "60s"

@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("[server]\nlisten_addr = \"100.96.10.4:7743\"\npath_prefix = \"日本語テスト\"\nstate_dir = \"/tmp\"\n")

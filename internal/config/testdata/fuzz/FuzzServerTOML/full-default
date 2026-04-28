@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("[server]\nlisten_addr = \"100.96.10.4:7743\"\npath_prefix = \"a8k2f9\"\nstate_dir = \"/tmp\"\naudit_log = \"/tmp/audit.jsonl\"\ndiscord_owner_id = \"123456789012345678\"\n\n[discord]\nbot_token_keychain_item = \"hush-discord\"\napplication_id = \"345678901234567890\"\n\n[crypto]\nargon_time = 4\nargon_memory_mb = 256\nargon_threads = 4\njwt_default_ttl = \"8h\"\nmax_supervisor_ttl = \"20h\"\n\n[network]\nrequire_tailscale = true\n")

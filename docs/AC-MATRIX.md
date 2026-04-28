@@ -29,7 +29,7 @@
 
 | Owning chunk | Test path | Status |
 |--------------|-----------|--------|
-| SDD-06 (config) | `internal/config/server_test.go::TestLoadServer_*` | pending |
+| SDD-06 (config) | `internal/config/server_test.go`, `internal/config/validate_test.go` — `TestServer_FullMinimalConfig`, `TestServer_FullMaximalConfig`, `TestServer_RejectsLoopback`, `TestServer_RejectsPublic`, `TestServer_AcceptsTailscaleCGNAT`, `TestServer_RejectsArgonMemoryUnder256`, `TestServer_RejectsAuditLogOutsideStateDir`, `TestServer_RejectsUnknownField`, and 40+ more | verified by SDD-06 |
 | SDD-10 (server skeleton) | `internal/server/integration_test.go::TestServe_StartAndShutdown` | pending |
 | SDD-12 (claim handler) | `internal/server/claim_handler_test.go::TestClaim_Approved_IssuesJWT` | pending |
 | SDD-13 (other handlers) | `internal/server/health_handler_test.go::TestHealth_NoAuth_OK` | pending |
@@ -154,8 +154,8 @@ private key fails cleanly.
 
 | Owning chunk | Test path | Status |
 |--------------|-----------|--------|
-| SDD-06 (config validation) | `internal/config/server_test.go::TestLoadServer_RefusesPublicBind`, `TestLoadServer_RefusesEmptyAllowedClients`, etc. | pending |
-| SDD-06 fuzz | `internal/config/server_fuzz_test.go::FuzzServerTOML` | pending |
+| SDD-06 (config validation) | `internal/config/server_test.go`, `internal/config/validate_test.go` — `TestServer_RejectsLoopback`, `TestServer_RejectsUnspecified`, `TestServer_RejectsPublic`, `TestServer_RejectsRequireTailscaleFalse`, `TestServer_RejectsArgonMemoryUnder256`, `TestServer_RejectsAuditLogOutsideStateDir`, `TestServer_RejectsMissingStateDir`, `TestServer_RejectsStateDirNotADirectory`, and 35+ more | verified by SDD-06 |
+| SDD-06 fuzz | `internal/config/server_fuzz_test.go::FuzzServerTOML` (60s clean, no panics, every error a typed sentinel) | verified by SDD-06 |
 | SDD-10 (startup checks) | `internal/server/startup_checks_test.go::TestStartupChecks_RefusesPublicBind`, `TestStartupChecks_RefusesLooseFileMode`, `TestStartupChecks_RefusesUnsyncedClock` | pending |
 | SDD-30 (Tailscale ACL doc) | `docs/TAILSCALE-ACLS.md` accurate; reviewer checks the example | pending |
 
