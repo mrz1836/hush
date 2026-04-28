@@ -513,9 +513,44 @@ Likely files:
 Must not contain:
 - business decisions about approval or auth policy
 
-### Exported API — locked
+### Exported API — locked at SDD-05
 
-> Filled by SDD-05. Until then, this section is a placeholder.
+Path: `github.com/mrz1836/hush/internal/logging`
+
+```go
+// Format selects the log output format.
+type Format int
+
+const (
+    FormatAuto Format = iota // auto-detect: text on TTY, JSON otherwise (zero value)
+    FormatText               // force human-readable text
+    FormatJSON               // force JSON
+)
+
+// Options configures a logger constructed by New.
+type Options struct {
+    Level  slog.Level // minimum emit level; zero value == slog.LevelInfo
+    Format Format     // format selector; zero value == FormatAuto
+    Out    io.Writer  // destination writer; nil == os.Stderr
+}
+
+// New constructs a *slog.Logger with the package's redaction handler chain
+// installed. FormatAuto chooses text for a TTY *os.File, JSON otherwise.
+// ERROR records in JSON include source location; all other combinations do not.
+// The returned logger is safe for concurrent use. Never mutates slog.Default.
+func New(opts Options) *slog.Logger
+
+// RedactString scans s against every pattern in RedactPatterns and replaces
+// each match with "[redacted]". Returns s byte-identical when no pattern
+// matches. Safe for concurrent use; idempotent.
+func RedactString(s string) string
+
+// RedactPatterns is the compiled set of credential-class regexes (one per
+// class from docs/SECURITY.md §1.1). Read-only after first use via sync.Once.
+// Currently four entries: Anthropic sk-ant-, OpenAI sk-proj-, GitHub ghp_,
+// AWS AKIA[0-9A-Z]{16}.
+var RedactPatterns []*regexp.Regexp
+```
 
 ---
 
