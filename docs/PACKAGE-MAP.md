@@ -520,8 +520,46 @@ Must not contain:
 
 ### Exported API — locked
 
-> Filled by SDD-08 (`internal/transport/sign`) and SDD-09
-> (`internal/transport/ecies`). Until then, this section is a placeholder.
+> SDD-09 (`internal/transport/ecies`) will fill the ECIES sub-package.
+
+---
+
+## `internal/transport/sign` — Exported API (locked at SDD-08)
+
+**Package path**: `github.com/mrz1836/hush/internal/transport/sign`
+
+**Contract document**: [`specs/008-transport-sign/contracts/api.md`](../specs/008-transport-sign/contracts/api.md)
+
+```go
+// Types
+
+type RawMessage []byte            // escape hatch: verbatim canonical insertion
+
+type NonceCache interface {
+    Add(ctx context.Context, nonce string, ttl time.Duration) (firstSeen bool, err error)
+    Run(ctx context.Context)
+}
+
+// Functions
+
+func CanonicalJSON(v any) ([]byte, error)
+func Sign(ctx context.Context, key *ecdsa.PrivateKey, payload []byte) ([]byte, error)
+func Verify(ctx context.Context, key *ecdsa.PublicKey, payload, sig []byte) error
+func NewNonceCache() NonceCache
+func IsFreshTimestamp(ts time.Time, skew time.Duration) bool
+
+// Sentinel errors
+
+var ErrSignatureInvalid    = errors.New("hush/transport/sign: signature invalid")
+var ErrNonceReplay         = errors.New("hush/transport/sign: nonce replay")
+var ErrNonceEncoding       = errors.New("hush/transport/sign: nonce encoding invalid (length out of [8,128])")
+var ErrNonceTTLInvalid     = errors.New("hush/transport/sign: nonce ttl must be positive")
+var ErrTimestampStale      = errors.New("hush/transport/sign: timestamp outside freshness window")
+var ErrCanonicalUnsupported = errors.New("hush/transport/sign: value cannot be canonicalised")
+```
+
+SDD-09 (`internal/transport/ecies`) will land as a sibling sub-package.
+SDD-09 MUST NOT alter any symbol above.
 
 ---
 
