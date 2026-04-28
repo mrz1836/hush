@@ -130,10 +130,81 @@ Must not contain:
 - crypto primitives
 - provider API calls
 
-### Exported API — locked
+### Exported API — locked at SDD-06
 
-> Filled by SDD-06 (server config) and SDD-18 (supervisor config). Until
-> then, this section is a placeholder.
+#### Types
+
+| Symbol | Description |
+|--------|-------------|
+| `type Server struct` | Top-level server config; read-only after `LoadServer` returns |
+| `type ServerSection struct` | `[server]` TOML table: `ListenAddr netip.AddrPort`, `PathPrefix`, `StateDir`, `AuditLog`, `DiscordOwnerID`, `ClientRegistry`, `DiscordAuditChannelID` |
+| `type DiscordSection struct` | `[discord]` TOML table: `BotTokenKeychainItem` (item name only, not the token), `ApplicationID` |
+| `type CryptoSection struct` | `[crypto]` TOML table: Argon2id params, JWT/TTL/nonce/skew durations |
+| `type NetworkSection struct` | `[network]` TOML table: `RequireTailscale`, `AllowedCIDRs`, `HealthBind netip.AddrPort` |
+| `type SecuritySection struct` | `[security]` TOML table: file-mode/keychain/NTP flags, `MaxClockDrift` |
+
+#### Functions
+
+| Symbol | Description |
+|--------|-------------|
+| `func LoadServer(ctx context.Context, path string) (*Server, error)` | Open + decode + materialise + validate; never returns partial *Server on error |
+| `func (s *Server) Validate() error` | Run all validation rules; multi-violation via `errors.Join` |
+
+#### Default constants (`var`, set-once)
+
+| Symbol | Type | Value |
+|--------|------|-------|
+| `DefaultArgonTime` | `uint32` | `4` |
+| `DefaultArgonMemoryMB` | `uint32` | `256` |
+| `DefaultArgonThreads` | `uint8` | `4` |
+| `MinArgonTime` | `uint32` | `4` |
+| `MinArgonMemoryMB` | `uint32` | `256` |
+| `MinArgonThreads` | `uint8` | `4` |
+| `DefaultJWTTTL` | `time.Duration` | `8h` |
+| `DefaultMaxInteractiveTTL` | `time.Duration` | `12h` |
+| `DefaultMaxSupervisorTTL` | `time.Duration` | `20h` |
+| `DefaultSupervisorTTLMax` | `time.Duration` | `24h` |
+| `DefaultMaxUses` | `int` | `50` |
+| `DefaultNonceTTL` | `time.Duration` | `60s` |
+| `DefaultClockSkew` | `time.Duration` | `30s` |
+| `DefaultStateDir` | `string` | `"~/.hush"` |
+| `DefaultAuditLog` | `string` | `"~/.hush/audit.jsonl"` |
+| `DefaultClientRegistry` | `string` | `"~/.hush/clients.json"` |
+| `DefaultListenPort` | `int` | `7743` |
+| `DefaultRequireTailscale` | `bool` | `true` |
+| `DefaultAllowedCIDRs` | `[]string` | `["100.64.0.0/10"]` |
+| `DefaultRequireFileModeChecks` | `bool` | `true` |
+| `DefaultRequireKeychainACL` | `bool` | `true` |
+| `DefaultRequireNTPSync` | `bool` | `true` |
+| `DefaultMaxClockDrift` | `time.Duration` | `60s` |
+| `MinPathPrefixLen` | `int` | `6` |
+| `MaxPathPrefixLen` | `int` | `32` |
+| `TailscaleCGNAT` | `netip.Prefix` | `100.64.0.0/10` |
+
+#### Sentinel errors
+
+| Symbol | Wraps | Triggered by |
+|--------|-------|-------------|
+| `ErrTOMLDecode` | go-toml/v2 inner error | syntax / type-mismatch decode errors |
+| `ErrUnknownField` | go-toml/v2 strict-mode error | unknown / misspelled TOML key |
+| `ErrMissingRequiredField` | — | absent required field after decode |
+| `ErrInvalidDuration` | — | `time.ParseDuration` failure on any duration field |
+| `ErrTailscaleBindRequired` | (umbrella) | parent of the three listen-addr family errors |
+| `ErrListenLoopback` | `ErrTailscaleBindRequired` | loopback `listen_addr` or `health_bind` |
+| `ErrListenUnspecified` | `ErrTailscaleBindRequired` | unspecified `0.0.0.0` / `[::]` |
+| `ErrListenPublic` | `ErrTailscaleBindRequired` | public or non-CGNAT address |
+| `ErrListenMalformed` | — | `netip.ParseAddrPort` failure |
+| `ErrTailscaleRequired` | — | `require_tailscale = false` |
+| `ErrPathPrefixInvalid` | — | `path_prefix` length or charset violation |
+| `ErrAuditLogEscape` | — | `audit_log` resolves outside `state_dir` |
+| `ErrStateDirNotFound` | `fs.ErrNotExist` | `state_dir` does not exist on disk |
+| `ErrStateDirUnsafe` | — | `state_dir` is not a directory |
+| `ErrArgonMemoryTooLow` | — | `argon_memory_mb < 256` |
+| `ErrArgonTimeTooLow` | — | `argon_time < 4` |
+| `ErrArgonThreadsTooLow` | — | `argon_threads < 4` |
+| `ErrSupervisorTTLOutOfRange` | — | `max_supervisor_ttl` ≤ `jwt_default_ttl` OR > 24h |
+
+SDD-18 will add `Supervisor`, `LoadSupervisor`, and related symbols to this package. SDD-18 MUST NOT alter any symbol above.
 
 ---
 

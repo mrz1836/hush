@@ -1,0 +1,13 @@
+[server]
+listen_addr = "100.96.10.4:7743"
+path_prefix = "a8k2f9"
+state_dir = "__STATE_DIR__"
+audit_log = "__STATE_DIR__/audit.jsonl"
+discord_owner_id = "123456789012345678"
+
+[discord]
+bot_token_keychain_item = "hush-discord"
+application_id = "345678901234567890"
+
+[crypto]
+argon_memory_mb = 128
