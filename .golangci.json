@@ -59,6 +59,7 @@
         "enable": [
             "asasalint",
             "arangolint",
+            "depguard",
             "asciicheck",
             "bidichk",
             "bodyclose",
@@ -122,6 +123,23 @@
             "zerologlint"
         ],
         "settings": {
+            "depguard": {
+                "rules": {
+                    "no-testutil-in-production": {
+                        "deny": [
+                            {
+                                "desc": "internal/testutil is a test-only package; import only from *_test.go files",
+                                "pkg": "github.com/mrz1836/hush/internal/testutil"
+                            }
+                        ],
+                        "files": [
+                            "$all",
+                            "!$test"
+                        ],
+                        "list-mode": "lax"
+                    }
+                }
+            },
             "dogsled": {
                 "max-blank-identifiers": 2
             },

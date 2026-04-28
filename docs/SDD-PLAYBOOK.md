@@ -31,7 +31,7 @@
 | SDD-02 | mlocked secure memory + redaction | `internal/vault/securebytes` | done | AC-7 |
 | SDD-03 | HUSH file format + AES-256-GCM + atomic write | `internal/vault` | done | AC-2 |
 | SDD-05 | slog setup + redaction enforcement | `internal/logging` | done | (Principle X) |
-| SDD-04 | Test fixtures + sentinel helpers + harness primitives | `internal/testutil` | pending | (AC-9 support) |
+| SDD-04 | Test fixtures + sentinel helpers + harness primitives | `internal/testutil` | done | (AC-9 support) |
 | SDD-06 | Server TOML schema + validation | `internal/config` | pending | AC-1, AC-8 |
 
 ## Phase 2 — Session and transport core
