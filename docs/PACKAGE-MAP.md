@@ -520,7 +520,40 @@ Must not contain:
 
 ### Exported API — locked
 
-> SDD-09 (`internal/transport/ecies`) will fill the ECIES sub-package.
+> SDD-09 (`internal/transport/ecies`) fills the ECIES sub-package; the
+> request-signing sibling is locked at SDD-08 (`internal/transport/sign`).
+
+---
+
+## `internal/transport/ecies` — Exported API (locked at SDD-09)
+
+**Package path**: `github.com/mrz1836/hush/internal/transport/ecies`
+
+**Contract document**: [`specs/009-transport-ecies/contracts/api.md`](../specs/009-transport-ecies/contracts/api.md)
+
+```go
+// Functions
+
+func Encrypt(ctx context.Context, recipientPub *ecdsa.PublicKey, plaintext []byte) ([]byte, error)
+func Decrypt(ctx context.Context, recipientPriv *ecdsa.PrivateKey, envelope []byte) (*securebytes.SecureBytes, error)
+
+// Sentinel errors
+
+var ErrECIESDecryptFailed       = errors.New("hush/transport/ecies: ECIES decrypt failed")
+var ErrECIESEnvelopeTooShort    = errors.New("hush/transport/ecies: envelope too short")
+var ErrECIESEmptyPlaintext      = errors.New("hush/transport/ecies: empty plaintext")
+var ErrECIESInvalidRecipientKey = errors.New("hush/transport/ecies: invalid recipient key")
+```
+
+`Encrypt` produces an opaque BIE1 ECIES envelope (4-byte magic ‖ 33-byte
+compressed ephemeral pubkey ‖ AES-256-CBC ciphertext ‖ 32-byte HMAC-SHA256
+tag, minimum 85 bytes); `Decrypt` returns a fresh `*securebytes.SecureBytes`
+whose lifetime the caller owns. Wrong key and tampered envelope share
+`ErrECIESDecryptFailed` by design (FR-004 — no failure-shape leakage).
+
+Future ECIES-adjacent helpers (e.g., a streaming `Decrypt` for very large
+secrets) MAY land as additional symbols in this package without breaking the
+existing contract; symbol REMOVAL or signature CHANGES require a new SDD chunk.
 
 ---
 
