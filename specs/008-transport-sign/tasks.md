@@ -33,9 +33,9 @@ description: "Tasks for SDD-08 — internal/transport/sign (canonical-JSON sign/
 
 **Purpose**: Create the package skeleton and the declarative scaffolding (sentinels, package doc) that every later phase depends on.
 
-- [ ] T001 Create the package directory `internal/transport/sign/` with the package-doc file `internal/transport/sign/doc.go` containing the package comment, the Constitution III/VIII/IX/X/XI citations, and the Layer-4-roster pointer (per [plan.md §Project Structure](./plan.md))
-- [ ] T002 [P] Create `internal/transport/sign/errors.go` declaring the six sentinels (`ErrSignatureInvalid`, `ErrNonceReplay`, `ErrTimestampStale`, `ErrCanonicalUnsupported`, `ErrNonceEncoding`, `ErrNonceTTLInvalid`) per [research R-006](./research.md#r-006--sentinel-error-catalogue-and-wrap-relationships) — all `var ErrXxx = errors.New("hush/transport/sign: <message>")`, no wrap relationships
-- [ ] T003 [P] Create `internal/transport/sign/testdata/fuzz/FuzzVerifyRequest/` directory and add the four seed-corpus files described in [research R-007](./research.md#r-007--fuzz-target-shape): `empty-payload-empty-sig`, `valid-shape-wrong-key`, `truncated-der`, `garbage-bytes`
+- [X] T001 Create the package directory `internal/transport/sign/` with the package-doc file `internal/transport/sign/doc.go` containing the package comment, the Constitution III/VIII/IX/X/XI citations, and the Layer-4-roster pointer (per [plan.md §Project Structure](./plan.md))
+- [X] T002 [P] Create `internal/transport/sign/errors.go` declaring the six sentinels (`ErrSignatureInvalid`, `ErrNonceReplay`, `ErrTimestampStale`, `ErrCanonicalUnsupported`, `ErrNonceEncoding`, `ErrNonceTTLInvalid`) per [research R-006](./research.md#r-006--sentinel-error-catalogue-and-wrap-relationships) — all `var ErrXxx = errors.New("hush/transport/sign: <message>")`, no wrap relationships
+- [X] T003 [P] Create `internal/transport/sign/testdata/fuzz/FuzzVerifyRequest/` directory and add the four seed-corpus files described in [research R-007](./research.md#r-007--fuzz-target-shape): `empty-payload-empty-sig`, `valid-shape-wrong-key`, `truncated-der`, `garbage-bytes`
 
 **Checkpoint**: Package compiles (`go build ./internal/transport/sign/`); sentinels exist; fuzz seed corpus present.
 
@@ -47,9 +47,9 @@ description: "Tasks for SDD-08 — internal/transport/sign (canonical-JSON sign/
 
 **⚠️ CRITICAL**: No user-story phase may begin until Phase 2 is complete — the test seams and the `RawMessage` type are foundational for every test file.
 
-- [ ] T004 Declare the package-private `nowFn = time.Now` clock indirection in `internal/transport/sign/timestamp.go` (with `//nolint:gochecknoglobals` and the sentinel-class precedent comment per [research R-005](./research.md#r-005--isfreshtimestamp-pure-function-with-injectable-clock))
-- [ ] T005 [P] Declare the exported `RawMessage` named-byte-slice type and the package-private `rawMessageType` reflect sentinel in `internal/transport/sign/canonical.go` per [research R-002a](./research.md#r-002a--rawmessage-escape-hatch-type)
-- [ ] T006 [P] Create `internal/transport/sign/testutil_test.go` with the test-only helpers: `setClockForTest(t *testing.T, fixed time.Time)`, `advanceClockForTest(t *testing.T, by time.Duration)`, and `generateFuzzKey(tb testing.TB) *ecdsa.PrivateKey` per [research R-011](./research.md#r-011--test-only-clock-swap-helper-discipline)
+- [X] T004 Declare the package-private `nowFn = time.Now` clock indirection in `internal/transport/sign/timestamp.go` (with `//nolint:gochecknoglobals` and the sentinel-class precedent comment per [research R-005](./research.md#r-005--isfreshtimestamp-pure-function-with-injectable-clock))
+- [X] T005 [P] Declare the exported `RawMessage` named-byte-slice type and the package-private `rawMessageType` reflect sentinel in `internal/transport/sign/canonical.go` per [research R-002a](./research.md#r-002a--rawmessage-escape-hatch-type)
+- [X] T006 [P] Create `internal/transport/sign/testutil_test.go` with the test-only helpers: `setClockForTest(t *testing.T, fixed time.Time)`, `advanceClockForTest(t *testing.T, by time.Duration)`, and `generateFuzzKey(tb testing.TB) *ecdsa.PrivateKey` per [research R-011](./research.md#r-011--test-only-clock-swap-helper-discipline)
 
 **Checkpoint**: Foundation ready — every later test can construct a deterministic key and a frozen clock; every later implementation can refer to `nowFn` and `RawMessage`.
 
@@ -65,16 +65,16 @@ description: "Tasks for SDD-08 — internal/transport/sign (canonical-JSON sign/
 
 ### Tests for User Story 3 (write FIRST, ensure FAIL before implementation) ⚠️
 
-- [ ] T007 [P] [US3] Write `TestCanonical_SortsAtAllDepths` (10 known shapes per [research R-008](./research.md#r-008--test-corpus-discipline-canonical-encoder-shapes)) as a table-driven test in `internal/transport/sign/canonical_test.go` — each entry pairs a Go input value with its expected canonical bytes, asserted via `bytes.Equal`
-- [ ] T008 [P] [US3] Write `TestCanonical_RejectsNaN` and `TestCanonical_RejectsInf` (covering `+Inf` and `-Inf`) in `internal/transport/sign/canonical_test.go` — assert `errors.Is(err, ErrCanonicalUnsupported)` and that the returned byte slice is `nil`
-- [ ] T009 [P] [US3] Write `TestCanonical_StructAndMap` in `internal/transport/sign/canonical_test.go` exercising **both** chunk-contract gotcha cases: (a) `struct{ B int; A int }{B: 1, A: 2}` MUST emit `{"A":2,"B":1}` (alphabetical, NOT declaration order — the stdlib gotcha); (b) `map[string]any{"outer": map[string]any{"y": 2, "x": 1}}` MUST sort the inner map (the nested-depth gotcha)
-- [ ] T010 [P] [US3] Write `TestCanonical_RejectsFunc`, `TestCanonical_RejectsChan`, `TestCanonical_RejectsComplex`, and `TestCanonical_RejectsNonStringMap` in `internal/transport/sign/canonical_test.go` — each asserts `errors.Is(err, ErrCanonicalUnsupported)` and `nil` byte output
-- [ ] T011 [P] [US3] Write `TestCanonical_IgnoresMarshalJSON` in `internal/transport/sign/canonical_test.go` — define a local type whose `MarshalJSON` returns `[]byte("\"hijacked\"")` and assert the canonical output ignores the hook (FR-022 anti-feature)
-- [ ] T012 [P] [US3] Write `TestCanonical_EmbedsRawMessageVerbatim` in `internal/transport/sign/canonical_test.go` — assert that `RawMessage([]byte("[1,2,3]"))` is inserted verbatim and that `RawMessage(nil)` / zero-length emits `null`
+- [X] T007 [P] [US3] Write `TestCanonical_SortsAtAllDepths` (10 known shapes per [research R-008](./research.md#r-008--test-corpus-discipline-canonical-encoder-shapes)) as a table-driven test in `internal/transport/sign/canonical_test.go` — each entry pairs a Go input value with its expected canonical bytes, asserted via `bytes.Equal`
+- [X] T008 [P] [US3] Write `TestCanonical_RejectsNaN` and `TestCanonical_RejectsInf` (covering `+Inf` and `-Inf`) in `internal/transport/sign/canonical_test.go` — assert `errors.Is(err, ErrCanonicalUnsupported)` and that the returned byte slice is `nil`
+- [X] T009 [P] [US3] Write `TestCanonical_StructAndMap` in `internal/transport/sign/canonical_test.go` exercising **both** chunk-contract gotcha cases: (a) `struct{ B int; A int }{B: 1, A: 2}` MUST emit `{"A":2,"B":1}` (alphabetical, NOT declaration order — the stdlib gotcha); (b) `map[string]any{"outer": map[string]any{"y": 2, "x": 1}}` MUST sort the inner map (the nested-depth gotcha)
+- [X] T010 [P] [US3] Write `TestCanonical_RejectsFunc`, `TestCanonical_RejectsChan`, `TestCanonical_RejectsComplex`, and `TestCanonical_RejectsNonStringMap` in `internal/transport/sign/canonical_test.go` — each asserts `errors.Is(err, ErrCanonicalUnsupported)` and `nil` byte output
+- [X] T011 [P] [US3] Write `TestCanonical_IgnoresMarshalJSON` in `internal/transport/sign/canonical_test.go` — define a local type whose `MarshalJSON` returns `[]byte("\"hijacked\"")` and assert the canonical output ignores the hook (FR-022 anti-feature)
+- [X] T012 [P] [US3] Write `TestCanonical_EmbedsRawMessageVerbatim` in `internal/transport/sign/canonical_test.go` — assert that `RawMessage([]byte("[1,2,3]"))` is inserted verbatim and that `RawMessage(nil)` / zero-length emits `null`
 
 ### Implementation for User Story 3
 
-- [ ] T013 [US3] Implement `CanonicalJSON(v any) ([]byte, error)` in `internal/transport/sign/canonical.go` as a recursive `encodeValue(buf *bytes.Buffer, v reflect.Value) error` walker per [research R-001](./research.md#r-001--canonicaljson-recursive-reflect-walker-that-sorts-at-every-depth) — handling `Pointer`/`Interface`, `Bool`, `Int*`, `Uint*`, `Float*` (with `math.IsNaN` / `math.IsInf` rejection), `String` (via `json.Marshal(v.String())` for correct escaping), `Slice`/`Array` (with the `RawMessage` precedence check), `Map` (string-keyed only; `sort.Strings` on collected keys), `Struct` (alphabetised by resolved field name; `json:"name"` honoured for renaming, options ignored). Reject `Func`/`Chan`/`UnsafePointer`/`Complex64`/`Complex128`/`Invalid` with `ErrCanonicalUnsupported`. On error: discard the buffer, return `nil, err` (no partial output).
+- [X] T013 [US3] Implement `CanonicalJSON(v any) ([]byte, error)` in `internal/transport/sign/canonical.go` as a recursive `encodeValue(buf *bytes.Buffer, v reflect.Value) error` walker per [research R-001](./research.md#r-001--canonicaljson-recursive-reflect-walker-that-sorts-at-every-depth) — handling `Pointer`/`Interface`, `Bool`, `Int*`, `Uint*`, `Float*` (with `math.IsNaN` / `math.IsInf` rejection), `String` (via `json.Marshal(v.String())` for correct escaping), `Slice`/`Array` (with the `RawMessage` precedence check), `Map` (string-keyed only; `sort.Strings` on collected keys), `Struct` (alphabetised by resolved field name; `json:"name"` honoured for renaming, options ignored). Reject `Func`/`Chan`/`UnsafePointer`/`Complex64`/`Complex128`/`Invalid` with `ErrCanonicalUnsupported`. On error: discard the buffer, return `nil, err` (no partial output).
 
 **Checkpoint**: All US3 tests pass. `go test -run TestCanonical ./internal/transport/sign/` is green; `go test -cover -run TestCanonical ./internal/transport/sign/` shows the canonical encoder fully covered.
 
@@ -90,18 +90,18 @@ description: "Tasks for SDD-08 — internal/transport/sign (canonical-JSON sign/
 
 ### Tests for User Story 1 (write FIRST) ⚠️
 
-- [ ] T014 [P] [US1] Write `TestSign_VerifyRoundTrip` in `internal/transport/sign/sign_test.go` — generate a fresh key via `generateFuzzKey`, canonicalise a typed payload, call `Sign(ctx, priv, canonical)`, then `Verify(ctx, &priv.PublicKey, canonical, sig)`; assert `nil` error
-- [ ] T015 [P] [US1] Write `TestVerify_WrongKeyFails` in `internal/transport/sign/verify_test.go` — sign with key A, verify with key B's public; assert `errors.Is(err, ErrSignatureInvalid)`
-- [ ] T016 [P] [US1] Write `TestVerify_TamperedPayloadFails` in `internal/transport/sign/verify_test.go` — round-trip then mutate one byte of the canonical payload before verify; assert `errors.Is(err, ErrSignatureInvalid)`
-- [ ] T017 [P] [US1] Write `TestVerify_MalformedDERFails` in `internal/transport/sign/verify_test.go` — verify with a truncated 16-byte DER signature; assert `errors.Is(err, ErrSignatureInvalid)` (panic-free per FR-016)
-- [ ] T018 [P] [US1] Write `TestSign_RespectsCancelledContext` and `TestVerify_RespectsCancelledContext` in `internal/transport/sign/sign_test.go` and `internal/transport/sign/verify_test.go` — pre-cancel the context; assert `errors.Is(err, context.Canceled)`
-- [ ] T019 [P] [US1] Write `TestVerify_NoLeakOnFuzzInput` in `internal/transport/sign/verify_test.go` per [research R-012](./research.md#r-012--logging--redaction) — capture `slog.NewJSONHandler` output across 1000 random failed verifications and assert that no nonce, signature byte, or payload byte appears in the captured buffer (FR-017)
-- [ ] T020 [P] [US1] Write `FuzzVerifyRequest` in `internal/transport/sign/verify_fuzz_test.go` per [research R-007](./research.md#r-007--fuzz-target-shape) — fixed test-derived public key from `generateFuzzKey`; `f.Fuzz(func(t *testing.T, payload, sig []byte))` calls `Verify` and asserts: (a) no panic, (b) every error is `errors.Is(err, ErrSignatureInvalid)` or `errors.Is(err, context.Canceled)` — never another type. The seed corpus from T003 is loaded automatically by Go's fuzz harness.
+- [X] T014 [P] [US1] Write `TestSign_VerifyRoundTrip` in `internal/transport/sign/sign_test.go` — generate a fresh key via `generateFuzzKey`, canonicalise a typed payload, call `Sign(ctx, priv, canonical)`, then `Verify(ctx, &priv.PublicKey, canonical, sig)`; assert `nil` error
+- [X] T015 [P] [US1] Write `TestVerify_WrongKeyFails` in `internal/transport/sign/verify_test.go` — sign with key A, verify with key B's public; assert `errors.Is(err, ErrSignatureInvalid)`
+- [X] T016 [P] [US1] Write `TestVerify_TamperedPayloadFails` in `internal/transport/sign/verify_test.go` — round-trip then mutate one byte of the canonical payload before verify; assert `errors.Is(err, ErrSignatureInvalid)`
+- [X] T017 [P] [US1] Write `TestVerify_MalformedDERFails` in `internal/transport/sign/verify_test.go` — verify with a truncated 16-byte DER signature; assert `errors.Is(err, ErrSignatureInvalid)` (panic-free per FR-016)
+- [X] T018 [P] [US1] Write `TestSign_RespectsCancelledContext` and `TestVerify_RespectsCancelledContext` in `internal/transport/sign/sign_test.go` and `internal/transport/sign/verify_test.go` — pre-cancel the context; assert `errors.Is(err, context.Canceled)`
+- [X] T019 [P] [US1] Write `TestVerify_NoLeakOnFuzzInput` in `internal/transport/sign/verify_test.go` per [research R-012](./research.md#r-012--logging--redaction) — capture `slog.NewJSONHandler` output across 1000 random failed verifications and assert that no nonce, signature byte, or payload byte appears in the captured buffer (FR-017)
+- [X] T020 [P] [US1] Write `FuzzVerifyRequest` in `internal/transport/sign/verify_fuzz_test.go` per [research R-007](./research.md#r-007--fuzz-target-shape) — fixed test-derived public key from `generateFuzzKey`; `f.Fuzz(func(t *testing.T, payload, sig []byte))` calls `Verify` and asserts: (a) no panic, (b) every error is `errors.Is(err, ErrSignatureInvalid)` or `errors.Is(err, context.Canceled)` — never another type. The seed corpus from T003 is loaded automatically by Go's fuzz harness.
 
 ### Implementation for User Story 1
 
-- [ ] T021 [US1] Implement `Sign(ctx context.Context, key *ecdsa.PrivateKey, payload []byte) ([]byte, error)` in `internal/transport/sign/sign.go` per [research R-002](./research.md#r-002--sign--verify-stdlib-cryptoecdsasignasn1-substitution) — `ctx.Err()` early-out, `sha256.Sum256(payload)`, `ecdsa.SignASN1(rand.Reader, key, digest[:])`
-- [ ] T022 [US1] Implement `Verify(ctx context.Context, key *ecdsa.PublicKey, payload, sig []byte) error` in `internal/transport/sign/verify.go` per [research R-002](./research.md#r-002--sign--verify-stdlib-cryptoecdsasignasn1-substitution) — `ctx.Err()` early-out, `sha256.Sum256(payload)`, return `nil` on `ecdsa.VerifyASN1` true, return `fmt.Errorf("hush/transport/sign: verify: %w", ErrSignatureInvalid)` on false; **panic-free under any byte input**
+- [X] T021 [US1] Implement `Sign(ctx context.Context, key *ecdsa.PrivateKey, payload []byte) ([]byte, error)` in `internal/transport/sign/sign.go` per [research R-002](./research.md#r-002--sign--verify-stdlib-cryptoecdsasignasn1-substitution) — `ctx.Err()` early-out, `sha256.Sum256(payload)`, `ecdsa.SignASN1(rand.Reader, key, digest[:])`
+- [X] T022 [US1] Implement `Verify(ctx context.Context, key *ecdsa.PublicKey, payload, sig []byte) error` in `internal/transport/sign/verify.go` per [research R-002](./research.md#r-002--sign--verify-stdlib-cryptoecdsasignasn1-substitution) — `ctx.Err()` early-out, `sha256.Sum256(payload)`, return `nil` on `ecdsa.VerifyASN1` true, return `fmt.Errorf("hush/transport/sign: verify: %w", ErrSignatureInvalid)` on false; **panic-free under any byte input**
 
 **Checkpoint**: `TestSign_VerifyRoundTrip`, `TestVerify_WrongKeyFails`, `TestVerify_TamperedPayloadFails`, `TestVerify_MalformedDERFails` all green. The fuzz target compiles and a short `-fuzztime=2s` smoke run is panic-free (the full 60 s gate runs in Phase 9).
 
@@ -119,28 +119,28 @@ description: "Tasks for SDD-08 — internal/transport/sign (canonical-JSON sign/
 
 #### Nonce-cache encoding/TTL gates
 
-- [ ] T023 [P] [US2] Write `TestNonce_AddNewReturnsFirstSeen` in `internal/transport/sign/nonce_test.go` — fresh cache, valid 32-byte nonce, valid TTL; assert `(true, nil)`
-- [ ] T024 [P] [US2] Write `TestNonce_AddDuplicateReturnsReplay` in `internal/transport/sign/nonce_test.go` — Add the same nonce twice in immediate succession; assert second call returns `(false, err)` with `errors.Is(err, ErrNonceReplay)`
-- [ ] T025 [P] [US2] Write `TestNonce_AddEmptyReturnsEncodingError`, `TestNonce_AddTooShortReturnsEncodingError`, and `TestNonce_AddTooLongReturnsEncodingError` (lengths 0, 7, 129) in `internal/transport/sign/nonce_test.go` — each asserts `errors.Is(err, ErrNonceEncoding)` BEFORE any cache lookup occurs (must NOT collapse into `ErrNonceReplay`)
-- [ ] T026 [P] [US2] Write `TestNonce_AddNonPositiveTTLReturnsInvalid` in `internal/transport/sign/nonce_test.go` — TTLs of `0`, `-1ns`, `-1h`; assert `errors.Is(err, ErrNonceTTLInvalid)`
-- [ ] T027 [P] [US2] Write `TestNonce_AddRespectsCancelledContext` in `internal/transport/sign/nonce_test.go` — pre-cancelled ctx; assert `errors.Is(err, context.Canceled)` returned BEFORE encoding/TTL gates fire
+- [X] T023 [P] [US2] Write `TestNonce_AddNewReturnsFirstSeen` in `internal/transport/sign/nonce_test.go` — fresh cache, valid 32-byte nonce, valid TTL; assert `(true, nil)`
+- [X] T024 [P] [US2] Write `TestNonce_AddDuplicateReturnsReplay` in `internal/transport/sign/nonce_test.go` — Add the same nonce twice in immediate succession; assert second call returns `(false, err)` with `errors.Is(err, ErrNonceReplay)`
+- [X] T025 [P] [US2] Write `TestNonce_AddEmptyReturnsEncodingError`, `TestNonce_AddTooShortReturnsEncodingError`, and `TestNonce_AddTooLongReturnsEncodingError` (lengths 0, 7, 129) in `internal/transport/sign/nonce_test.go` — each asserts `errors.Is(err, ErrNonceEncoding)` BEFORE any cache lookup occurs (must NOT collapse into `ErrNonceReplay`)
+- [X] T026 [P] [US2] Write `TestNonce_AddNonPositiveTTLReturnsInvalid` in `internal/transport/sign/nonce_test.go` — TTLs of `0`, `-1ns`, `-1h`; assert `errors.Is(err, ErrNonceTTLInvalid)`
+- [X] T027 [P] [US2] Write `TestNonce_AddRespectsCancelledContext` in `internal/transport/sign/nonce_test.go` — pre-cancelled ctx; assert `errors.Is(err, context.Canceled)` returned BEFORE encoding/TTL gates fire
 
 #### Nonce-cache TTL elapsed semantics
 
-- [ ] T028 [P] [US2] Write `TestNonce_ExpiredAllowedAfterSweep` in `internal/transport/sign/nonce_test.go` — Add nonce with short TTL, advance the frozen clock past TTL via `advanceClockForTest`, trigger a sweep (or rely on the lazy CAS path documented in [data-model.md](./data-model.md#addctx-nonce-ttl-firstseen-bool-err-error)); assert second `Add` returns `(true, nil)`
+- [X] T028 [P] [US2] Write `TestNonce_ExpiredAllowedAfterSweep` in `internal/transport/sign/nonce_test.go` — Add nonce with short TTL, advance the frozen clock past TTL via `advanceClockForTest`, trigger a sweep (or rely on the lazy CAS path documented in [data-model.md](./data-model.md#addctx-nonce-ttl-firstseen-bool-err-error)); assert second `Add` returns `(true, nil)`
 
 #### Timestamp freshness primitive
 
-- [ ] T029 [P] [US2] Write `TestTimestamp_FreshAccepted` in `internal/transport/sign/timestamp_test.go` — frozen clock at `t0`; assert `IsFreshTimestamp(t0, 30s) == true` and `IsFreshTimestamp(t0.Add(-29*time.Second), 30s) == true`
-- [ ] T030 [P] [US2] Write `TestTimestamp_TooOldRejected` in `internal/transport/sign/timestamp_test.go` — frozen clock at `t0`; assert `IsFreshTimestamp(t0.Add(-31*time.Second), 30s) == false`
-- [ ] T031 [P] [US2] Write `TestTimestamp_FutureSkewRejected` in `internal/transport/sign/timestamp_test.go` — frozen clock at `t0`; assert `IsFreshTimestamp(t0.Add(31*time.Second), 30s) == false`
-- [ ] T032 [P] [US2] Write `TestTimestamp_BoundaryAccepted` in `internal/transport/sign/timestamp_test.go` — `delta == skew` is the documented `<=` boundary; assert `IsFreshTimestamp(t0.Add(30*time.Second), 30s) == true` AND `IsFreshTimestamp(t0.Add(-30*time.Second), 30s) == true`
-- [ ] T033 [P] [US2] Write `TestTimestamp_NonPositiveSkewRejected` in `internal/transport/sign/timestamp_test.go` — assert `IsFreshTimestamp(t0, 0) == false` and `IsFreshTimestamp(t0, -1*time.Second) == false` (FR-012 positive-window guard)
+- [X] T029 [P] [US2] Write `TestTimestamp_FreshAccepted` in `internal/transport/sign/timestamp_test.go` — frozen clock at `t0`; assert `IsFreshTimestamp(t0, 30s) == true` and `IsFreshTimestamp(t0.Add(-29*time.Second), 30s) == true`
+- [X] T030 [P] [US2] Write `TestTimestamp_TooOldRejected` in `internal/transport/sign/timestamp_test.go` — frozen clock at `t0`; assert `IsFreshTimestamp(t0.Add(-31*time.Second), 30s) == false`
+- [X] T031 [P] [US2] Write `TestTimestamp_FutureSkewRejected` in `internal/transport/sign/timestamp_test.go` — frozen clock at `t0`; assert `IsFreshTimestamp(t0.Add(31*time.Second), 30s) == false`
+- [X] T032 [P] [US2] Write `TestTimestamp_BoundaryAccepted` in `internal/transport/sign/timestamp_test.go` — `delta == skew` is the documented `<=` boundary; assert `IsFreshTimestamp(t0.Add(30*time.Second), 30s) == true` AND `IsFreshTimestamp(t0.Add(-30*time.Second), 30s) == true`
+- [X] T033 [P] [US2] Write `TestTimestamp_NonPositiveSkewRejected` in `internal/transport/sign/timestamp_test.go` — assert `IsFreshTimestamp(t0, 0) == false` and `IsFreshTimestamp(t0, -1*time.Second) == false` (FR-012 positive-window guard)
 
 ### Implementation for User Story 2
 
-- [ ] T034 [US2] Implement `IsFreshTimestamp(ts time.Time, skew time.Duration) bool` in `internal/transport/sign/timestamp.go` per [research R-005](./research.md#r-005--isfreshtimestamp-pure-function-with-injectable-clock) — non-positive skew returns `false` unconditionally; otherwise `delta = abs(nowFn().Sub(ts))`, return `delta <= skew`
-- [ ] T035 [US2] Implement `NonceCache` interface, `nonceCache` struct (with `entries sync.Map` + `sweepInterval time.Duration` defaulting to 30 s), `NewNonceCache()`, and `Add(ctx, nonce, ttl) (bool, error)` in `internal/transport/sign/nonce.go` per [research R-003](./research.md#r-003--noncecache-syncmap-with-loadorstore--compareandswap) — three deterministic phases: ctx-err → encoding/TTL gates → `LoadOrStore` (with `CompareAndSwap` lazy expired-reuse path)
+- [X] T034 [US2] Implement `IsFreshTimestamp(ts time.Time, skew time.Duration) bool` in `internal/transport/sign/timestamp.go` per [research R-005](./research.md#r-005--isfreshtimestamp-pure-function-with-injectable-clock) — non-positive skew returns `false` unconditionally; otherwise `delta = abs(nowFn().Sub(ts))`, return `delta <= skew`
+- [X] T035 [US2] Implement `NonceCache` interface, `nonceCache` struct (with `entries sync.Map` + `sweepInterval time.Duration` defaulting to 30 s), `NewNonceCache()`, and `Add(ctx, nonce, ttl) (bool, error)` in `internal/transport/sign/nonce.go` per [research R-003](./research.md#r-003--noncecache-syncmap-with-loadorstore--compareandswap) — three deterministic phases: ctx-err → encoding/TTL gates → `LoadOrStore` (with `CompareAndSwap` lazy expired-reuse path)
 
 **Checkpoint**: All US2 tests pass without a sweep goroutine. `go test -run "TestNonce|TestTimestamp" ./internal/transport/sign/` is green.
 
@@ -156,16 +156,16 @@ description: "Tasks for SDD-08 — internal/transport/sign (canonical-JSON sign/
 
 ### Tests for User Story 4 (write FIRST) ⚠️
 
-- [ ] T036 [P] [US4] Write `TestNewNonceCache_NoGoroutineSpawned` in `internal/transport/sign/nonce_test.go` — capture `runtime.NumGoroutine()` before and after `NewNonceCache()`; assert delta is 0 (FR-009)
-- [ ] T037 [P] [US4] Write `TestNonceCache_RunStopsOnContextCancel` in `internal/transport/sign/nonce_test.go` — construct cache via the test-only short-interval helper (`sweepInterval = 10ms`); `go cache.Run(ctx)`; cancel `ctx`; assert Run returns within 100 ms and `runtime.NumGoroutine()` returns to baseline
-- [ ] T038 [P] [US4] Write `TestNonceCache_RunLogsStoppedOnce` in `internal/transport/sign/nonce_test.go` — install a `slog.NewJSONHandler(buf)` test logger via `slog.SetDefault`; run + cancel; assert exactly one log line whose message is `"hush/transport/sign: nonce cache sweep stopped"` and whose only attribute is `reason=<ctx.Err().Error()>` (no nonces, no count, no per-key data per FR-017)
-- [ ] T039 [P] [US4] Write `TestNonceCache_AddWorksWithoutRun` in `internal/transport/sign/nonce_test.go` — construct cache, do NOT invoke Run, perform Add operations, assert all succeed and the entries are tracked correctly (User Story 4 acceptance scenario 3)
-- [ ] T040 [P] [US4] Write `TestNonceCache_SweepRemovesExpired` in `internal/transport/sign/nonce_test.go` — Add nonce with short TTL, start Run with 10 ms sweep interval, advance the frozen clock past TTL, wait one sweep interval, assert the entry has been deleted (via re-Adding the same nonce returning `firstSeen=true`)
+- [X] T036 [P] [US4] Write `TestNewNonceCache_NoGoroutineSpawned` in `internal/transport/sign/nonce_test.go` — capture `runtime.NumGoroutine()` before and after `NewNonceCache()`; assert delta is 0 (FR-009)
+- [X] T037 [P] [US4] Write `TestNonceCache_RunStopsOnContextCancel` in `internal/transport/sign/nonce_test.go` — construct cache via the test-only short-interval helper (`sweepInterval = 10ms`); `go cache.Run(ctx)`; cancel `ctx`; assert Run returns within 100 ms and `runtime.NumGoroutine()` returns to baseline
+- [X] T038 [P] [US4] Write `TestNonceCache_RunLogsStoppedOnce` in `internal/transport/sign/nonce_test.go` — install a `slog.NewJSONHandler(buf)` test logger via `slog.SetDefault`; run + cancel; assert exactly one log line whose message is `"hush/transport/sign: nonce cache sweep stopped"` and whose only attribute is `reason=<ctx.Err().Error()>` (no nonces, no count, no per-key data per FR-017)
+- [X] T039 [P] [US4] Write `TestNonceCache_AddWorksWithoutRun` in `internal/transport/sign/nonce_test.go` — construct cache, do NOT invoke Run, perform Add operations, assert all succeed and the entries are tracked correctly (User Story 4 acceptance scenario 3)
+- [X] T040 [P] [US4] Write `TestNonceCache_SweepRemovesExpired` in `internal/transport/sign/nonce_test.go` — Add nonce with short TTL, start Run with 10 ms sweep interval, advance the frozen clock past TTL, wait one sweep interval, assert the entry has been deleted (via re-Adding the same nonce returning `firstSeen=true`)
 
 ### Implementation for User Story 4
 
-- [ ] T041 [US4] Implement `Run(ctx context.Context)` and the package-private `sweep()` method on `*nonceCache` in `internal/transport/sign/nonce.go` per [research R-004](./research.md#r-004--noncecacherun-synchronous-ticker-loop-owned-by-the-caller) — `time.NewTicker(c.sweepInterval)` + `defer t.Stop()` + `for { select { case <-ctx.Done(): slog.Info("...stopped...", slog.String("reason", ctx.Err().Error())); return; case <-t.C: c.sweep() } }`. The sweep is `c.entries.Range` with `CompareAndDelete(k, observedExpiry)` for entries whose stored expiry is in the past.
-- [ ] T042 [US4] Add a test-only helper `newNonceCacheForTest(sweepInterval time.Duration)` to `internal/transport/sign/testutil_test.go` (NOT exported — `_test.go`-gated) so the lifecycle tests can use a sub-second sweep interval
+- [X] T041 [US4] Implement `Run(ctx context.Context)` and the package-private `sweep()` method on `*nonceCache` in `internal/transport/sign/nonce.go` per [research R-004](./research.md#r-004--noncecacherun-synchronous-ticker-loop-owned-by-the-caller) — `time.NewTicker(c.sweepInterval)` + `defer t.Stop()` + `for { select { case <-ctx.Done(): slog.Info("...stopped...", slog.String("reason", ctx.Err().Error())); return; case <-t.C: c.sweep() } }`. The sweep is `c.entries.Range` with `CompareAndDelete(k, observedExpiry)` for entries whose stored expiry is in the past.
+- [X] T042 [US4] Add a test-only helper `newNonceCacheForTest(sweepInterval time.Duration)` to `internal/transport/sign/testutil_test.go` (NOT exported — `_test.go`-gated) so the lifecycle tests can use a sub-second sweep interval
 
 **Checkpoint**: All US4 tests pass. The package's only goroutine is the caller-owned Run; `Run` exit is logged exactly once with `reason` only.
 
@@ -181,12 +181,12 @@ description: "Tasks for SDD-08 — internal/transport/sign (canonical-JSON sign/
 
 ### Tests for User Story 5 (write FIRST) ⚠️
 
-- [ ] T043 [P] [US5] Write `TestNonceCache_ConcurrentAdd` in `internal/transport/sign/nonce_test.go` — N=128 goroutines (or higher), shared nonce, shared cache, collect outcomes via `sync/atomic` counter; assert the counter of `firstSeen=true` is exactly 1 and that all other goroutines returned `errors.Is(err, ErrNonceReplay)`. The test MUST be race-clean under `magex test:race`.
-- [ ] T044 [P] [US5] Write `TestNonceCache_ConcurrentDistinct` in `internal/transport/sign/nonce_test.go` — N goroutines each Add a distinct unique nonce; assert all N observe `firstSeen=true` and the cache contains all N entries (FR-008 second leg)
+- [X] T043 [P] [US5] Write `TestNonceCache_ConcurrentAdd` in `internal/transport/sign/nonce_test.go` — N=128 goroutines (or higher), shared nonce, shared cache, collect outcomes via `sync/atomic` counter; assert the counter of `firstSeen=true` is exactly 1 and that all other goroutines returned `errors.Is(err, ErrNonceReplay)`. The test MUST be race-clean under `magex test:race`.
+- [X] T044 [P] [US5] Write `TestNonceCache_ConcurrentDistinct` in `internal/transport/sign/nonce_test.go` — N goroutines each Add a distinct unique nonce; assert all N observe `firstSeen=true` and the cache contains all N entries (FR-008 second leg)
 
 ### Implementation for User Story 5
 
-- [ ] T045 [US5] Verify the `Add` implementation from T035 satisfies the exactly-one-winner contract under `-race`. If `TestNonceCache_ConcurrentAdd` reports a race or a non-1 winner count, refine the `LoadOrStore` + `CompareAndSwap` ordering per [research R-003](./research.md#r-003--noncecache-syncmap-with-loadorstore--compareandswap). No new file — refinement is to `internal/transport/sign/nonce.go`.
+- [X] T045 [US5] Verify the `Add` implementation from T035 satisfies the exactly-one-winner contract under `-race`. If `TestNonceCache_ConcurrentAdd` reports a race or a non-1 winner count, refine the `LoadOrStore` + `CompareAndSwap` ordering per [research R-003](./research.md#r-003--noncecache-syncmap-with-loadorstore--compareandswap). No new file — refinement is to `internal/transport/sign/nonce.go`.
 
 **Checkpoint**: `magex test:race` reports zero races; `TestNonceCache_ConcurrentAdd` consistently passes with exactly 1 winner across repeated runs.
 
@@ -202,12 +202,12 @@ description: "Tasks for SDD-08 — internal/transport/sign (canonical-JSON sign/
 
 ### Tests for User Story 6 (write FIRST) ⚠️
 
-- [ ] T046 [P] [US6] Write `TestSentinels_AreDistinct` in `internal/transport/sign/errors_test.go` — for each pair `(ErrA, ErrB)` where `ErrA != ErrB`, assert `!errors.Is(ErrA, ErrB)` and `!errors.Is(ErrB, ErrA)` (i.e., no wrap relationships exist between sentinels per [research R-006](./research.md#r-006--sentinel-error-catalogue-and-wrap-relationships))
-- [ ] T047 [P] [US6] Write `TestSentinels_MessagePrefix` in `internal/transport/sign/errors_test.go` — each sentinel's `.Error()` string starts with `"hush/transport/sign: "` (catalog-locality discipline)
+- [X] T046 [P] [US6] Write `TestSentinels_AreDistinct` in `internal/transport/sign/errors_test.go` — for each pair `(ErrA, ErrB)` where `ErrA != ErrB`, assert `!errors.Is(ErrA, ErrB)` and `!errors.Is(ErrB, ErrA)` (i.e., no wrap relationships exist between sentinels per [research R-006](./research.md#r-006--sentinel-error-catalogue-and-wrap-relationships))
+- [X] T047 [P] [US6] Write `TestSentinels_MessagePrefix` in `internal/transport/sign/errors_test.go` — each sentinel's `.Error()` string starts with `"hush/transport/sign: "` (catalog-locality discipline)
 
 ### Implementation for User Story 6
 
-- [ ] T048 [US6] No new code — confirm via the existing tests (T015, T024, T025, T026, T030, T031, T032, T046, T047) that every documented rejection category surfaces its own sentinel and that none collapse. If any test reveals a sentinel-collapse defect, fix the producing function (no new sentinels — the catalogue is locked).
+- [X] T048 [US6] No new code — confirm via the existing tests (T015, T024, T025, T026, T030, T031, T032, T046, T047) that every documented rejection category surfaces its own sentinel and that none collapse. If any test reveals a sentinel-collapse defect, fix the producing function (no new sentinels — the catalogue is locked).
 
 **Checkpoint**: The six sentinels are independent, distinct, comparable. `TestSentinels_*` green.
 
@@ -219,26 +219,26 @@ description: "Tasks for SDD-08 — internal/transport/sign (canonical-JSON sign/
 
 ### Gate suite (each MUST pass clean)
 
-- [ ] T049 Run `magex format:fix` from the repo root — the package source files MUST be gofmt/goimports-clean
-- [ ] T050 Run `magex lint` from the repo root — golangci-lint MUST be clean for `internal/transport/sign/...` (no new warnings introduced)
-- [ ] T051 Run `magex test:race` from the repo root — full test suite race-clean, with particular attention to `TestNonceCache_ConcurrentAdd` and `TestNonceCache_RunStopsOnContextCancel`
-- [ ] T052 Run `go test -fuzz=FuzzVerifyRequest -fuzztime=60s ./internal/transport/sign/` — MUST produce no panic, no new entries in `testdata/fuzz/FuzzVerifyRequest/`, and every error a typed sentinel (Constitution VIII fuzz target #4)
-- [ ] T053 Run `go test -cover ./internal/transport/sign/` — coverage MUST be 100% (Constitution VIII Critical band — request signing). If <100%, identify the uncovered branches via `go test -coverprofile=cover.out ./internal/transport/sign/` + `go tool cover -html=cover.out` and add the missing tests before proceeding.
+- [X] T049 Run `magex format:fix` from the repo root — the package source files MUST be gofmt/goimports-clean
+- [X] T050 Run `magex lint` from the repo root — golangci-lint MUST be clean for `internal/transport/sign/...` (no new warnings introduced)
+- [X] T051 Run `magex test:race` from the repo root — full test suite race-clean, with particular attention to `TestNonceCache_ConcurrentAdd` and `TestNonceCache_RunStopsOnContextCancel`
+- [X] T052 Run `go test -fuzz=FuzzVerifyRequest -fuzztime=60s ./internal/transport/sign/` — MUST produce no panic, no new entries in `testdata/fuzz/FuzzVerifyRequest/`, and every error a typed sentinel (Constitution VIII fuzz target #4)
+- [X] T053 Run `go test -cover ./internal/transport/sign/` — coverage MUST be 100% (Constitution VIII Critical band — request signing). If <100%, identify the uncovered branches via `go test -coverprofile=cover.out ./internal/transport/sign/` + `go tool cover -html=cover.out` and add the missing tests before proceeding.
 
 ### Cross-document validation
 
-- [ ] T054 Manually compare the canonical-output of the example payload from [docs/SECURITY.md](../../docs/SECURITY.md) Layer 4 against the bytes produced by `CanonicalJSON` — capture a snapshot in a one-off `go run` or test, assert byte-equality with the documented example
-- [ ] T055 Confirm `TestNonceCache_ConcurrentAdd` is race-clean across at least 5 consecutive `magex test:race` runs and that the `firstSeen=true` count is exactly 1 each time
+- [X] T054 Manually compare the canonical-output of the example payload from [docs/SECURITY.md](../../docs/SECURITY.md) Layer 4 against the bytes produced by `CanonicalJSON` — capture a snapshot in a one-off `go run` or test, assert byte-equality with the documented example
+- [X] T055 Confirm `TestNonceCache_ConcurrentAdd` is race-clean across at least 5 consecutive `magex test:race` runs and that the `firstSeen=true` count is exactly 1 each time
 
 ### Documentation updates
 
-- [ ] T056 Append a new section "## `internal/transport/sign` — Exported API (locked at SDD-08)" to `docs/PACKAGE-MAP.md` listing the locked surface from [contracts/api.md §Exported types/functions](./contracts/api.md): `RawMessage`, `NonceCache` interface, `CanonicalJSON`, `Sign`, `Verify`, `NewNonceCache`, `IsFreshTimestamp`, and the six sentinel `var Err...` declarations. Cite the contract document.
-- [ ] T057 Update the AC-7 row in `docs/AC-MATRIX.md` (Layer 4 — request signing + replay protection) with the new test file paths: `internal/transport/sign/canonical_test.go`, `internal/transport/sign/sign_test.go`, `internal/transport/sign/verify_test.go`, `internal/transport/sign/nonce_test.go`, `internal/transport/sign/timestamp_test.go`, `internal/transport/sign/errors_test.go`, `internal/transport/sign/verify_fuzz_test.go`. Mark the row's status to reflect the SDD-08 implementation landing.
-- [ ] T058 Mark SDD-08 status `done` in `docs/SDD-PLAYBOOK.md`
+- [X] T056 Append a new section "## `internal/transport/sign` — Exported API (locked at SDD-08)" to `docs/PACKAGE-MAP.md` listing the locked surface from [contracts/api.md §Exported types/functions](./contracts/api.md): `RawMessage`, `NonceCache` interface, `CanonicalJSON`, `Sign`, `Verify`, `NewNonceCache`, `IsFreshTimestamp`, and the six sentinel `var Err...` declarations. Cite the contract document.
+- [X] T057 Update the AC-7 row in `docs/AC-MATRIX.md` (Layer 4 — request signing + replay protection) with the new test file paths: `internal/transport/sign/canonical_test.go`, `internal/transport/sign/sign_test.go`, `internal/transport/sign/verify_test.go`, `internal/transport/sign/nonce_test.go`, `internal/transport/sign/timestamp_test.go`, `internal/transport/sign/errors_test.go`, `internal/transport/sign/verify_fuzz_test.go`. Mark the row's status to reflect the SDD-08 implementation landing.
+- [X] T058 Mark SDD-08 status `done` in `docs/SDD-PLAYBOOK.md`
 
 ### Combined commit
 
-- [ ] T059 Stage and create the single combined commit per [docs/sdd/SDD-08.md](../../docs/sdd/SDD-08.md) Prompt 5:
+- [X] T059 Stage and create the single combined commit per [docs/sdd/SDD-08.md](../../docs/sdd/SDD-08.md) Prompt 5:
   ```
   git add internal/transport/sign/ docs/PACKAGE-MAP.md \
           docs/AC-MATRIX.md docs/SDD-PLAYBOOK.md \

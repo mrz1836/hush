@@ -132,8 +132,8 @@ private key fails cleanly.
 |--------------|-----------|--------|
 | SDD-01 (BIP32 derivation + ephemeral keys) | `internal/keys/derive_test.go`, `internal/keys/paths_test.go`, `internal/keys/client_test.go`, `internal/keys/fingerprint_test.go`, `internal/keys/derive_fuzz_test.go` | done |
 | SDD-02 (Layer 5 — mlocked secure memory + zero-on-destroy) | `internal/vault/securebytes/securebytes_test.go` — `TestSecureBytes_New_CopiesAndZeroesInput`, `TestSecureBytes_Use_DeliversPayload`, `TestSecureBytes_Render_RedactsAllPaths`, `TestSecureBytes_RedactionSentinel`, `TestSecureBytes_Destroy_ZeroesAndIdempotent`, `TestSecureBytes_PostDestroy_ReturnsErrDestroyed`, `TestSecureBytes_FinalizerZerosOnGC`, `TestSecureBytes_ConcurrentUse` | done |
-| SDD-08 (request signing) | `internal/transport/sign/*_test.go` | pending |
-| SDD-08 fuzz | `internal/transport/sign/verify_fuzz_test.go::FuzzVerifyRequest` | pending |
+| SDD-08 (request signing) | `internal/transport/sign/canonical_test.go`, `internal/transport/sign/sign_test.go`, `internal/transport/sign/verify_test.go`, `internal/transport/sign/nonce_test.go`, `internal/transport/sign/timestamp_test.go`, `internal/transport/sign/errors_test.go` | green |
+| SDD-08 fuzz | `internal/transport/sign/verify_fuzz_test.go::FuzzVerifyRequest` (60s clean, no panic, every error a typed sentinel) | green |
 | SDD-09 (ECIES) | `internal/transport/ecies/ecies_test.go::TestECIES_*`, `TestECIES_NoLeakOnError` (sentinel-leak) | pending |
 | SDD-09 fuzz | `internal/transport/ecies/decrypt_fuzz_test.go::FuzzECIESDecrypt` | pending |
 | SDD-13 (server `/s` handler ECIES output) | `internal/server/secret_handler_test.go::TestSecret_HappyPath_ECIESPayload` | pending |
