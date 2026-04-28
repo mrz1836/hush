@@ -47,8 +47,11 @@ atomically swaps the rotated value with no in-flight request failures.
 
 | Owning chunk | Test path | Status |
 |--------------|-----------|--------|
-| SDD-03 (vault file format) | `internal/vault/vault_test.go::TestVault_RoundTrip_*`, `TestVault_SaveAtomic_NoIntermediate` | pending |
-| SDD-03 fuzz | `internal/vault/vault_fuzz_test.go::FuzzVaultDecode` (≥60s clean in CI) | pending |
+| SDD-03 (vault file format) | `internal/vault/file_test.go::TestVault_RoundTrip_{0,1,5,500}Secrets`, `TestVault_LoadWrongPass_ReturnsAuthFailed`, `TestVault_LoadTruncated*`, `TestVault_LoadLoose*`, `TestVault_Save*`, `TestVault_NoLeakInError`; `internal/vault/codec_test.go`; `internal/vault/store_test.go::TestStore_*`; `internal/vault/permissions_test.go::TestCheck*` | green |
+| SDD-03 fuzz | `internal/vault/vault_fuzz_test.go::FuzzVaultDecode` (60s clean, no panic, ≤50 MiB, every error typed) | green |
+| SDD-03 race | `internal/vault/store_test.go::TestStore_ConcurrentGet` (100 goroutines, race-clean) | green |
+| SDD-03 sentinel-leak | `internal/vault/file_test.go::TestVault_NoLeakInError` (`SECRET_SHOULD_NEVER_APPEAR_3` absent from `err.Error()` and captured slog) | green |
+| _Note_ | SIGHUP reload half of AC-2 remains SDD-10's responsibility | — |
 | SDD-10 (SIGHUP atomic reload) | `internal/server/integration_test.go::TestSIGHUP_AtomicReload` | pending |
 | SDD-13 (audit chain on rotation) | `internal/audit/chain_test.go::TestAuditChain_HashLinkContiguous` | pending |
 | SDD-17 (`hush secret`) | `internal/cli/secret_test.go::TestSecret_RotateAtomic`, `TestSecret_RotateSendsSIGHUP` | pending |
