@@ -39,7 +39,7 @@
 | ID | Title | Package | Status | AC |
 |----|-------|---------|--------|-----|
 | SDD-08 | ECDSA canonical-JSON request signing + nonce + timestamp | `internal/transport/sign` | done | AC-7 |
-| SDD-09 | ECIES encrypt/decrypt for secret responses | `internal/transport/ecies` | pending | AC-7 |
+| SDD-09 | ECIES encrypt/decrypt for secret responses | `internal/transport/ecies` | done | AC-7 |
 | SDD-07 | ES256K JWT issue/validate + claims + store | `internal/token` | pending | AC-4 |
 
 ## Phase 3 — Server control plane
