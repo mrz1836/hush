@@ -320,6 +320,77 @@ var (
 
 ---
 
+## `internal/testutil/`
+
+Purpose:
+- provide deterministic, leak-safe test helpers for every downstream package
+- MUST NOT be imported by any production source file
+
+Expected responsibilities:
+- deterministic test keys (Argon2id-derived, memoised)
+- temp-dir-scoped vault fixture with real HUSH-format file
+- sentinel-string generator and absent-assertion helper
+- programmable Discord approval stub with response queue
+
+Must not contain:
+- production business logic
+- network sockets of any kind
+- `init()` functions
+
+### Exported API — locked at SDD-04
+
+Path: `github.com/mrz1836/hush/internal/testutil` *(test-only — `*_test.go` imports only)*
+
+```go
+// NewTestVault creates a real HUSH-format vault inside t.TempDir() and registers
+// t.Cleanup to zero the vault key. Returns path, vaultKey, and an explicit cleanup.
+func NewTestVault(t *testing.T, secrets map[string]string) (path string, vaultKey *securebytes.SecureBytes, cleanup func())
+
+// NewTestKeys returns a deterministic 64-byte master seed (Argon2id, memoised per
+// process). Two calls in any test or goroutine return byte-identical slices.
+func NewTestKeys(t *testing.T) (masterSeed []byte)
+
+// SentinelSecret returns the canonical SECRET_SHOULD_NEVER_APPEAR_<n> marker.
+func SentinelSecret(n int) string
+
+// AssertSentinelAbsent fails t if sentinel appears anywhere in haystack,
+// reporting the byte offset and a 64-byte context window.
+func AssertSentinelAbsent(t *testing.T, sentinel, haystack string)
+
+// DiscordStub is a programmable, network-free Discord approval substitute.
+// Use NewDiscordStub to construct one.
+type DiscordStub struct {
+    ApproveAll bool // tail-default after queue is exhausted
+    // unexported: mu, responses, calls, t
+}
+
+// NewDiscordStub constructs a DiscordStub bound to t and registers t.Cleanup
+// to drain the recorded calls and response queue.
+func NewDiscordStub(t *testing.T) *DiscordStub
+
+// ApprovalCall records one call to RequestApproval.
+type ApprovalCall struct {
+    Request  ApprovalRequest
+    Decision Decision
+    Err      error
+    Index    int
+}
+
+// Approver is the narrow interface DiscordStub satisfies. SDD-11 widens this
+// into the production Approver in internal/discord.
+type Approver interface {
+    RequestApproval(ctx context.Context, req ApprovalRequest) (Decision, error)
+}
+
+// Supporting types (entailed by the above API):
+//
+//   type Decision int   — DecisionApprove | DecisionDeny | DecisionApproveMute
+//   type ApprovalRequest struct { RequesterHost, Scopes, SessionType, TTL, MaxUses }
+//   var ErrUnexpectedCall error  — returned when queue empty and ApproveAll==false
+```
+
+---
+
 ## `internal/token/`
 
 Purpose:
