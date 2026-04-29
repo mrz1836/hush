@@ -42,5 +42,17 @@ var (
 	ErrArgonThreadsTooLow = errors.New("hush/config: argon_threads below floor (4)")
 )
 
+// Crypto-ceiling errors — DoS-via-config prevention. Looser misconfig
+// (e.g. argon_memory_mb=1000000) would OOM the process at first KDF call.
+var (
+	ErrArgonMemoryTooHigh  = errors.New("hush/config: argon_memory_mb above ceiling (4096 MiB)")
+	ErrArgonTimeTooHigh    = errors.New("hush/config: argon_time above ceiling (16)")
+	ErrArgonThreadsTooHigh = errors.New("hush/config: argon_threads above ceiling (128)")
+)
+
 // TTL-bound error.
 var ErrSupervisorTTLOutOfRange = errors.New("hush/config: max_supervisor_ttl out of range (must be > jwt_default_ttl and ≤ 24h)")
+
+// File-permissions error. Surfaced when require_file_mode_checks is true and
+// the config file's own permissions are looser than 0600.
+var ErrConfigFileMode = errors.New("hush/config: config file permissions must be 0600")

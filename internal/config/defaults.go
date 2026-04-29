@@ -5,7 +5,15 @@ import (
 	"time"
 )
 
-// Argon2id parameters — Constitution III floors.
+// Argon2id parameters — Constitution III floors and v0.1.0 ceilings.
+//
+// Floors enforce the security minimum (256 MiB / time=4 / threads=4 — the
+// 2026 commodity-malware-resistant baseline). Ceilings prevent
+// mis-configuration from accidentally OOM-ing or wedging the boot
+// sequence: a `argon_memory_mb = 1000000` would request 1 TB of RAM at
+// first key derivation. Operators with extreme paranoia profiles can
+// raise the ceilings here in a forked build; the public TOML schema is
+// validated against both bounds.
 //
 //nolint:gochecknoglobals // sentinel-class: set-once at package load, never mutated
 var (
@@ -15,6 +23,9 @@ var (
 	MinArgonTime         uint32 = 4
 	MinArgonMemoryMB     uint32 = 256
 	MinArgonThreads      uint8  = 4
+	MaxArgonTime         uint32 = 16   // 16 iterations: ≥30s on 2026 hardware, hard upper bound
+	MaxArgonMemoryMB     uint32 = 4096 // 4 GiB: well above any realistic single-user baseline
+	MaxArgonThreads      uint8  = 128  // 128 lanes: > any consumer CPU as of 2026
 )
 
 // JWT / session / nonce / skew durations.

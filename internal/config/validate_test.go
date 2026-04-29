@@ -2,10 +2,12 @@ package config
 
 import (
 	"context"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -265,6 +267,59 @@ func TestServer_RejectsArgonThreadsUnder4(t *testing.T) {
 	assert.ErrorIs(t, err, ErrArgonThreadsTooLow)
 }
 
+// ---- Argon2id ceilings (H3) -------------------------------------------------
+
+// argonCfgWithOverrides materializes a valid minimal config with the given
+// argon_* overrides written into the [crypto] table.
+func argonCfgWithOverrides(t *testing.T, overrides string) (*Server, error) {
+	t.Helper()
+	dir := t.TempDir()
+	content := "[server]\n" +
+		"listen_addr = \"100.96.10.4:7743\"\n" +
+		"path_prefix = \"a8k2f9\"\n" +
+		"state_dir = \"" + dir + "\"\n" +
+		"audit_log = \"" + dir + "/audit.jsonl\"\n" +
+		"discord_owner_id = \"123456789012345678\"\n" +
+		"\n[discord]\n" +
+		"bot_token_keychain_item = \"hush-discord\"\n" +
+		"application_id = \"345678901234567890\"\n" +
+		"\n[crypto]\n" + overrides
+	cfg := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(cfg, []byte(content), 0o600))
+	return LoadServer(context.Background(), cfg)
+}
+
+func TestServer_RejectsArgonMemoryAboveCeiling(t *testing.T) {
+	t.Parallel()
+	s, err := argonCfgWithOverrides(t, "argon_memory_mb = 8192\n")
+	require.Nil(t, s)
+	require.ErrorIs(t, err, ErrArgonMemoryTooHigh)
+}
+
+func TestServer_RejectsArgonTimeAboveCeiling(t *testing.T) {
+	t.Parallel()
+	s, err := argonCfgWithOverrides(t, "argon_time = 32\n")
+	require.Nil(t, s)
+	require.ErrorIs(t, err, ErrArgonTimeTooHigh)
+}
+
+func TestServer_RejectsArgonThreadsAboveCeiling(t *testing.T) {
+	t.Parallel()
+	s, err := argonCfgWithOverrides(t, "argon_threads = 200\n")
+	require.Nil(t, s)
+	require.ErrorIs(t, err, ErrArgonThreadsTooHigh)
+}
+
+func TestServer_AcceptsArgonAtCeilings(t *testing.T) {
+	t.Parallel()
+	s, err := argonCfgWithOverrides(t, "argon_memory_mb = 4096\nargon_time = 16\nargon_threads = 128\n")
+	require.NoError(t, err)
+	require.NotNil(t, s)
+	assert.Equal(t, uint32(4096), s.Crypto.ArgonMemoryMB)
+	assert.Equal(t, uint32(16), s.Crypto.ArgonTime)
+	assert.Equal(t, uint8(128), s.Crypto.ArgonThreads)
+}
+
 // ---- max_supervisor_ttl bounds (US4) ----------------------------------------
 
 func TestServer_RejectsSupervisorTTLBelowJWT(t *testing.T) {
@@ -419,4 +474,88 @@ func TestServer_RejectsMissingPathPrefix(t *testing.T) {
 	s, err := LoadServer(context.Background(), cfg)
 	assert.Nil(t, s)
 	require.ErrorIs(t, err, ErrMissingRequiredField)
+}
+
+// ---- H5: rule-order regression test ----------------------------------------
+
+// TestValidate_RuleOrderDeterministic constructs a *Server that violates
+// every rule simultaneously and asserts the joined error sequence matches
+// the documented order in validate.go. The test bypasses LoadServer's
+// materialize step (which would short-circuit on a missing state_dir
+// before reaching Validate) and exercises Validate directly.
+//
+// Documented order (validate.go):
+//  1. require_tailscale gate
+//     2a. Argon2id floors (memory, time, threads)
+//     2b. Argon2id ceilings (memory, time, threads) — only if floors not tripped
+//  3. listen_addr family
+//  4. health_bind family (when explicitly set)
+//  5. path_prefix
+//  6. audit_log containment
+//  7. max_supervisor_ttl bounds
+//
+// Operators rely on this ordering to triage multi-violation configs
+// ("fix the first error first"); a silent reorder would break that workflow.
+func TestValidate_RuleOrderDeterministic(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	auditOutside := filepath.Join(t.TempDir(), "elsewhere", "audit.jsonl")
+
+	listenRaw := "0.0.0.0:7743"
+	healthRaw := "1.2.3.4:8080"
+	listenAP := netip.MustParseAddrPort(listenRaw)
+	healthAP := netip.MustParseAddrPort(healthRaw)
+
+	s := &Server{
+		Network: NetworkSection{
+			RequireTailscale: false, // trips rule 1
+			HealthBind:       healthAP,
+			AllowedCIDRs:     []string{"100.64.0.0/10"},
+		},
+		Crypto: CryptoSection{
+			ArgonMemoryMB:    100, // < 256 → rule 2a-mem-low
+			ArgonTime:        2,   // < 4   → rule 2a-time-low
+			ArgonThreads:     2,   // < 4   → rule 2a-threads-low
+			JWTDefaultTTL:    8 * time.Hour,
+			MaxSupervisorTTL: 1 * time.Hour, // < jwt → rule 7
+		},
+		Server: ServerSection{
+			ListenAddr: listenAP,
+			PathPrefix: "bad!", // contains '!' → rule 5
+			StateDir:   stateDir,
+			AuditLog:   auditOutside, // outside state_dir → rule 6
+		},
+		rawListenAddr: listenRaw, // 0.0.0.0 → rule 3 (unspecified)
+		rawHealthBind: healthRaw, // 1.2.3.4 → rule 4 (public)
+	}
+
+	err := s.Validate()
+	require.Error(t, err)
+
+	// errors.Join (Go 1.20+) returns an error with Unwrap() []error.
+	type unwrapper interface{ Unwrap() []error }
+	uw, ok := err.(unwrapper)
+	require.True(t, ok, "Validate must return errors.Join (Unwrap() []error)")
+	leaves := uw.Unwrap()
+
+	expectedOrder := []error{
+		ErrTailscaleRequired,       // rule 1
+		ErrArgonMemoryTooLow,       // rule 2a-mem
+		ErrArgonTimeTooLow,         // rule 2a-time
+		ErrArgonThreadsTooLow,      // rule 2a-threads
+		ErrListenUnspecified,       // rule 3
+		ErrListenPublic,            // rule 4 (health_bind 1.2.3.4 is public)
+		ErrPathPrefixInvalid,       // rule 5
+		ErrAuditLogEscape,          // rule 6
+		ErrSupervisorTTLOutOfRange, // rule 7
+	}
+
+	require.Len(t, leaves, len(expectedOrder),
+		"got %d leaves, want %d", len(leaves), len(expectedOrder))
+
+	for i, want := range expectedOrder {
+		require.ErrorIsf(t, leaves[i], want,
+			"leaves[%d] = %v, want errors.Is(_, %v)", i, leaves[i], want)
+	}
 }

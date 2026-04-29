@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/netip"
 	"os"
@@ -418,7 +419,9 @@ func TestLoadServer_AllErrorsAreSentinels(t *testing.T) {
 		ErrPathPrefixInvalid, ErrAuditLogEscape,
 		ErrStateDirNotFound, ErrStateDirUnsafe,
 		ErrArgonMemoryTooLow, ErrArgonTimeTooLow, ErrArgonThreadsTooLow,
+		ErrArgonMemoryTooHigh, ErrArgonTimeTooHigh, ErrArgonThreadsTooHigh,
 		ErrSupervisorTTLOutOfRange,
+		ErrConfigFileMode,
 	}
 
 	isKnown := func(err error) bool {
@@ -473,6 +476,45 @@ func TestServer_HealthBindInheritsListenAddr(t *testing.T) {
 	require.NoError(t, err)
 	// When health_bind is absent, it inherits listen_addr.
 	assert.Equal(t, s.Server.ListenAddr, s.Network.HealthBind)
+}
+
+// ---- Config file permissions (Q5) ------------------------------------------
+
+// configWithMode writes the minimal-valid fixture with stateDir injected at
+// the given mode and returns the path. Used by the file-mode test set.
+func configWithMode(t *testing.T, mode os.FileMode) string {
+	t.Helper()
+	dir := t.TempDir()
+	raw, err := os.ReadFile("testdata/valid/minimal-valid.toml")
+	require.NoError(t, err)
+	content := strings.ReplaceAll(string(raw), "__STATE_DIR__", dir)
+	dst := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(dst, []byte(content), mode)) //nolint:gosec // explicit mode under test
+	require.NoError(t, os.Chmod(dst, mode))                      // overcome umask if needed
+	return dst
+}
+
+func TestLoadServer_RejectsLooseConfigPerms(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []os.FileMode{0o644, 0o660, 0o640, 0o666, 0o604} {
+		t.Run(fmt.Sprintf("%#o", mode), func(t *testing.T) {
+			t.Parallel()
+			cfg := configWithMode(t, mode)
+			s, err := LoadServer(context.Background(), cfg)
+			require.Error(t, err)
+			require.Nil(t, s)
+			require.ErrorIs(t, err, ErrConfigFileMode,
+				"mode %#o should be rejected with ErrConfigFileMode", mode)
+		})
+	}
+}
+
+func TestLoadServer_AcceptsConfigAt0600(t *testing.T) {
+	t.Parallel()
+	cfg := configWithMode(t, 0o600)
+	s, err := LoadServer(context.Background(), cfg)
+	require.NoError(t, err)
+	require.NotNil(t, s)
 }
 
 // ---- Path-safety (audit_log) -----------------------------------------------

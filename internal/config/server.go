@@ -143,15 +143,9 @@ func LoadServer(ctx context.Context, path string) (*Server, error) {
 	}
 	defer func() { _ = f.Close() }()
 
-	var decoded serverDecoded
-	dec := toml.NewDecoder(f)
-	dec.DisallowUnknownFields()
-	if decErr := dec.Decode(&decoded); decErr != nil {
-		var strictErr *toml.StrictMissingError
-		if errors.As(decErr, &strictErr) {
-			return nil, fmt.Errorf("%w: %s", ErrUnknownField, strictErr.Error())
-		}
-		return nil, fmt.Errorf("%w: %s", ErrTOMLDecode, decErr.Error())
+	decoded, err := decodeStrict(f)
+	if err != nil {
+		return nil, err
 	}
 
 	s, err := materialize(decoded)
@@ -159,10 +153,51 @@ func LoadServer(ctx context.Context, path string) (*Server, error) {
 		return nil, err
 	}
 
+	if s.Security.RequireFileModeChecks {
+		if err := enforceConfigFileMode(f, path); err != nil {
+			return nil, err
+		}
+	}
+
 	if err := s.Validate(); err != nil {
 		return nil, err
 	}
 	return s, nil
+}
+
+// decodeStrict TOML-decodes from r with unknown-field rejection, mapping
+// strict-missing errors to ErrUnknownField and any other decode failure to
+// ErrTOMLDecode.
+func decodeStrict(f *os.File) (serverDecoded, error) {
+	var decoded serverDecoded
+	dec := toml.NewDecoder(f)
+	dec.DisallowUnknownFields()
+	if decErr := dec.Decode(&decoded); decErr != nil {
+		var strictErr *toml.StrictMissingError
+		if errors.As(decErr, &strictErr) {
+			return decoded, fmt.Errorf("%w: %s", ErrUnknownField, strictErr.Error())
+		}
+		return decoded, fmt.Errorf("%w: %s", ErrTOMLDecode, decErr.Error())
+	}
+	return decoded, nil
+}
+
+// enforceConfigFileMode rejects any config file whose perms are not exactly
+// 0600. Even though the config never carries a credential (Keychain item names
+// only — Constitution X), it does carry topology (Tailscale CIDRs, audit log
+// paths, Discord IDs) that should not be group/world-readable on a shared
+// host. Gated by Security.RequireFileModeChecks (default true) so unit tests
+// on systems without perm semantics can opt out.
+func enforceConfigFileMode(f *os.File, path string) error {
+	fi, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("hush/config: stat %q: %w", path, err)
+	}
+	if mode := fi.Mode().Perm(); mode != 0o600 {
+		return fmt.Errorf("hush/config: %s has perms %#o, want 0600: %w",
+			path, mode, ErrConfigFileMode)
+	}
+	return nil
 }
 
 // ---- materialize ------------------------------------------------------------

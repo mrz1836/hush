@@ -26,7 +26,7 @@ func getPathPrefixRegex() *regexp.Regexp {
 //
 // Rule order (locked by SDD-06 contracts/api.md §Determinism):
 //  1. require_tailscale gate
-//  2. Argon2id floors (memory, time, threads)
+//  2. Argon2id floors (memory, time, threads), then ceilings (same order)
 //  3. listen_addr family
 //  4. health_bind family (when explicitly set)
 //  5. path_prefix
@@ -40,7 +40,7 @@ func (s *Server) Validate() error { //nolint:cyclop,gocognit,gocyclo // rule-eng
 		errs = append(errs, fmt.Errorf("field require_tailscale: %w", ErrTailscaleRequired))
 	}
 
-	// 2. Argon2id floors — Constitution III
+	// 2a. Argon2id floors — Constitution III
 	if s.Crypto.ArgonMemoryMB < MinArgonMemoryMB {
 		errs = append(errs, fmt.Errorf("field argon_memory_mb=%d: %w", s.Crypto.ArgonMemoryMB, ErrArgonMemoryTooLow))
 	}
@@ -49,6 +49,17 @@ func (s *Server) Validate() error { //nolint:cyclop,gocognit,gocyclo // rule-eng
 	}
 	if s.Crypto.ArgonThreads < MinArgonThreads {
 		errs = append(errs, fmt.Errorf("field argon_threads=%d: %w", s.Crypto.ArgonThreads, ErrArgonThreadsTooLow))
+	}
+
+	// 2b. Argon2id ceilings — DoS-via-config prevention (H3).
+	if s.Crypto.ArgonMemoryMB > MaxArgonMemoryMB {
+		errs = append(errs, fmt.Errorf("field argon_memory_mb=%d: %w", s.Crypto.ArgonMemoryMB, ErrArgonMemoryTooHigh))
+	}
+	if s.Crypto.ArgonTime > MaxArgonTime {
+		errs = append(errs, fmt.Errorf("field argon_time=%d: %w", s.Crypto.ArgonTime, ErrArgonTimeTooHigh))
+	}
+	if s.Crypto.ArgonThreads > MaxArgonThreads {
+		errs = append(errs, fmt.Errorf("field argon_threads=%d: %w", s.Crypto.ArgonThreads, ErrArgonThreadsTooHigh))
 	}
 
 	// 3. listen_addr family
