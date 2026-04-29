@@ -487,9 +487,85 @@ Must not contain:
 - Discord UI formatting
 - launchd/systemd specifics
 
-### Exported API — locked
+### Exported API — locked at SDD-07
 
-> Filled by SDD-07. Until then, this section is a placeholder.
+```go
+// Package github.com/mrz1836/hush/internal/token
+
+type SessionType string
+
+const (
+    SessionInteractive SessionType = "interactive"
+    SessionSupervisor  SessionType = "supervisor"
+)
+
+type Claims struct {
+    jwt.RegisteredClaims
+
+    Scope           []string    `json:"scope"`
+    ClientIP        string      `json:"client_ip"`
+    RequestID       string      `json:"request_id"`
+    MaxUses         int         `json:"max_uses"`
+    EphemeralPubKey string      `json:"ephemeral_pubkey"`
+    SessionType     SessionType `json:"session_type"`
+}
+
+type Token struct {
+    JTI         string
+    Encoded     string
+    ExpiresAt   time.Time
+    SessionType SessionType
+    MaxUses     int
+}
+
+type IssueParams struct {
+    Now             time.Time
+    TTL             time.Duration
+    Scope           []string
+    ClientIP        string
+    RequestID       string
+    MaxUses         int
+    EphemeralPubKey string
+    SessionType     SessionType
+}
+
+type Store interface {
+    Add(t *Token) error
+    Get(jti string) (*Token, error)
+    ConsumeUse(jti string) error
+    Revoke(jti string) error
+    Cleanup(ctx context.Context)
+}
+
+func NewStore() Store
+func NewStoreWithTick(d time.Duration) Store
+
+func Issue(ctx context.Context, signKey *ecdsa.PrivateKey, params IssueParams) (*Token, error)
+func Validate(ctx context.Context, encoded string, verifyKey *ecdsa.PublicKey, store Store, requestIP string, requestedSecret string) (*Claims, error)
+
+// Sentinel errors. Compare via errors.Is. Static messages; no JWT or key bytes.
+var ErrAlgorithmUnsupported error
+var ErrTokenExpired         error
+var ErrTokenRevoked         error
+var ErrTokenExhausted       error
+var ErrIPMismatch           error
+var ErrScopeViolation       error
+var ErrUnknownSessionType   error
+```
+
+Behavioural contract:
+- ES256K signing method registered exactly once via a `sync.Once`-gated
+  `Register()` helper invoked by `Issue` and `Validate` (no `init()`).
+- Algorithm-confusion defence: `Validate` rejects header `alg` ≠
+  `"ES256K"` (including `"none"` and `"HS256"`) BEFORE the keyfunc is
+  consulted.
+- INTERACTIVE tokens are TTL+max-uses bounded; SUPERVISOR tokens are
+  TTL-only — `Issue` zeroes `MaxUses` for SUPERVISOR; `ConsumeUse`
+  short-circuits before decrementing.
+- Revocation persists for the lifetime of the store; `Cleanup` reclaims
+  expired live records but never touches the revoked set.
+- All errors are sentinel-class with static messages; no token, signing
+  key, or verify key bytes appear in any error message (FR-014).
 
 ---
 
