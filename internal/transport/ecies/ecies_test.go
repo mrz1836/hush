@@ -7,10 +7,12 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"errors"
+	"math/big"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -264,6 +266,55 @@ func TestECIES_EncryptRejectsWrongCurvePub(t *testing.T) {
 	envelope, err := Encrypt(t.Context(), &p256.PublicKey, []byte("plain"))
 	require.ErrorIs(t, err, ErrECIESInvalidRecipientKey)
 	require.NotErrorIs(t, err, ErrECIESDecryptFailed)
+	require.Nil(t, envelope)
+}
+
+// TestECIES_EncryptRejectsOffCurvePub asserts the H1 defense: a public key
+// whose (X, Y) does not satisfy the secp256k1 curve equation y² ≡ x³ + 7
+// (mod p) is rejected before any ECDH operation. Without this check, an
+// attacker-supplied off-curve key would still produce ECDH output but on a
+// curve twist, leaking key bits. The test constructs (X=1, Y=1) which is
+// guaranteed not to be on secp256k1 (1 != 1³ + 7 = 8).
+func TestECIES_EncryptRejectsOffCurvePub(t *testing.T) {
+	offCurve := &ecdsa.PublicKey{
+		Curve: secp256k1.S256(), //nolint:staticcheck // secp256k1 not in crypto/ecdh; S256() is the correct curve accessor
+		X:     big.NewInt(1),
+		Y:     big.NewInt(1),
+	}
+	envelope, err := Encrypt(t.Context(), offCurve, []byte("plain"))
+	require.ErrorIs(t, err, ErrECIESInvalidRecipientKey)
+	require.Nil(t, envelope)
+}
+
+// TestECIES_EncryptRejectsPointAtInfinity asserts that (0, 0) — used by
+// some libraries as the encoding for the curve's identity element — is
+// rejected. ScalarMult on the identity is meaningless and would produce a
+// predictable shared secret.
+func TestECIES_EncryptRejectsPointAtInfinity(t *testing.T) {
+	identity := &ecdsa.PublicKey{
+		Curve: secp256k1.S256(), //nolint:staticcheck // secp256k1 not in crypto/ecdh; S256() is the correct curve accessor
+		X:     big.NewInt(0),
+		Y:     big.NewInt(0),
+	}
+	envelope, err := Encrypt(t.Context(), identity, []byte("plain"))
+	require.ErrorIs(t, err, ErrECIESInvalidRecipientKey)
+	require.Nil(t, envelope)
+}
+
+// TestECIES_EncryptRejectsOutOfFieldCoords asserts that coordinates >= p
+// (the secp256k1 field prime) are rejected. While such inputs are
+// non-canonical, the math primitives might still produce output if not
+// guarded.
+func TestECIES_EncryptRejectsOutOfFieldCoords(t *testing.T) {
+	p := secp256k1.S256().Params().P            //nolint:staticcheck // secp256k1 not in crypto/ecdh; S256() is the correct curve accessor
+	overP := new(big.Int).Add(p, big.NewInt(1)) // p + 1
+	pub := &ecdsa.PublicKey{
+		Curve: secp256k1.S256(), //nolint:staticcheck // secp256k1 not in crypto/ecdh; S256() is the correct curve accessor
+		X:     overP,
+		Y:     big.NewInt(1),
+	}
+	envelope, err := Encrypt(t.Context(), pub, []byte("plain"))
+	require.ErrorIs(t, err, ErrECIESInvalidRecipientKey)
 	require.Nil(t, envelope)
 }
 

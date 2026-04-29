@@ -72,6 +72,17 @@ func secureZeroBigInt(n *big.Int) {
 }
 
 // validateRecipientPub returns nil if pub is a usable secp256k1 public key.
+//
+// Checks performed:
+//  1. Non-nil pointer with non-nil Curve, X, Y.
+//  2. Curve identity matches secp256k1.S256() (cheap value-equality of the
+//     curve singleton; rejects keys built against P-256 or another curve).
+//  3. (X, Y) actually satisfies y² ≡ x³ + 7 (mod p) — i.e. lies on the
+//     secp256k1 curve. Without this, an attacker-supplied (X, Y) on a
+//     curve twist would still produce ECDH output but on a small subgroup,
+//     leaking key bits.
+//  4. Coordinates are in [1, p-1] (i.e. not zero, not >= p) and not the
+//     point at infinity. ScalarMult on the identity is meaningless.
 func validateRecipientPub(pub *ecdsa.PublicKey) error {
 	if pub == nil || pub.Curve == nil || pub.X == nil || pub.Y == nil { //nolint:staticcheck // secp256k1 is not in crypto/ecdh; *big.Int field access is the only path
 		return ErrECIESInvalidRecipientKey
@@ -79,7 +90,41 @@ func validateRecipientPub(pub *ecdsa.PublicKey) error {
 	if pub.Curve != secp256k1.S256() { //nolint:staticcheck // secp256k1 is not in crypto/ecdh; S256() is the curve identity
 		return ErrECIESInvalidRecipientKey
 	}
+	p := pub.Curve.Params().P
+	if !coordsInFieldNonInfinity(pub.X, pub.Y, p) { //nolint:staticcheck // see above
+		return ErrECIESInvalidRecipientKey
+	}
+	if !pointOnSecp256k1(pub.X, pub.Y, p) { //nolint:staticcheck // see above
+		return ErrECIESInvalidRecipientKey
+	}
 	return nil
+}
+
+// coordsInFieldNonInfinity returns true iff (x, y) is neither the point at
+// infinity (X=0 ∧ Y=0) nor out-of-field (any coordinate negative or >= p).
+func coordsInFieldNonInfinity(x, y, p *big.Int) bool {
+	if x.Sign() == 0 && y.Sign() == 0 {
+		return false
+	}
+	if x.Sign() < 0 || x.Cmp(p) >= 0 {
+		return false
+	}
+	if y.Sign() < 0 || y.Cmp(p) >= 0 {
+		return false
+	}
+	return true
+}
+
+// pointOnSecp256k1 verifies (x, y) satisfies y² ≡ x³ + 7 (mod p), the
+// secp256k1 curve equation (B = 7).
+func pointOnSecp256k1(x, y, p *big.Int) bool {
+	yy := new(big.Int).Mul(y, y)
+	yy.Mod(yy, p)
+	xxx := new(big.Int).Mul(x, x)
+	xxx.Mul(xxx, x)
+	xxx.Add(xxx, big.NewInt(7))
+	xxx.Mod(xxx, p)
+	return yy.Cmp(xxx) == 0
 }
 
 // compressPubKey returns the 33-byte BIE1-style compressed encoding of a

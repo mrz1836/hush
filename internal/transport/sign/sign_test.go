@@ -36,3 +36,19 @@ func TestSign_RespectsCancelledContext(t *testing.T) {
 		t.Errorf("expected context.Canceled, got %v", err)
 	}
 }
+
+func TestSign_RejectsNilKey(t *testing.T) {
+	t.Parallel()
+	_, err := Sign(t.Context(), nil, []byte("payload"))
+	if !errors.Is(err, ErrSignatureInvalid) {
+		t.Errorf("expected ErrSignatureInvalid, got %v", err)
+	}
+}
+
+func TestVerify_RejectsNilKey(t *testing.T) {
+	t.Parallel()
+	err := Verify(t.Context(), nil, []byte("payload"), []byte("sig"))
+	if !errors.Is(err, ErrSignatureInvalid) {
+		t.Errorf("expected ErrSignatureInvalid, got %v", err)
+	}
+}
