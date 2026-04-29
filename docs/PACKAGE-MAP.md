@@ -202,7 +202,11 @@ Must not contain:
 | `ErrArgonMemoryTooLow` | — | `argon_memory_mb < 256` |
 | `ErrArgonTimeTooLow` | — | `argon_time < 4` |
 | `ErrArgonThreadsTooLow` | — | `argon_threads < 4` |
+| `ErrArgonMemoryTooHigh` | — | `argon_memory_mb > 4096` (DoS-via-config ceiling) |
+| `ErrArgonTimeTooHigh` | — | `argon_time > 16` (DoS-via-config ceiling) |
+| `ErrArgonThreadsTooHigh` | — | `argon_threads > 128` (DoS-via-config ceiling) |
 | `ErrSupervisorTTLOutOfRange` | — | `max_supervisor_ttl` ≤ `jwt_default_ttl` OR > 24h |
+| `ErrConfigFileMode` | — | config file's own perms loosen than 0600 (gated by `Security.RequireFileModeChecks`) |
 
 SDD-18 will add `Supervisor`, `LoadSupervisor`, and related symbols to this package. SDD-18 MUST NOT alter any symbol above.
 
@@ -541,16 +545,33 @@ func NewStore() Store
 func NewStoreWithTick(d time.Duration) Store
 
 func Issue(ctx context.Context, signKey *ecdsa.PrivateKey, params IssueParams) (*Token, error)
-func Validate(ctx context.Context, encoded string, verifyKey *ecdsa.PublicKey, store Store, requestIP string, requestedSecret string) (*Claims, error)
+func Validate(ctx context.Context, encoded string, verifyKey *ecdsa.PublicKey, store Store, requestIP string, requestedSecret string, opts ...ValidateOpt) (*Claims, error)
+
+// Functional-options for Validate.
+type ValidateOpt func(*validateConfig)
+
+// WithClockSkew sets the symmetric clock-skew tolerance applied to the
+// JWT exp/nbf check (jwt.WithLeeway). Caller-supplied skew <= 0 is ignored.
+// Operationally this only affects the JWT parse layer; the in-memory store
+// retains its strict expiry check on use as defense-in-depth.
+func WithClockSkew(skew time.Duration) ValidateOpt
 
 // Sentinel errors. Compare via errors.Is. Static messages; no JWT or key bytes.
-var ErrAlgorithmUnsupported error
-var ErrTokenExpired         error
-var ErrTokenRevoked         error
-var ErrTokenExhausted       error
-var ErrIPMismatch           error
-var ErrScopeViolation       error
-var ErrUnknownSessionType   error
+//
+// Granularity rule: each sentinel maps to a distinct operational class so
+// that monitoring can alert on each independently. Do NOT collapse classes.
+var ErrAlgorithmUnsupported error // header alg != ES256K
+var ErrTokenMalformed       error // pre-parse failures: no separator, bad b64, bad JSON, jwt-lib parse error
+var ErrSignatureInvalid     error // verification with the supplied public key failed
+var ErrTokenExpired         error // exp claim has passed
+var ErrTokenRevoked         error // jti is in the revoked set
+var ErrTokenExhausted       error // interactive max_uses budget consumed
+var ErrIPMismatch           error // requesting IP differs from claim's client_ip
+var ErrScopeViolation       error // requested secret not in claim's scope
+var ErrUnknownSessionType   error // session_type claim is unrecognised
+var ErrInvalidIssueParams   error // caller supplied a zero/empty/malformed IssueParams field
+var ErrJTIGeneration        error // OS RNG failed during JTI generation
+var ErrSigningFailed        error // signing the JWT with the supplied key failed
 ```
 
 Behavioural contract:
