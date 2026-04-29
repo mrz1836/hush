@@ -39,6 +39,8 @@ func FuzzJWTValidate(f *testing.F) {
 		}
 		switch {
 		case errors.Is(err, ErrAlgorithmUnsupported),
+			errors.Is(err, ErrTokenMalformed),
+			errors.Is(err, ErrSignatureInvalid),
 			errors.Is(err, ErrTokenExpired),
 			errors.Is(err, ErrTokenRevoked),
 			errors.Is(err, ErrTokenExhausted),

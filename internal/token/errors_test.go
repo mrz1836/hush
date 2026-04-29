@@ -19,6 +19,11 @@ func TestErrors_DistinctIdentities(t *testing.T) {
 		{"ErrIPMismatch", ErrIPMismatch, "hush/token: ip mismatch"},
 		{"ErrScopeViolation", ErrScopeViolation, "hush/token: scope violation"},
 		{"ErrUnknownSessionType", ErrUnknownSessionType, "hush/token: unknown session type"},
+		{"ErrInvalidIssueParams", ErrInvalidIssueParams, "hush/token: invalid issue params"},
+		{"ErrJTIGeneration", ErrJTIGeneration, "hush/token: jti generation failed"},
+		{"ErrSigningFailed", ErrSigningFailed, "hush/token: signing failed"},
+		{"ErrTokenMalformed", ErrTokenMalformed, "hush/token: token malformed"},
+		{"ErrSignatureInvalid", ErrSignatureInvalid, "hush/token: signature invalid"},
 	}
 	for _, s := range sentinels {
 		if s.err == nil {

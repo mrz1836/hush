@@ -71,15 +71,15 @@ func Issue(ctx context.Context, signKey *ecdsa.PrivateKey, params IssueParams) (
 		params.RequestID == "" ||
 		params.EphemeralPubKey == "" ||
 		signKey == nil {
-		return nil, ErrAlgorithmUnsupported
+		return nil, ErrInvalidIssueParams
 	}
 	for _, s := range params.Scope {
 		if s == "" {
-			return nil, ErrAlgorithmUnsupported
+			return nil, ErrInvalidIssueParams
 		}
 	}
 	if _, err := netip.ParseAddr(params.ClientIP); err != nil {
-		return nil, ErrAlgorithmUnsupported
+		return nil, ErrInvalidIssueParams
 	}
 
 	maxUses := params.MaxUses
@@ -88,13 +88,13 @@ func Issue(ctx context.Context, signKey *ecdsa.PrivateKey, params IssueParams) (
 		maxUses = 0
 	case SessionInteractive:
 		if maxUses <= 0 {
-			return nil, ErrAlgorithmUnsupported
+			return nil, ErrInvalidIssueParams
 		}
 	}
 
 	jti, err := generateJTI()
 	if err != nil {
-		return nil, ErrAlgorithmUnsupported
+		return nil, ErrJTIGeneration
 	}
 
 	expiresAt := params.Now.Add(params.TTL)
@@ -115,7 +115,7 @@ func Issue(ctx context.Context, signKey *ecdsa.PrivateKey, params IssueParams) (
 
 	signed, err := signEncoded(claims, signKey)
 	if err != nil {
-		return nil, ErrAlgorithmUnsupported
+		return nil, ErrSigningFailed
 	}
 
 	return &Token{

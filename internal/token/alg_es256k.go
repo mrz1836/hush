@@ -20,6 +20,17 @@ func (es256kMethod) Sign(signingInput string, key any) ([]byte, error) {
 	if !ok {
 		return nil, jwt.ErrInvalidKeyType
 	}
+	// Defense-in-depth: reject incompletely-initialized key structs before
+	// handing off to ecdsa.SignASN1, which on some Go versions can nil-deref
+	// or produce undefined output for partially-zero keys. crypto/ecdsa is
+	// expected to handle these correctly today, but the cost of an explicit
+	// guard is negligible and the ergonomics of "obviously rejects bogus
+	// inputs" justify it.
+	//nolint:staticcheck // secp256k1 not in crypto/ecdh; field access is intentional
+	if priv == nil || priv.D == nil || priv.PublicKey.Curve == nil ||
+		priv.PublicKey.X == nil || priv.PublicKey.Y == nil {
+		return nil, jwt.ErrInvalidKey
+	}
 	digest := sha256.Sum256([]byte(signingInput))
 	return ecdsa.SignASN1(rand.Reader, priv, digest[:])
 }
@@ -37,6 +48,13 @@ func (es256kMethod) Verify(signingInput string, sig []byte, key any) error {
 	pub, ok := key.(*ecdsa.PublicKey)
 	if !ok {
 		return jwt.ErrInvalidKeyType
+	}
+	// Defense-in-depth: reject nil or incompletely-initialized public keys
+	// before handing off to ecdsa.VerifyASN1. The stdlib is expected to
+	// handle nil safely today, but a clear early reject avoids surprises
+	// across compiler versions and matches the pattern used in transport/ecies.
+	if pub == nil || pub.Curve == nil || pub.X == nil || pub.Y == nil { //nolint:staticcheck // secp256k1 not in crypto/ecdh; field access is intentional
+		return jwt.ErrInvalidKey
 	}
 	digest := sha256.Sum256([]byte(signingInput))
 	if !ecdsa.VerifyASN1(pub, digest[:], sig) {

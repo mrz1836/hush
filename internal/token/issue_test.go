@@ -169,8 +169,8 @@ func TestIssue_RejectsInvalidParams(t *testing.T) {
 			p := defaultIssueParams(now)
 			tc.mut(&p)
 			_, err := Issue(t.Context(), priv, p)
-			if !errors.Is(err, ErrAlgorithmUnsupported) {
-				t.Fatalf("got %v, want ErrAlgorithmUnsupported", err)
+			if !errors.Is(err, ErrInvalidIssueParams) {
+				t.Fatalf("got %v, want ErrInvalidIssueParams", err)
 			}
 		})
 	}
@@ -189,8 +189,8 @@ func TestIssue_RespectsCancelledContext(t *testing.T) {
 
 func TestIssue_NilSignKey(t *testing.T) {
 	_, err := Issue(t.Context(), nil, defaultIssueParams(time.Now()))
-	if !errors.Is(err, ErrAlgorithmUnsupported) {
-		t.Fatalf("got %v, want ErrAlgorithmUnsupported", err)
+	if !errors.Is(err, ErrInvalidIssueParams) {
+		t.Fatalf("got %v, want ErrInvalidIssueParams", err)
 	}
 }
 
@@ -201,8 +201,8 @@ func TestGenerateJTI_RandReaderError(t *testing.T) {
 
 	priv := freshKey(t)
 	_, err := Issue(t.Context(), priv, defaultIssueParams(time.Now()))
-	if !errors.Is(err, ErrAlgorithmUnsupported) {
-		t.Fatalf("got %v, want ErrAlgorithmUnsupported", err)
+	if !errors.Is(err, ErrJTIGeneration) {
+		t.Fatalf("got %v, want ErrJTIGeneration", err)
 	}
 }
 
@@ -223,7 +223,7 @@ func TestIssue_SignFailure(t *testing.T) {
 
 	priv := freshKey(t)
 	_, err := Issue(t.Context(), priv, defaultIssueParams(time.Now()))
-	if !errors.Is(err, ErrAlgorithmUnsupported) {
-		t.Fatalf("got %v, want ErrAlgorithmUnsupported", err)
+	if !errors.Is(err, ErrSigningFailed) {
+		t.Fatalf("got %v, want ErrSigningFailed", err)
 	}
 }
