@@ -1,8 +1,11 @@
 package keys
 
 import (
+	"crypto/ecdsa"
+	"math/big"
 	"testing"
 
+	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -59,4 +62,51 @@ func TestPublicKeyFingerprint_Stable(t *testing.T) {
 		t.Logf("KAT fingerprint hex: %s", fp)
 		assert.Equal(t, katFingerprintHex, fp)
 	})
+}
+
+// TestPublicKeyFingerprint_PanicsOnNilPub asserts that the documented
+// precondition (non-nil *ecdsa.PublicKey) is enforced via panic with a
+// useful message rather than a nil-deref crash deep in copy().
+func TestPublicKeyFingerprint_PanicsOnNilPub(t *testing.T) {
+	assert.PanicsWithValue(
+		t,
+		"hush/keys: PublicKeyFingerprint: nil public key",
+		func() { PublicKeyFingerprint(nil) },
+	)
+}
+
+// TestPublicKeyFingerprint_PanicsOnNilXY asserts that a malformed pub with
+// nil X or Y triggers a clear panic instead of a nil-deref later.
+func TestPublicKeyFingerprint_PanicsOnNilXY(t *testing.T) {
+	t.Run("nil X", func(t *testing.T) {
+		pub := &ecdsa.PublicKey{Curve: secp256k1.S256(), X: nil, Y: big.NewInt(1)} //nolint:staticcheck // secp256k1 not in crypto/ecdh; S256() is the correct curve accessor
+		assert.PanicsWithValue(
+			t,
+			"hush/keys: PublicKeyFingerprint: public key X or Y is nil",
+			func() { PublicKeyFingerprint(pub) },
+		)
+	})
+	t.Run("nil Y", func(t *testing.T) {
+		pub := &ecdsa.PublicKey{Curve: secp256k1.S256(), X: big.NewInt(1), Y: nil} //nolint:staticcheck // secp256k1 not in crypto/ecdh; S256() is the correct curve accessor
+		assert.PanicsWithValue(
+			t,
+			"hush/keys: PublicKeyFingerprint: public key X or Y is nil",
+			func() { PublicKeyFingerprint(pub) },
+		)
+	})
+}
+
+// TestPublicKeyFingerprint_PanicsOnOversizedX asserts that an X coordinate
+// larger than 32 bytes (cryptographically impossible for a valid secp256k1
+// point but possible with a malformed input) triggers an explicit panic
+// rather than a negative-index slice panic in copy().
+func TestPublicKeyFingerprint_PanicsOnOversizedX(t *testing.T) {
+	// Build a 33-byte big.Int: a value > 2^256 - 1.
+	oversized := new(big.Int).Lsh(big.NewInt(1), 257)                                // 2^257
+	pub := &ecdsa.PublicKey{Curve: secp256k1.S256(), X: oversized, Y: big.NewInt(1)} //nolint:staticcheck // secp256k1 not in crypto/ecdh; S256() is the correct curve accessor
+	assert.PanicsWithValue(
+		t,
+		"hush/keys: PublicKeyFingerprint: X coordinate exceeds 32 bytes (not a valid secp256k1 point)",
+		func() { PublicKeyFingerprint(pub) },
+	)
 }
