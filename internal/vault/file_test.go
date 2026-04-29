@@ -55,6 +55,54 @@ func makeSecret(t *testing.T, name, description string, value []byte) Secret {
 	return Secret{Name: name, Description: description, Value: sb}
 }
 
+// TestVault_Save_FreshNoncePerCall asserts the AES-GCM nonce-uniqueness
+// invariant: two consecutive Save calls with byte-identical inputs must
+// emit on-disk envelopes that differ in the 12-byte nonce field. Repeating
+// a nonce under the same key destroys both confidentiality and the GCM
+// authentication-tag integrity guarantee, so the Save path MUST draw a
+// fresh nonce from crypto/rand on every call.
+func TestVault_Save_FreshNoncePerCall(t *testing.T) {
+	t.Parallel()
+	dir := makeTestDir(t)
+	pathA := filepath.Join(dir, "a.hush")
+	pathB := filepath.Join(dir, "b.hush")
+	key := makeVaultKey(t, 0xAB)
+	ctx := context.Background()
+
+	// Same input both times: same key, same secrets.
+	mkSecrets := func() []Secret {
+		return []Secret{
+			makeSecret(t, "API_TOKEN", "test", []byte("identical-payload-bytes")),
+		}
+	}
+
+	if err := Save(ctx, pathA, key, mkSecrets()); err != nil {
+		t.Fatalf("Save A: %v", err)
+	}
+	if err := Save(ctx, pathB, key, mkSecrets()); err != nil {
+		t.Fatalf("Save B: %v", err)
+	}
+
+	a, err := os.ReadFile(pathA) //nolint:gosec // test-controlled t.TempDir() path
+	if err != nil {
+		t.Fatalf("read A: %v", err)
+	}
+	b, err := os.ReadFile(pathB) //nolint:gosec // test-controlled t.TempDir() path
+	if err != nil {
+		t.Fatalf("read B: %v", err)
+	}
+
+	// Layout: magic[0:4] | version[4] | salt[5:21] | nonce[21:33] | ct[33:]
+	const nonceStart, nonceEnd = 4 + 1 + saltLen, 4 + 1 + saltLen + nonceLen
+	if len(a) < nonceEnd || len(b) < nonceEnd {
+		t.Fatalf("envelope too short: lenA=%d lenB=%d", len(a), len(b))
+	}
+	nonceA, nonceB := a[nonceStart:nonceEnd], b[nonceStart:nonceEnd]
+	if bytes.Equal(nonceA, nonceB) {
+		t.Fatalf("nonce reuse: two Save calls produced identical nonce %x — GCM safety invariant violated", nonceA)
+	}
+}
+
 func TestVault_RoundTrip_0Secrets(t *testing.T) {
 	t.Parallel()
 	dir := makeTestDir(t)

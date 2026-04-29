@@ -86,6 +86,14 @@ func (w *wireValue) UnmarshalJSON(data []byte) error {
 
 // aeadSeal encrypts plaintext with AES-256-GCM.
 // The 32-byte key is borrowed from vaultKey only for the duration of the seal.
+//
+// CRITICAL: nonce MUST be a fresh, unique 12-byte value per (vaultKey,
+// plaintext) pair. AES-GCM does not detect or fail on nonce reuse — reuse
+// silently destroys both the confidentiality of the two messages and the
+// integrity guarantee of the authentication tag (GCM authentication keys
+// can be recovered from a single nonce collision). The Save path generates
+// the nonce with crypto/rand.Read on every call; do not change that
+// invariant or pass a hardcoded / counter-based nonce here.
 func aeadSeal(vaultKey *securebytes.SecureBytes, salt, nonce, plaintext []byte) ([]byte, error) {
 	_ = salt // carried; not used as key material here (KDF is upstream)
 	var (
