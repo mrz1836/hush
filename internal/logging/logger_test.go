@@ -341,6 +341,60 @@ func TestLogger_LogValuerInNestedGroup(t *testing.T) {
 	require.Contains(t, output, "[redacted]", "LogValuer must be resolved inside nested slog.Group")
 }
 
+// stringerWithSecret is a struct whose Stringer/Format implementations embed
+// a credential. Used to verify that non-string LogValuer payloads cannot
+// bypass redaction.
+type stringerWithSecret struct{}
+
+func (stringerWithSecret) String() string { return "token=sk-ant-fakeABCDEFGHIJKL0123456789" }
+
+// nonStringLogValuer returns a non-string slog.Value whose textual form
+// embeds a credential. Defends against attempts to smuggle a secret through
+// a LogValuer that returns Int64/Bool/Any/etc. rather than a String.
+type nonStringLogValuer struct{}
+
+func (nonStringLogValuer) LogValue() slog.Value {
+	return slog.AnyValue(stringerWithSecret{})
+}
+
+func TestLogger_NonStringLogValuerStillRedacted(t *testing.T) {
+	var buf bytes.Buffer
+	logger := logging.New(logging.Options{Format: logging.FormatJSON, Out: &buf})
+	logger.Info("non-string logvaluer", slog.Any("payload", nonStringLogValuer{}))
+	output := buf.String()
+	require.NotContains(t, output, "sk-ant-fakeABCDEFGHIJKL0123456789",
+		"credential embedded in a non-string LogValuer payload must be redacted")
+	require.Contains(t, output, "[redacted]",
+		"output must contain a [redacted] marker")
+}
+
+func TestLogger_NonStringAnyValueStillRedacted(t *testing.T) {
+	var buf bytes.Buffer
+	logger := logging.New(logging.Options{Format: logging.FormatJSON, Out: &buf})
+	// slog.Any with a Stringer-bearing struct must not leak the credential
+	// even though its slog.Kind is KindAny rather than KindString.
+	logger.Info("any-value", slog.Any("cred", stringerWithSecret{}))
+	output := buf.String()
+	require.NotContains(t, output, "sk-ant-fakeABCDEFGHIJKL0123456789",
+		"credential in slog.Any payload (KindAny) must be redacted")
+	require.Contains(t, output, "[redacted]")
+}
+
+func TestLogger_TypedNonSecretValuesPreserved(t *testing.T) {
+	// Typed values without secrets must round-trip with their original
+	// JSON shape (numbers as numbers, bools as bools), so the non-string
+	// redaction path must NOT coerce safe payloads into strings.
+	var buf bytes.Buffer
+	logger := logging.New(logging.Options{Format: logging.FormatJSON, Out: &buf})
+	logger.Info("typed", slog.Int64("count", 42), slog.Bool("active", true))
+	output := buf.String()
+
+	var record map[string]any
+	require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(output)), &record))
+	require.InDelta(t, float64(42), record["count"], 0, "Int64 must remain a JSON number")
+	require.Equal(t, true, record["active"], "Bool must remain a JSON boolean")
+}
+
 // --- Coverage: WithAttrs, WithGroup, nil-Out default ---
 
 func TestNew_NilOutDefaultsToStderr(t *testing.T) {

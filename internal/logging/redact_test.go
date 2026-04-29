@@ -68,6 +68,73 @@ func TestRedactPattern_AWSAccessKey(t *testing.T) {
 	assertRedacted(t, sample)
 }
 
+func TestRedactPattern_OpenAILegacyKey(t *testing.T) {
+	// sk- + exactly 48 alphanumeric (no hyphens) — distinct from sk-ant-/sk-proj-.
+	const sample = "sk-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789ABCDEFGHIJKL"
+	assertRedacted(t, sample)
+}
+
+func TestRedactPattern_GitHubOAuth(t *testing.T) {
+	const sample = "gho_abcdefghijklmnopqrstuvwxyz0123456789AB"
+	assertRedacted(t, sample)
+}
+
+func TestRedactPattern_GitHubUserToServer(t *testing.T) {
+	const sample = "ghu_abcdefghijklmnopqrstuvwxyz0123456789AB"
+	assertRedacted(t, sample)
+}
+
+func TestRedactPattern_GitHubServerToServer(t *testing.T) {
+	const sample = "ghs_abcdefghijklmnopqrstuvwxyz0123456789AB"
+	assertRedacted(t, sample)
+}
+
+func TestRedactPattern_GitHubRefresh(t *testing.T) {
+	const sample = "ghr_abcdefghijklmnopqrstuvwxyz0123456789AB"
+	assertRedacted(t, sample)
+}
+
+func TestRedactPattern_GoogleAPIKey(t *testing.T) {
+	// AIza + exactly 35 chars from [0-9A-Za-z_-].
+	const sample = "AIza0123456789ABCDEFGHIJKLMNOPQRSTUVWXY"
+	assertRedacted(t, sample)
+}
+
+func TestRedactPattern_SlackBotToken(t *testing.T) {
+	const sample = "xoxb-1234567890-0987654321-aBcDeFgHiJkLmNoPqRsTuVwX"
+	assertRedacted(t, sample)
+}
+
+func TestRedactPattern_SlackUserToken(t *testing.T) {
+	const sample = "xoxp-1234567890-1234567890-1234567890-aBcDeFgHiJkL"
+	assertRedacted(t, sample)
+}
+
+func TestRedactPattern_SlackAppToken(t *testing.T) {
+	const sample = "xapp-1-A12345-67890-aBcDeFgHiJkLmNoPqRsTuVwX"
+	assertRedacted(t, sample)
+}
+
+func TestRedactPattern_SlackWebhook(t *testing.T) {
+	const sample = "https://hooks.slack.com/services/T01234567/B01234567/aBcDeFgHiJkLmNoPqRsTuVwX" //nolint:gosec // test fixture
+	assertRedacted(t, sample)
+}
+
+func TestRedactPattern_RSAPrivateKey(t *testing.T) {
+	const sample = "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA1234567890abcdef\nfakebody==\n-----END RSA PRIVATE KEY-----" //nolint:gosec // test fixture
+	assertRedacted(t, sample)
+}
+
+func TestRedactPattern_ECPrivateKey(t *testing.T) {
+	const sample = "-----BEGIN EC PRIVATE KEY-----\nMHcCAQEEIA1234567890abcdef\n-----END EC PRIVATE KEY-----" //nolint:gosec // test fixture
+	assertRedacted(t, sample)
+}
+
+func TestRedactPattern_GenericPrivateKey(t *testing.T) {
+	const sample = "-----BEGIN PRIVATE KEY-----\nMIIBVAIBADANBgkq\n-----END PRIVATE KEY-----"
+	assertRedacted(t, sample)
+}
+
 // assertRedacted logs sample as both the record message and a string
 // attribute, then asserts the sample never appears in output and
 // "[redacted]" appears at least twice.
@@ -96,9 +163,25 @@ func TestRedactString_NoMatch(t *testing.T) {
 		"",
 		"hello world",
 		"no credentials here",
-		"sk-something-else",              // prefix does not match sk-ant- or sk-proj-
+		"sk-something-else",              // prefix does not match sk-ant-/sk-proj- and too short for legacy 48-char form
 		"ghp",                            // too short — missing underscore + chars
 		"AKIA" + strings.Repeat("A", 15), // only 15 chars after AKIA (need 16)
+		// 64-char SHA256 hex: must NOT trigger any pattern (common in logs)
+		"a3f7d9e2b8c1d4f5e6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9",
+		// 40-char SHA-1 hex (commit hash): must NOT trigger
+		"e1d4f5a3b2c8e7d6f0a9b1c2d3e4f5a6b7c8d9e0",
+		// AIza-prefixed but wrong length (only 20 alphanumeric, need 35)
+		"AIza0123456789ABCDEFG",
+		// xox-prefixed but wrong tag character (xoxq is not a Slack token class)
+		"xoxq-1234567890-0987654321",
+		// gh-prefixed but wrong tag character (ghx is not a token class)
+		"ghx_abcdefghijklmnopqrstuvwxyz",
+		// Slack-like URL but wrong domain
+		"https://hooks.example.com/services/T01234567/B01234567/aBcDeFgHiJkL",
+		// PEM PUBLIC key (not private) must NOT trigger the private-key pattern
+		"-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE\n-----END PUBLIC KEY-----",
+		// Bare "sk-" with hyphens ⇒ does not satisfy sk-[48 alnum] (no hyphens allowed in body)
+		"sk-not-a-real-key-just-text",
 	}
 	for _, s := range inputs {
 		got := logging.RedactString(s)
@@ -163,6 +246,94 @@ func TestRedactString_UTF8Boundaries(t *testing.T) {
 	require.Contains(t, got, "[redacted]")
 	require.Contains(t, got, prefix, "surrounding UTF-8 text must be preserved")
 	require.Contains(t, got, suffix, "surrounding UTF-8 text must be preserved")
+}
+
+// TestRedactString_EmbeddedFormats covers H4: realistic dev-error log strings
+// where credentials live inside JSON, URL-query strings, or punctuation-
+// surrounded fragments. The redacted output must (a) contain no byte from
+// any credential class and (b) preserve every non-credential token
+// (usernames, request IDs, timestamps, etc.) so logs remain debuggable.
+func TestRedactString_EmbeddedFormats(t *testing.T) {
+	// All fixtures intentionally contain a single credential; the test
+	// asserts the credential is gone and the surrounding tokens survive.
+	cases := []struct {
+		name    string
+		input   string
+		gone    string   // credential bytes that must NOT appear in output
+		keep    []string // surrounding tokens that MUST appear in output
+		minRedX int      // expected minimum number of [redacted] markers
+	}{
+		{
+			name:    "json with anthropic key",
+			input:   `{"token":"sk-ant-fakeABCDEF0123456789","user":"alice","ts":1234567890}`,
+			gone:    "sk-ant-fakeABCDEF0123456789",
+			keep:    []string{`"user":"alice"`, `"ts":1234567890`},
+			minRedX: 1,
+		},
+		{
+			name:    "url query with openai project key",
+			input:   `https://api.example.com/?key=sk-proj-fakeABCDEF0123456789&user=bob`,
+			gone:    "sk-proj-fakeABCDEF0123456789",
+			keep:    []string{"https://api.example.com/", "user=bob"},
+			minRedX: 1,
+		},
+		{
+			name:    "log line with github token + request id",
+			input:   `2026-04-29T10:00:00Z error="auth failed" token="ghp_fakeABCDEF0123" request_id="req-abc-123"`,
+			gone:    "ghp_fakeABCDEF0123",
+			keep:    []string{"2026-04-29T10:00:00Z", `request_id="req-abc-123"`},
+			minRedX: 1,
+		},
+		{ //nolint:gosec // test fixture — embedded fake AWS key
+			name:    "two credentials in one line (anthropic + aws)",
+			input:   `keys: AnthKey=sk-ant-fakeABCDEFGHIJ0123 AwsKey=AKIAFAKEFAKEFAKEFAKE`,
+			gone:    "sk-ant-fakeABCDEFGHIJ0123",
+			keep:    []string{"keys:", "AnthKey=", "AwsKey="},
+			minRedX: 2,
+		},
+		{
+			name:    "credential surrounded by punctuation",
+			input:   `(token=sk-ant-fakeABCDEFGHIJ0123) — see logs`,
+			gone:    "sk-ant-fakeABCDEFGHIJ0123",
+			keep:    []string{"(token=", ") — see logs"},
+			minRedX: 1,
+		},
+		{
+			name:    "google api key in error message",
+			input:   `failed to create client: google api key "AIza0123456789ABCDEFGHIJKLMNOPQRSTUVWXY" rejected (403)`,
+			gone:    "AIza0123456789ABCDEFGHIJKLMNOPQRSTUVWXY",
+			keep:    []string{"failed to create client", "rejected (403)"},
+			minRedX: 1,
+		},
+		{ //nolint:gosec // test fixture — fake Slack webhook URL
+			name:    "slack webhook url",
+			input:   `webhook=https://hooks.slack.com/services/T01234567/B01234567/aBcDeFgHiJkLmNoPqRsTuVwX url_id=42`,
+			gone:    "https://hooks.slack.com/services/T01234567/B01234567/aBcDeFgHiJkLmNoPqRsTuVwX",
+			keep:    []string{"webhook=", "url_id=42"},
+			minRedX: 1,
+		},
+		{
+			name:    "stack trace line with embedded key",
+			input:   `panic: invalid token "ghs_fakeABCDEFGHIJ0123" at github.com/example/pkg.Auth (auth.go:123)`,
+			gone:    "ghs_fakeABCDEFGHIJ0123",
+			keep:    []string{"panic:", "github.com/example/pkg.Auth", "auth.go:123"},
+			minRedX: 1,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := logging.RedactString(tc.input)
+			require.NotContains(t, got, tc.gone,
+				"credential %q must not survive", tc.gone)
+			for _, k := range tc.keep {
+				require.Contains(t, got, k,
+					"surrounding token %q must be preserved", k)
+			}
+			require.GreaterOrEqual(t, strings.Count(got, "[redacted]"), tc.minRedX,
+				"expected at least %d [redacted] markers", tc.minRedX)
+		})
+	}
 }
 
 func TestRedactString_Idempotent(t *testing.T) {

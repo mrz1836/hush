@@ -56,12 +56,34 @@ func (h *redactingHandler) WithGroup(name string) slog.Handler {
 	return &redactingHandler{inner: h.inner.WithGroup(name), format: h.format}
 }
 
-// replaceAttr resolves LogValuer values and redacts credential strings in
-// every string-kind attribute value.
+// replaceAttr resolves LogValuer values and runs RedactString over every
+// leaf attribute, regardless of its slog.Kind.
+//
+// Why every kind, not only KindString: a LogValuer (or slog.Any payload) may
+// emit a credential via a non-string value — for example a struct whose
+// String() method returns a token, a map[string]string with a secret in a
+// value, or a []byte that base64-decodes to a key. Restricting redaction to
+// KindString attributes leaves a bypass for any of these. Coercing to string,
+// redacting, and only replacing when redaction actually rewrote something
+// preserves typed logging for the common case (Int64, Bool, Float64, Time,
+// Duration) while defending against credential-bearing payloads.
+//
+// Group attributes are not handled here: slog visits each member of a group
+// and calls replaceAttr on the leaves, so group-nested secrets are caught
+// by the per-leaf scan.
 func replaceAttr(_ []string, a slog.Attr) slog.Attr {
 	a.Value = a.Value.Resolve()
-	if a.Value.Kind() == slog.KindString {
+	switch a.Value.Kind() {
+	case slog.KindString:
 		a.Value = slog.StringValue(RedactString(a.Value.String()))
+	case slog.KindGroup:
+		// Members visited individually by slog; nothing to do at the group level.
+	case slog.KindAny, slog.KindBool, slog.KindDuration, slog.KindFloat64,
+		slog.KindInt64, slog.KindTime, slog.KindUint64, slog.KindLogValuer:
+		original := a.Value.String()
+		if redacted := RedactString(original); redacted != original {
+			a.Value = slog.StringValue(redacted)
+		}
 	}
 	return a
 }
