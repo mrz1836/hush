@@ -30,7 +30,7 @@
 | Owning chunk | Test path | Status |
 |--------------|-----------|--------|
 | SDD-06 (config) | `internal/config/server_test.go`, `internal/config/validate_test.go` — `TestServer_FullMinimalConfig`, `TestServer_FullMaximalConfig`, `TestServer_RejectsLoopback`, `TestServer_RejectsPublic`, `TestServer_AcceptsTailscaleCGNAT`, `TestServer_RejectsArgonMemoryUnder256`, `TestServer_RejectsAuditLogOutsideStateDir`, `TestServer_RejectsUnknownField`, and 40+ more | verified by SDD-06 |
-| SDD-10 (server skeleton) | `internal/server/integration_test.go::TestServe_StartAndShutdown` | pending |
+| SDD-10 (server skeleton) | `internal/server/integration_test.go::TestStartupChecks_HappyPath`, `TestRun_GracefulShutdown_DrainsInflight`; `internal/server/router_test.go::TestRouter_PrefixMount`; `internal/server/server_test.go::TestServer_ZeroAuditOnStartupOK`, `TestRun_AlreadyRun` | done (chassis only) |
 | SDD-12 (claim handler) | `internal/server/claim_handler_test.go::TestClaim_Approved_IssuesJWT` | pending |
 | SDD-13 (other handlers) | `internal/server/health_handler_test.go::TestHealth_NoAuth_OK` | pending |
 | SDD-14 (cli root + serve) | `internal/cli/serve_test.go::TestServe_StartAndShutdown` | pending |
@@ -52,7 +52,7 @@ atomically swaps the rotated value with no in-flight request failures.
 | SDD-03 race | `internal/vault/store_test.go::TestStore_ConcurrentGet` (100 goroutines, race-clean) | green |
 | SDD-03 sentinel-leak | `internal/vault/file_test.go::TestVault_NoLeakInError` (`SECRET_SHOULD_NEVER_APPEAR_3` absent from `err.Error()` and captured slog) | green |
 | _Note_ | SIGHUP reload half of AC-2 remains SDD-10's responsibility | — |
-| SDD-10 (SIGHUP atomic reload) | `internal/server/integration_test.go::TestSIGHUP_AtomicReload` | pending |
+| SDD-10 (SIGHUP atomic reload) | `internal/server/integration_test.go::TestSIGHUP_AtomicReload`; `internal/server/reload_test.go::TestReloadVault_HappyPath_SwapsPointer`, `TestReloadVault_FailedReload_PointerUnchanged`, `TestReloadVault_DrainWindowDestroysOnce`, `TestReloadVault_Serialised_TwoSighupsBackToBack`, `TestReloadVault_DuringShutdown_ReturnsErrShuttingDown`, `TestVaultPointerSwap_NoRace` | done |
 | SDD-13 (audit chain on rotation) | `internal/audit/chain_test.go::TestAuditChain_HashLinkContiguous` | pending |
 | SDD-17 (`hush secret`) | `internal/cli/secret_test.go::TestSecret_RotateAtomic`, `TestSecret_RotateSendsSIGHUP` | pending |
 | **SDD-25** | `tests/integration/scenarios_test.go::Test_Scenario_13_RotationMidSession` | pending |
@@ -156,7 +156,7 @@ private key fails cleanly.
 |--------------|-----------|--------|
 | SDD-06 (config validation) | `internal/config/server_test.go`, `internal/config/validate_test.go` — `TestServer_RejectsLoopback`, `TestServer_RejectsUnspecified`, `TestServer_RejectsPublic`, `TestServer_RejectsRequireTailscaleFalse`, `TestServer_RejectsArgonMemoryUnder256`, `TestServer_RejectsAuditLogOutsideStateDir`, `TestServer_RejectsMissingStateDir`, `TestServer_RejectsStateDirNotADirectory`, and 35+ more | verified by SDD-06 |
 | SDD-06 fuzz | `internal/config/server_fuzz_test.go::FuzzServerTOML` (60s clean, no panics, every error a typed sentinel) | verified by SDD-06 |
-| SDD-10 (startup checks) | `internal/server/startup_checks_test.go::TestStartupChecks_RefusesPublicBind`, `TestStartupChecks_RefusesLooseFileMode`, `TestStartupChecks_RefusesUnsyncedClock` | pending |
+| SDD-10 (startup checks) | `internal/server/startup_checks_test.go::TestStartupChecks_RefusesPublicBind`, `TestStartupChecks_RefusesEmptyHostBind`, `TestStartupChecks_RefusesAddrNotOnInterface`, `TestStartupChecks_TailscaleBind_ListerError`, `TestStartupChecks_RefusesLooseFileMode`, `TestStartupChecks_RefusesLooseDirMode`, `TestStartupChecks_SkipsFileModesWhenDisabled`, `TestStartupChecks_RefusesUnsyncedClock`, `TestStartupChecks_RefusesClockDriftOver60s`, `TestStartupChecks_RefusesProbeError`, `TestStartupChecks_SkipsClockSyncWhenDisabled`, `TestStartupChecks_RefusesMissingStateDir`, `TestStartupChecks_RefusesStateDirIsFile`, `TestStartupChecks_RefusesStateDirSymlink`, `TestStartupChecks_OrderedExecution`, `TestStartupChecks_AuditEmitsRefused` | done |
 | SDD-30 (Tailscale ACL doc) | `docs/TAILSCALE-ACLS.md` accurate; reviewer checks the example | pending |
 
 ---

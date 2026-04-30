@@ -46,7 +46,7 @@
 
 | ID | Title | Package | Status | AC |
 |----|-------|---------|--------|-----|
-| SDD-10 | HTTP server + middleware + startup checks + SIGHUP reload | `internal/server` | pending | AC-1, AC-2, AC-8 |
+| SDD-10 | HTTP server + middleware + startup checks + SIGHUP reload | `internal/server` | done | AC-1, AC-2, AC-8 |
 | SDD-11 | Approver interface + Discord bot + disconnect monitor | `internal/discord` | pending | AC-3 |
 | SDD-12 | `/claim` handler (signed verify + Discord approval + JWT issue) | `internal/server` | pending | AC-1, AC-3, AC-4 |
 | SDD-13 | `/s/<name>`, `/revoke/<jti>`, `/hz` handlers + audit log | `internal/server` + `internal/audit` | pending | AC-1, AC-2, AC-4, AC-7 |
