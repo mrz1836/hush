@@ -141,7 +141,7 @@
                 }
             },
             "dogsled": {
-                "max-blank-identifiers": 2
+                "max-blank-identifiers": 3
             },
             "dupl": {
                 "threshold": 100
@@ -205,7 +205,17 @@
             "misspell": {
                 "ignore-rules": [
                     "bsv",
-                    "bitcoin"
+                    "bitcoin",
+                    "synchronised",
+                    "unsynchronised",
+                    "categorise",
+                    "categoriser",
+                    "categorises",
+                    "serialise",
+                    "serialised",
+                    "behaviour",
+                    "honoured",
+                    "cancelled"
                 ],
                 "locale": "US"
             },

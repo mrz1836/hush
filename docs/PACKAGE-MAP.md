@@ -727,6 +727,85 @@ Must not contain:
 > handler), and SDD-13 (other handlers + audit). Until then, this section
 > is a placeholder.
 
+### Exported API — locked at SDD-10
+
+The chassis surface locked by SDD-10 (HTTP router, middleware stack, ordered
+startup checks, SIGHUP atomic vault reload, graceful shutdown). Files:
+[`internal/server/`](../internal/server/).
+
+**Constructor / lifecycle**
+
+- `func New(deps Deps) (*Server, error)` — performs zero I/O; nil-checks
+  every required dep; returns matching `Err*` sentinel on a missing field.
+- `func (s *Server) Run(ctx context.Context) error` — runs the lifecycle:
+  startup checks → bind → serve → graceful shutdown. Single-call only;
+  second call returns `ErrAlreadyRun`.
+- `func (s *Server) ReloadVault(ctx context.Context, newPath string, key *securebytes.SecureBytes) error` —
+  serialised: load → atomic swap → drain → destroy. Errors are wrapped
+  sentinels (`ErrReloadFileMissing`, `ErrReloadDecryptFailed`,
+  `ErrReloadInvalid`); active vault pointer unchanged on failure.
+- `func (s *Server) Mount(method, path string, h http.Handler) error` —
+  pre-Run-only handler registration under `/h/<prefix>/...`; post-Run
+  returns `ErrAlreadyRun`.
+- `func RequestID(ctx context.Context) string` — accessor for the
+  chassis-assigned 32-char hex request ID. Returns `""` when ctx did not
+  pass through the chassis middleware.
+
+**Locked types**
+
+- `type Server struct { /* unexported */ }`
+- `type Deps struct { Cfg, VaultPtr, TokenStore, Approver, Logger,
+   AuditWriter (required); Clock, ClockSyncProbe, InterfaceLister, Listener,
+   VaultKey, LoadVaultFn, ReloadDrainWindow, ShutdownTimeout (optional) }`
+- `type Approver interface { RequestApproval(ctx, ApprovalRequest) (Decision, error) }`
+- `type ApprovalRequest struct { RequestID, MachineName, ClientIP, Scope,
+   Reason, SessionType, RequestedTTL, Metadata }`
+- `type Decision struct { Approved, ApprovedAt, DeniedAt, GrantedTTL,
+   ApproverID, Reason }`
+- `type SessionType uint8` with constants `SessionInteractive`,
+  `SessionSupervisor`; `String()` returns `"interactive"`, `"supervisor"`,
+  or `"unknown"`.
+- `type AuditWriter interface { Write(ctx, AuditEvent) error }`
+- `type AuditEvent struct { Type, At, RequestID, ClientIP, Detail }`
+- `type AuditEventType string` with chassis-emitted constants:
+  `AuditServerStart`, `AuditServerStop`, `AuditVaultReloaded`,
+  `AuditFilePermCheckFailed`, `AuditAuthFailedNotAllowed`,
+  `AuditPanicCaptured`.
+
+**Sentinel errors**
+
+- Construction: `ErrMissingConfig`, `ErrMissingVaultPtr`,
+  `ErrMissingTokenStore`, `ErrMissingApprover`, `ErrMissingLogger`,
+  `ErrMissingAuditWriter`.
+- Lifecycle: `ErrAlreadyRun`, `ErrShuttingDown`.
+- Startup checks: `ErrClockUnsynchronised`, `ErrFileModeLoose`,
+  `ErrBindNotOnTailscale`, `ErrStateDirUnsafe`.
+- Reload: `ErrReloadFileMissing`, `ErrReloadDecryptFailed`,
+  `ErrReloadInvalid`, `ErrReloadInProgress`, `ErrReloadInternalNil`.
+- Mount: `ErrMountNilHandler`, `ErrMountBadPath`, `ErrMountUnsupported`.
+- Clock probe: `ErrClockProbeUnexpectedOutput`.
+
+**Defaults (package-level constants)**
+
+- `DefaultReloadDrainWindow = 30 * time.Second`
+- `DefaultShutdownTimeout = 30 * time.Second`
+- `DefaultReadHeaderTimeout = 10 * time.Second`
+- `DefaultReadTimeout = 30 * time.Second`
+- `DefaultWriteTimeout = 30 * time.Second`
+- `DefaultIdleTimeout = 60 * time.Second`
+- `DefaultClockSyncTimeout = 5 * time.Second`
+- `MaxRequestBodyBytes = 64 << 10`
+
+**Behaviour contracts (locked)**
+
+- Startup-check order is `clock_sync → file_modes → tailscale_bind →
+  state_dir`; first failure short-circuits.
+- Middleware order is request ID → IP allow-list → body cap → panic
+  recover → handler. Recover middleware logs panic + stack + request_id
+  but never any byte of the request body.
+- SIGHUP-driven reloads are serialised under a single mutex; each old
+  store is destroyed exactly once after the configured drain window.
+
 ---
 
 ## `internal/discord/`
