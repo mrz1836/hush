@@ -11,6 +11,22 @@ var (
 	ErrMissingApprover    = errors.New("server: missing approver")
 	ErrMissingLogger      = errors.New("server: missing logger")
 	ErrMissingAuditWriter = errors.New("server: missing audit writer")
+	ErrMissingTokenIssuer = errors.New("server: missing token issuer")
+)
+
+// Chassis-level Approver outcome sentinels (SDD-12). The chassis itself never
+// produces these — the production wiring (cmd/hush + SDD-14) installs an
+// adapter that translates internal/discord sentinels into these chassis-level
+// constants so the claim handler stays decoupled from the discord package.
+//
+// Compare via errors.Is. Messages are static lowercase categories — they MUST
+// NOT contain echoed input or token bytes (Constitution X).
+var (
+	ErrApproverDenied      = errors.New("server: approver denied")
+	ErrApproverTimeout     = errors.New("server: approver timeout")
+	ErrApproverUnavailable = errors.New("server: approver unavailable")
+	ErrApproverRateLimited = errors.New("server: approver rate limited")
+	ErrClientUnknown       = errors.New("server: client key unknown")
 )
 
 // Lifecycle sentinel errors.

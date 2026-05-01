@@ -2,9 +2,14 @@ package server
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
@@ -15,8 +20,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/decred/dcrd/dcrec/secp256k1/v4"
+
 	"github.com/mrz1836/hush/internal/config"
 	"github.com/mrz1836/hush/internal/token"
+	"github.com/mrz1836/hush/internal/transport/sign"
 	"github.com/mrz1836/hush/internal/vault"
 	"github.com/mrz1836/hush/internal/vault/securebytes"
 )
@@ -80,7 +88,25 @@ func vaultPath(cfg *config.Server) string {
 //nolint:gochecknoglobals // OS bridge; test-hookable for tailscale_bind coverage
 var defaultInterfaceLister = net.InterfaceAddrs
 
-// Deps is the dependency-injection bundle for the chassis. The first six
+// TokenIssuer is the chassis-side seam through which the claim handler mints
+// session tokens. Production wiring binds this to a closure capturing the
+// process-resident JWT signing key (BIP32 m/44'/7743'/0'); tests inject a
+// counting wrapper around [token.Issue] so call counts can be asserted.
+//
+// The handler invokes the issuer EXACTLY at one place — the success branch of
+// the post-approval pipeline — so a non-nil return ALWAYS pairs with an
+// HTTP 200 body and never with any non-200 outcome.
+type TokenIssuer func(ctx context.Context, params token.IssueParams) (*token.Token, error)
+
+// ClientKeyResolver looks up a registered client's public key by its
+// fingerprint (16-char lowercase hex per [keys.PublicKeyFingerprint]). On a
+// miss the resolver MUST return [ErrClientUnknown]; the handler maps that
+// outcome to the same `bad_signature` (403) status as a verify failure to
+// avoid leaking which fingerprints are registered (data-model.md §3 edge
+// case "Client supplies an unknown registered-client-key fingerprint").
+type ClientKeyResolver func(fingerprint string) (*ecdsa.PublicKey, error)
+
+// Deps is the dependency-injection bundle for the chassis. The first seven
 // fields are required; the remainder default to host-platform implementations
 // when nil.
 type Deps struct {
@@ -96,6 +122,11 @@ type Deps struct {
 
 	// TokenStore is the JWT session-state repository.
 	TokenStore token.Store
+
+	// TokenIssuer mints fresh JWTs for approved claims. Production binds
+	// this to [token.Issue] with the process-resident signing key
+	// captured.
+	TokenIssuer TokenIssuer
 
 	// Approver is the approval interface. SDD-11 supplies the
 	// Discord-backed implementation in production; tests supply fakes.
@@ -137,6 +168,12 @@ type Deps struct {
 	// category.
 	LoadVaultFn func(ctx context.Context, path string, key *securebytes.SecureBytes) (vault.Store, error)
 
+	// ClientKeyResolver looks up registered client signing keys by
+	// fingerprint. When nil, the chassis installs a default that loads
+	// Cfg.Server.ClientRegistry once at construction time and serves an
+	// in-memory map (lookup miss → [ErrClientUnknown]).
+	ClientKeyResolver ClientKeyResolver
+
 	// ReloadDrainWindow overrides DefaultReloadDrainWindow.
 	ReloadDrainWindow time.Duration
 
@@ -163,6 +200,7 @@ type Server struct {
 	cfg               *config.Server
 	vaultPtr          *atomic.Pointer[vault.Store]
 	tokenStore        token.Store
+	tokenIssuer       TokenIssuer
 	approverImpl      Approver
 	logger            *slog.Logger
 	audit             AuditWriter
@@ -172,6 +210,8 @@ type Server struct {
 	listener          net.Listener
 	vaultKey          *securebytes.SecureBytes
 	loadVault         func(ctx context.Context, path string, key *securebytes.SecureBytes) (vault.Store, error)
+	clientKeyResolver ClientKeyResolver
+	nonceCache        sign.NonceCache
 	reloadDrainWindow time.Duration
 	shutdownTimeout   time.Duration
 
@@ -204,6 +244,7 @@ func New(deps Deps) (*Server, error) {
 		cfg:               deps.Cfg,
 		vaultPtr:          deps.VaultPtr,
 		tokenStore:        deps.TokenStore,
+		tokenIssuer:       deps.TokenIssuer,
 		approverImpl:      deps.Approver,
 		logger:            deps.Logger,
 		audit:             deps.AuditWriter,
@@ -213,6 +254,8 @@ func New(deps Deps) (*Server, error) {
 		listener:          deps.Listener,
 		vaultKey:          deps.VaultKey,
 		loadVault:         deps.LoadVaultFn,
+		clientKeyResolver: deps.ClientKeyResolver,
+		nonceCache:        sign.NewNonceCache(),
 		reloadDrainWindow: deps.ReloadDrainWindow,
 		shutdownTimeout:   deps.ShutdownTimeout,
 		shutdownDoneCh:    make(chan struct{}),
@@ -229,6 +272,9 @@ func New(deps Deps) (*Server, error) {
 	}
 	if s.loadVault == nil {
 		s.loadVault = vault.Load
+	}
+	if s.clientKeyResolver == nil {
+		s.clientKeyResolver = newDefaultClientKeyResolver(deps.Cfg)
 	}
 	if s.reloadDrainWindow <= 0 {
 		s.reloadDrainWindow = DefaultReloadDrainWindow
@@ -253,6 +299,9 @@ func validateDeps(deps Deps) error {
 	if deps.TokenStore == nil {
 		return ErrMissingTokenStore
 	}
+	if deps.TokenIssuer == nil {
+		return ErrMissingTokenIssuer
+	}
 	if deps.Approver == nil {
 		return ErrMissingApprover
 	}
@@ -263,6 +312,102 @@ func validateDeps(deps Deps) error {
 		return ErrMissingAuditWriter
 	}
 	return nil
+}
+
+// errCompressedPubKeyLen indicates a registry entry whose hex-decoded
+// public_key field is not 33 bytes long. Surfaced to the operator via the
+// resolver-error chain; the handler treats it as bad_signature (no
+// enumeration leak).
+var errCompressedPubKeyLen = errors.New("server: client registry: compressed pubkey not 33 bytes")
+
+// clientRegistryEntry is the on-disk shape of one row in the JSON registry
+// file. The file is a JSON array of these entries. Public-key bytes are
+// 33-byte SEC1-compressed secp256k1 (66 hex chars).
+type clientRegistryEntry struct {
+	Fingerprint string `json:"fingerprint"`
+	PublicKey   string `json:"public_key"`
+}
+
+// newDefaultClientKeyResolver returns a [ClientKeyResolver] that lazily loads
+// cfg.Server.ClientRegistry on first invocation and caches the
+// fingerprint→pubkey map for the lifetime of the chassis. Loader errors are
+// returned to the caller — handler logic translates that to
+// [ErrClientUnknown] so the operator-facing error stays uniform.
+//
+// Lazy load (rather than eager load in [New]) preserves the chassis
+// "zero I/O in New" invariant from SDD-10.
+func newDefaultClientKeyResolver(cfg *config.Server) ClientKeyResolver {
+	var (
+		once sync.Once
+		keys map[string]*ecdsa.PublicKey
+		err  error
+	)
+	return func(fingerprint string) (*ecdsa.PublicKey, error) {
+		once.Do(func() {
+			keys, err = loadClientRegistry(cfg.Server.ClientRegistry)
+		})
+		if err != nil {
+			return nil, err
+		}
+		pub, ok := keys[fingerprint]
+		if !ok {
+			return nil, ErrClientUnknown
+		}
+		return pub, nil
+	}
+}
+
+// loadClientRegistry parses the JSON registry file and returns a
+// fingerprint→pubkey map. Missing file → empty map (every fingerprint
+// resolves to ErrClientUnknown). Malformed JSON / hex → propagated error.
+func loadClientRegistry(path string) (map[string]*ecdsa.PublicKey, error) {
+	if path == "" {
+		return map[string]*ecdsa.PublicKey{}, nil
+	}
+	raw, err := os.ReadFile(path) //nolint:gosec // operator-supplied registry path; chassis trusts the config layer
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return map[string]*ecdsa.PublicKey{}, nil
+		}
+		return nil, fmt.Errorf("server: load client registry: %w", err)
+	}
+	var entries []clientRegistryEntry
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return nil, fmt.Errorf("server: parse client registry: %w", err)
+	}
+	out := make(map[string]*ecdsa.PublicKey, len(entries))
+	for _, e := range entries {
+		pub, err := decodeCompressedSecp256k1(e.PublicKey)
+		if err != nil {
+			return nil, fmt.Errorf("server: decode client registry entry %q: %w", e.Fingerprint, err)
+		}
+		out[e.Fingerprint] = pub
+	}
+	return out, nil
+}
+
+// decodeCompressedSecp256k1 parses a hex-encoded 33-byte SEC1-compressed
+// secp256k1 public key into an [*ecdsa.PublicKey].
+func decodeCompressedSecp256k1(s string) (*ecdsa.PublicKey, error) {
+	raw, err := hex.DecodeString(s)
+	if err != nil {
+		return nil, fmt.Errorf("hex decode: %w", err)
+	}
+	if len(raw) != 33 {
+		return nil, fmt.Errorf("%w: got %d", errCompressedPubKeyLen, len(raw))
+	}
+	pub, err := secp256k1.ParsePubKey(raw)
+	if err != nil {
+		return nil, fmt.Errorf("parse secp256k1 pubkey: %w", err)
+	}
+	x, y := pub.X(), pub.Y()
+	bigX := new(big.Int).SetBytes(x.Bytes()[:])
+	bigY := new(big.Int).SetBytes(y.Bytes()[:])
+	return &ecdsa.PublicKey{
+		Curve: secp256k1.S256(), //nolint:staticcheck // secp256k1 unsupported by crypto/ecdh
+		X:     bigX,
+		Y:     bigY,
+	}, nil
 }
 
 // Run executes the chassis lifecycle: startup checks → bind → serve →

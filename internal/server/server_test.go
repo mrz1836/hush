@@ -31,6 +31,7 @@ func TestNew_RequiresAllDeps(t *testing.T) {
 			Cfg:         cfg,
 			VaultPtr:    &ptr,
 			TokenStore:  token.NewStore(),
+			TokenIssuer: noopTokenIssuer,
 			Approver:    &fakeApprover{},
 			Logger:      logger,
 			AuditWriter: &recordingAudit{},
@@ -49,6 +50,7 @@ func TestNew_RequiresAllDeps(t *testing.T) {
 			d.VaultPtr = &p
 		}, ErrMissingVaultPtr},
 		{"missing TokenStore", func(d *Deps) { d.TokenStore = nil }, ErrMissingTokenStore},
+		{"missing TokenIssuer", func(d *Deps) { d.TokenIssuer = nil }, ErrMissingTokenIssuer},
 		{"missing Approver", func(d *Deps) { d.Approver = nil }, ErrMissingApprover},
 		{"missing Logger", func(d *Deps) { d.Logger = nil }, ErrMissingLogger},
 		{"missing AuditWriter", func(d *Deps) { d.AuditWriter = nil }, ErrMissingAuditWriter},
@@ -85,6 +87,7 @@ func TestNew_ZeroIO(t *testing.T) {
 		Cfg:         cfg,
 		VaultPtr:    &ptr,
 		TokenStore:  token.NewStore(),
+		TokenIssuer: noopTokenIssuer,
 		Approver:    &fakeApprover{},
 		Logger:      logger,
 		AuditWriter: &recordingAudit{},
@@ -331,9 +334,11 @@ func TestServer_DepsFieldsLocked(t *testing.T) {
 
 	depsType := reflect.TypeOf(Deps{})
 	want := []string{
-		"Cfg", "VaultPtr", "TokenStore", "Approver", "Logger", "AuditWriter",
+		"Cfg", "VaultPtr", "TokenStore", "TokenIssuer",
+		"Approver", "Logger", "AuditWriter",
 		"Clock", "ClockSyncProbe", "InterfaceLister", "Listener",
-		"VaultKey", "LoadVaultFn", "ReloadDrainWindow", "ShutdownTimeout",
+		"VaultKey", "LoadVaultFn", "ClientKeyResolver",
+		"ReloadDrainWindow", "ShutdownTimeout",
 	}
 	for _, name := range want {
 		if _, ok := depsType.FieldByName(name); !ok {

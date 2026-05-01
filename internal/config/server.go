@@ -50,15 +50,16 @@ type DiscordSection struct {
 
 // CryptoSection holds the [crypto] TOML table.
 type CryptoSection struct {
-	ArgonTime         uint32
-	ArgonMemoryMB     uint32
-	ArgonThreads      uint8
-	JWTDefaultTTL     time.Duration
-	MaxInteractiveTTL time.Duration
-	MaxSupervisorTTL  time.Duration
-	DefaultMaxUses    int
-	NonceTTL          time.Duration
-	ClockSkew         time.Duration
+	ArgonTime            uint32
+	ArgonMemoryMB        uint32
+	ArgonThreads         uint8
+	JWTDefaultTTL        time.Duration
+	MaxInteractiveTTL    time.Duration
+	MaxSupervisorTTL     time.Duration
+	DefaultMaxUses       int
+	NonceTTL             time.Duration
+	ClockSkew            time.Duration
+	ClaimApprovalTimeout time.Duration
 }
 
 // NetworkSection holds the [network] TOML table.
@@ -102,15 +103,16 @@ type discordSectionDecoded struct {
 }
 
 type cryptoSectionDecoded struct {
-	ArgonTime         *uint32 `toml:"argon_time"`
-	ArgonMemoryMB     *uint32 `toml:"argon_memory_mb"`
-	ArgonThreads      *uint8  `toml:"argon_threads"`
-	JWTDefaultTTL     string  `toml:"jwt_default_ttl"`
-	MaxInteractiveTTL string  `toml:"max_interactive_ttl"`
-	MaxSupervisorTTL  string  `toml:"max_supervisor_ttl"`
-	DefaultMaxUses    *int    `toml:"default_max_uses"`
-	NonceTTL          string  `toml:"nonce_ttl"`
-	ClockSkew         string  `toml:"clock_skew"`
+	ArgonTime            *uint32 `toml:"argon_time"`
+	ArgonMemoryMB        *uint32 `toml:"argon_memory_mb"`
+	ArgonThreads         *uint8  `toml:"argon_threads"`
+	JWTDefaultTTL        string  `toml:"jwt_default_ttl"`
+	MaxInteractiveTTL    string  `toml:"max_interactive_ttl"`
+	MaxSupervisorTTL     string  `toml:"max_supervisor_ttl"`
+	DefaultMaxUses       *int    `toml:"default_max_uses"`
+	NonceTTL             string  `toml:"nonce_ttl"`
+	ClockSkew            string  `toml:"clock_skew"`
+	ClaimApprovalTimeout string  `toml:"claim_approval_timeout"`
 }
 
 type networkSectionDecoded struct {
@@ -316,6 +318,9 @@ func materialize(d serverDecoded) (*Server, error) { //nolint:cyclop,gocognit,go
 		return nil, err
 	}
 	if s.Crypto.ClockSkew, err = parseDuration(d.Crypto.ClockSkew, DefaultClockSkew, "clock_skew"); err != nil {
+		return nil, err
+	}
+	if s.Crypto.ClaimApprovalTimeout, err = parseDuration(d.Crypto.ClaimApprovalTimeout, DefaultClaimApprovalTimeout, "claim_approval_timeout"); err != nil {
 		return nil, err
 	}
 

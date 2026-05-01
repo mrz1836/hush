@@ -32,13 +32,16 @@ var (
 //
 //nolint:gochecknoglobals // sentinel-class: set-once at package load, never mutated
 var (
-	DefaultJWTTTL            = 8 * time.Hour
-	DefaultMaxInteractiveTTL = 12 * time.Hour
-	DefaultMaxSupervisorTTL  = 20 * time.Hour
-	DefaultSupervisorTTLMax  = 24 * time.Hour // v0.1.0 cap on max_supervisor_ttl
-	DefaultMaxUses           = 50
-	DefaultNonceTTL          = 60 * time.Second
-	DefaultClockSkew         = 30 * time.Second
+	DefaultJWTTTL               = 8 * time.Hour
+	DefaultMaxInteractiveTTL    = 12 * time.Hour
+	DefaultMaxSupervisorTTL     = 20 * time.Hour
+	DefaultSupervisorTTLMax     = 24 * time.Hour // v0.1.0 cap on max_supervisor_ttl
+	DefaultMaxUses              = 50
+	DefaultNonceTTL             = 60 * time.Second
+	DefaultClockSkew            = 30 * time.Second
+	DefaultClaimApprovalTimeout = 60 * time.Second
+	MinClaimApprovalTimeout     = 1 * time.Second
+	MaxClaimApprovalTimeout     = 10 * time.Minute
 )
 
 // Path defaults.

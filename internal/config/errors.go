@@ -53,6 +53,12 @@ var (
 // TTL-bound error.
 var ErrSupervisorTTLOutOfRange = errors.New("hush/config: max_supervisor_ttl out of range (must be > jwt_default_ttl and ≤ 24h)")
 
+// ErrClaimApprovalTimeoutOutOfRange is returned when claim_approval_timeout is
+// outside [1s, 10m] — a DoS-via-config ceiling preventing operators from
+// pinning the approval-wait deadline at sub-second (UX failure) or multi-hour
+// (request slot starvation) values.
+var ErrClaimApprovalTimeoutOutOfRange = errors.New("hush/config: claim_approval_timeout out of range (must be ≥ 1s and ≤ 10m)")
+
 // File-permissions error. Surfaced when require_file_mode_checks is true and
 // the config file's own permissions are looser than 0600.
 var ErrConfigFileMode = errors.New("hush/config: config file permissions must be 0600")

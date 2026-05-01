@@ -91,6 +91,15 @@ func (s *Server) Validate() error { //nolint:cyclop,gocognit,gocyclo // rule-eng
 		))
 	}
 
+	// 8. claim_approval_timeout bounds — DoS-via-config ceiling (SDD-12 R-003).
+	if s.Crypto.ClaimApprovalTimeout < MinClaimApprovalTimeout || s.Crypto.ClaimApprovalTimeout > MaxClaimApprovalTimeout {
+		errs = append(errs, fmt.Errorf(
+			"field claim_approval_timeout=%s (min=%s, max=%s): %w",
+			s.Crypto.ClaimApprovalTimeout, MinClaimApprovalTimeout, MaxClaimApprovalTimeout,
+			ErrClaimApprovalTimeoutOutOfRange,
+		))
+	}
+
 	return errors.Join(errs...)
 }
 

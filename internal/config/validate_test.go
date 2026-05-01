@@ -540,15 +540,16 @@ func TestValidate_RuleOrderDeterministic(t *testing.T) {
 	leaves := uw.Unwrap()
 
 	expectedOrder := []error{
-		ErrTailscaleRequired,       // rule 1
-		ErrArgonMemoryTooLow,       // rule 2a-mem
-		ErrArgonTimeTooLow,         // rule 2a-time
-		ErrArgonThreadsTooLow,      // rule 2a-threads
-		ErrListenUnspecified,       // rule 3
-		ErrListenPublic,            // rule 4 (health_bind 1.2.3.4 is public)
-		ErrPathPrefixInvalid,       // rule 5
-		ErrAuditLogEscape,          // rule 6
-		ErrSupervisorTTLOutOfRange, // rule 7
+		ErrTailscaleRequired,              // rule 1
+		ErrArgonMemoryTooLow,              // rule 2a-mem
+		ErrArgonTimeTooLow,                // rule 2a-time
+		ErrArgonThreadsTooLow,             // rule 2a-threads
+		ErrListenUnspecified,              // rule 3
+		ErrListenPublic,                   // rule 4 (health_bind 1.2.3.4 is public)
+		ErrPathPrefixInvalid,              // rule 5
+		ErrAuditLogEscape,                 // rule 6
+		ErrSupervisorTTLOutOfRange,        // rule 7
+		ErrClaimApprovalTimeoutOutOfRange, // rule 8 (zero-value timeout — SDD-12)
 	}
 
 	require.Len(t, leaves, len(expectedOrder),
