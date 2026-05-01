@@ -50,8 +50,15 @@ func (s *Server) runStartupChecks(ctx context.Context) error {
 // checkClockSync invokes the configured probe under a bounded timeout and
 // returns ErrClockUnsynchronised when the host is unsynchronised, drifted
 // beyond Cfg.Security.MaxClockDrift, or the probe fails.
+//
+// On success the result is cached on the Server (s.clockInSync.Store(true))
+// so the /hz handler can report `clock_in_sync` without re-running the
+// probe per request. When RequireNTPSync is false the cache is also
+// flagged true (the operator opted out of the gate; reporting "in sync"
+// matches the gate's verdict).
 func (s *Server) checkClockSync(ctx context.Context) error {
 	if !s.cfg.Security.RequireNTPSync {
+		s.clockInSync.Store(true)
 		return nil
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, DefaultClockSyncTimeout)
@@ -68,6 +75,7 @@ func (s *Server) checkClockSync(ctx context.Context) error {
 		return fmt.Errorf("server: clock_sync: drift %v exceeds %v: %w",
 			drift, s.cfg.Security.MaxClockDrift, ErrClockUnsynchronised)
 	}
+	s.clockInSync.Store(true)
 	return nil
 }
 

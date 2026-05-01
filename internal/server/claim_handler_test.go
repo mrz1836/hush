@@ -1747,6 +1747,10 @@ func (failingTokenStore) Get(_ string) (*token.Token, error) { return nil, errFa
 func (failingTokenStore) ConsumeUse(_ string) error          { return errFakeStore }
 func (failingTokenStore) Revoke(_ string) error              { return errFakeStore }
 func (failingTokenStore) Cleanup(_ context.Context)          {}
+func (failingTokenStore) ActiveCount() int                   { return 0 }
+func (failingTokenStore) RevokeIdempotent(_ string) (bool, bool) {
+	return false, false
+}
 
 // TestClaim_AuditWriteFailure_DoesNotBlockResponse — when the audit writer
 // returns an error, the handler still writes the documented HTTP response.
