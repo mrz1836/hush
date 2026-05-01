@@ -138,7 +138,19 @@ type Deps struct {
 	// AuditWriter emits security-relevant events.
 	AuditWriter AuditWriter
 
+	// JWTVerifyKey is the ECDSA public key the chassis uses to verify
+	// session JWTs at /s. Production wiring binds this to the public half
+	// of the BIP32-derived JWT signing key (m/44'/7743'/0'). Tests inject
+	// a key paired with their fake TokenIssuer. Required for /s to
+	// validate a Bearer token; the chassis nil-checks at handler entry.
+	JWTVerifyKey *ecdsa.PublicKey
+
 	// Optional.
+
+	// DiscordHealth is the connectivity probe surfaced via /hz's
+	// `discord_connected` field. When nil the chassis reports
+	// `discord_connected: false` (fail-closed; FR-018 + R-009).
+	DiscordHealth func() bool
 
 	// Clock is the chassis's wall-clock source. Defaults to time.Now.
 	Clock func() time.Time
@@ -201,9 +213,11 @@ type Server struct {
 	vaultPtr          *atomic.Pointer[vault.Store]
 	tokenStore        token.Store
 	tokenIssuer       TokenIssuer
+	jwtVerifyKey      *ecdsa.PublicKey
 	approverImpl      Approver
 	logger            *slog.Logger
 	audit             AuditWriter
+	discordHealthFn   func() bool
 	clock             func() time.Time
 	clockProbe        func(ctx context.Context) (bool, time.Duration, error)
 	interfaceLister   func() ([]net.Addr, error)
@@ -214,6 +228,9 @@ type Server struct {
 	nonceCache        sign.NonceCache
 	reloadDrainWindow time.Duration
 	shutdownTimeout   time.Duration
+
+	runStartedAt time.Time
+	clockInSync  atomic.Bool
 
 	mu             sync.Mutex
 	mountedRoutes  []mountedRoute
@@ -245,9 +262,11 @@ func New(deps Deps) (*Server, error) {
 		vaultPtr:          deps.VaultPtr,
 		tokenStore:        deps.TokenStore,
 		tokenIssuer:       deps.TokenIssuer,
+		jwtVerifyKey:      deps.JWTVerifyKey,
 		approverImpl:      deps.Approver,
 		logger:            deps.Logger,
 		audit:             deps.AuditWriter,
+		discordHealthFn:   deps.DiscordHealth,
 		clock:             deps.Clock,
 		clockProbe:        deps.ClockSyncProbe,
 		interfaceLister:   deps.InterfaceLister,
@@ -425,6 +444,7 @@ func (s *Server) Run(ctx context.Context) error {
 	if !s.runCalled.CompareAndSwap(false, true) {
 		return ErrAlreadyRun
 	}
+	s.runStartedAt = s.clock()
 
 	if err := s.runStartupChecks(ctx); err != nil {
 		s.emitStartupAudit(ctx, "refused", failedCheckName(err))
@@ -519,6 +539,16 @@ func (s *Server) acquireListener(ctx context.Context) (net.Listener, error) {
 // unchanged.
 func (s *Server) approver() Approver {
 	return s.approverImpl
+}
+
+// discordHealth reports whether the Discord WebSocket gateway is currently
+// available, per the wired probe. Nil-safe: a nil Deps.DiscordHealth field
+// reports `false` (fail-closed; FR-018, R-009).
+func (s *Server) discordHealth() bool {
+	if s.discordHealthFn == nil {
+		return false
+	}
+	return s.discordHealthFn()
 }
 
 // emitStartupAudit emits a single AuditServerStart event with status and (when

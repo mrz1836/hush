@@ -14,6 +14,22 @@ type Store interface {
 	ConsumeUse(jti string) error
 	Revoke(jti string) error
 	Cleanup(ctx context.Context)
+
+	// ActiveCount returns the number of non-revoked, non-expired entries
+	// currently in the store. Reported by the /hz handler.
+	ActiveCount() int
+
+	// RevokeIdempotent revokes the supplied jti.
+	//   existed         — whether the jti was known (live OR previously
+	//                     revoked) at call time. Unknown JTIs are mapped
+	//                     by the /revoke handler to bad_signature
+	//                     (anti-enumeration; FR-015).
+	//   alreadyRevoked  — whether the jti was already revoked before the
+	//                     call. Distinguishes the audit chain's
+	//                     `revoke_succeeded` from
+	//                     `revoke_idempotent_already_revoked` (HTTP body
+	//                     is identical).
+	RevokeIdempotent(jti string) (existed, alreadyRevoked bool)
 }
 
 const defaultTick = 30 * time.Second
@@ -107,6 +123,42 @@ func (s *memStore) Cleanup(ctx context.Context) {
 			s.sweepExpired()
 		}
 	}
+}
+
+// ActiveCount returns the number of live, non-expired entries currently in
+// the store. Revoked entries are excluded; expired-but-not-yet-swept entries
+// are excluded. Read under RLock — concurrent-safe.
+func (s *memStore) ActiveCount() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	now := s.nowFn()
+	n := 0
+	for _, t := range s.live {
+		if t.ExpiresAt.After(now) {
+			n++
+		}
+	}
+	return n
+}
+
+// RevokeIdempotent marks jti revoked. Returns (existed, alreadyRevoked):
+//
+//	existed=false → unknown JTI; the call is a no-op (no entry added to
+//	  the revoked set; anti-enumeration is handled at the handler layer).
+//	existed=true alreadyRevoked=false → first-time success.
+//	existed=true alreadyRevoked=true  → idempotent re-revoke.
+func (s *memStore) RevokeIdempotent(jti string) (existed, alreadyRevoked bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.revoked[jti]; ok {
+		return true, true
+	}
+	if _, ok := s.live[jti]; ok {
+		s.revoked[jti] = struct{}{}
+		delete(s.live, jti)
+		return true, false
+	}
+	return false, false
 }
 
 func (s *memStore) sweepExpired() {

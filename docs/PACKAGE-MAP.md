@@ -827,6 +827,133 @@ Additive sentinels: `ErrApproverDenied`, `ErrApproverTimeout`,
 Additive config field: `Crypto.ClaimApprovalTimeout` (default 60 s,
 range [1 s, 10 min]).
 
+### Exported API — locked at SDD-13
+
+GET `/s/<name>`, POST `/revoke`, GET `/hz` handlers — see
+[docs/API.md](API.md) (locked at SDD-13). All three are registered
+through `(*Server).RegisterHandlers()` alongside `/claim`.
+
+- `/s/<name>` — Bearer JWT → `token.Validate` → `vault.Store.Get` →
+  `ecies.Encrypt` against the claim's ephemeral pubkey → octet-stream
+  body. Constitution IV / Constitution X (interactive `MaxUses`
+  decremented exactly once; supervisor never decremented; plaintext
+  never appears in any error body or operational log).
+- `/revoke` — signed body
+  `{jti, nonce, timestamp, request_id?, machine_name?, client_key_fingerprint, signature}`
+  → `sign.CanonicalJSON+Verify` against the chassis's
+  `ClientKeyResolver` registry → `NonceCache.Add` → `IsFreshTimestamp`
+  → `token.Store.RevokeIdempotent`. Idempotent re-revoke returns the
+  identical 200 body; the audit chain distinguishes via
+  `revoke_succeeded` vs `revoke_idempotent_already_revoked`. Unknown
+  JTI / fingerprint maps to `bad_signature` (FR-015 anti-enumeration).
+- `/hz` — no auth (Constitution VI: Tailscale is the auth perimeter);
+  reports `{status, uptime, secrets_count, active_tokens,
+  discord_connected, config_valid, vault_loaded, clock_in_sync}`.
+  MUST NOT emit an audit event (FR-021a).
+
+Additive Deps fields:
+- `JWTVerifyKey *ecdsa.PublicKey` (required for `/s`) — public half of
+  the BIP32-derived JWT signing key consulted by `token.Validate`.
+- `DiscordHealth func() bool` (optional) — surfaced by `/hz`'s
+  `discord_connected`. Nil reports `false` (fail-closed; R-009).
+
+Additive sentinels: `ErrSecretMissing`. Additive `token.Store` methods:
+`ActiveCount() int`, `RevokeIdempotent(jti string) (existed,
+alreadyRevoked bool)`. Additive `*BotApprover` accessor:
+`Connected() bool`. Additive type: `chassisAuditAdapter` (constructed
+via `NewChassisAuditAdapter(audit.Writer) AuditWriter`).
+
+## `internal/audit/`
+
+Purpose:
+- own the hush server's tamper-evident audit log (Constitution III
+  Layer 6)
+- hash-chained, ECDSA-signed event log written to disk and optionally
+  mirrored to a Discord channel best-effort
+
+Files:
+- `chain.go` — `Event`, `Verify`, `ChainError`, sentinels, action
+  constants, hash + sign helpers, genesis prevHash
+- `writer.go` — `Writer` interface, `NewWriter`, single-goroutine
+  rendezvous-based persistence
+- `discord_mirror.go` — `DiscordMirror`, `MirrorSession` seam,
+  best-effort goroutine
+
+### Exported API — locked at SDD-13
+
+Path: `github.com/mrz1836/hush/internal/audit`
+
+```go
+// Event is one record of the hash-chained, signed audit log.
+type Event struct {
+    Seq       uint64         `json:"seq"`
+    Time      time.Time      `json:"time"`
+    Action    string         `json:"action"`
+    Data      map[string]any `json:"data,omitempty"`
+    PrevHash  string         `json:"prev_hash"`
+    Hash      string         `json:"hash"`
+    Signature string         `json:"signature"`
+}
+
+// Writer is the producer-facing interface.
+type Writer interface {
+    Append(ctx context.Context, action string, data map[string]any) error
+    Run(ctx context.Context) error
+}
+
+// NewWriter constructs a Writer.
+func NewWriter(
+    ctx context.Context,
+    path string,
+    signKey *ecdsa.PrivateKey,
+    mirror *DiscordMirror,
+    logger *slog.Logger,
+) (Writer, error)
+
+// Verify re-validates the on-disk chain end-to-end.
+func Verify(path string, verifyKey *ecdsa.PublicKey) error
+
+// DiscordMirror is the optional best-effort chat-platform publisher.
+type DiscordMirror struct { /* unexported */ }
+
+// MirrorSession is the narrow seam over *discordgo.Session.
+type MirrorSession interface {
+    ChannelMessageSendComplex(channelID string, data *discordgo.MessageSend, opts ...discordgo.RequestOption) (*discordgo.Message, error)
+}
+
+func NewDiscordMirror(channelID string, session MirrorSession) *DiscordMirror
+
+// ChainError carries the offending Seq + Reason for chain breaks.
+type ChainError struct { Seq uint64; Reason string; Err error }
+
+// Sentinels.
+var ErrAuditChainBroken
+var ErrShutdown
+var ErrChainTailUnreadable
+var ErrInvalidPath
+var ErrInvalidKey
+var ErrInvalidLogger
+var ErrEmptyAction
+var ErrAlreadyRun
+```
+
+**Behaviour contracts (locked)**
+
+- `Append` is rendezvous-synchronous (FR-033) and blocks under producer
+  contention (FR-031). Returns nil only AFTER the event has been hashed,
+  signed, written, and flushed to disk.
+- `Hash = SHA-256(prevHash || sign.CanonicalJSON({Seq, Time, Action,
+  Data, PrevHash}))`. `PrevHash` of Seq=1 is
+  `sha256("hush.audit.chain.v1.genesis")`.
+- `Signature = base64(ecdsa.SignASN1(audit-signing-key, Hash))`.
+- `Verify` recomputes the chain end-to-end and surfaces `ErrAuditChainBroken`
+  wrapped in a `*ChainError` at the first inconsistent Seq.
+- Mirror is best-effort: 64-deep buffered channel, separate goroutine,
+  non-blocking writer-side dispatch, no retries; failures log WARN with
+  `seq` + `action` + error class only.
+- `Data` MUST NOT carry secret values, JWT bytes, signature bytes,
+  nonce bytes, bot tokens, or the audit signing key (FR-028, FR-029).
+
 ---
 
 ## `internal/discord/`

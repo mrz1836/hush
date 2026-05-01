@@ -210,6 +210,15 @@ func (s *Server) RegisterHandlers() error {
 	if err := s.Mount(http.MethodPost, "/claim", http.HandlerFunc(s.handleClaim)); err != nil {
 		return fmt.Errorf("server: register /claim: %w", err)
 	}
+	if err := s.Mount(http.MethodGet, "/s/{name}", http.HandlerFunc(s.handleSecret)); err != nil {
+		return fmt.Errorf("server: register /s: %w", err)
+	}
+	if err := s.Mount(http.MethodPost, "/revoke", http.HandlerFunc(s.handleRevoke)); err != nil {
+		return fmt.Errorf("server: register /revoke: %w", err)
+	}
+	if err := s.Mount(http.MethodGet, "/hz", http.HandlerFunc(s.handleHealth)); err != nil {
+		return fmt.Errorf("server: register /hz: %w", err)
+	}
 	return nil
 }
 

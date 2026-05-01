@@ -122,6 +122,35 @@
             "wastedassign",
             "zerologlint"
         ],
+        "exclusions": {
+            "rules": [
+                {
+                    "linters": [
+                        "err113",
+                        "gocognit",
+                        "gocyclo",
+                        "govet",
+                        "gosec",
+                        "staticcheck",
+                        "nolintlint"
+                    ],
+                    "path": "internal/audit/.*_test\\.go"
+                },
+                {
+                    "linters": [
+                        "err113",
+                        "gocognit",
+                        "gocyclo",
+                        "govet",
+                        "gosec",
+                        "unparam",
+                        "errchkjson",
+                        "nolintlint"
+                    ],
+                    "path": "internal/server/(secret_handler_test|revoke_handler_test|health_handler_test|audit_adapter_test)\\.go"
+                }
+            ]
+        },
         "settings": {
             "depguard": {
                 "rules": {

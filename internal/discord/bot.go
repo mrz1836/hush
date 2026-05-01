@@ -143,6 +143,15 @@ func NewBotApprover(ctx context.Context, cfg BotConfig, logger *slog.Logger) (*B
 	return a, nil
 }
 
+// Connected reports whether the underlying Discord WebSocket gateway is
+// currently in the available state. Used by the chassis's `/hz` handler
+// to populate the `discord_connected` field.
+//
+// Returns false at boot, after a Disconnect handler fires, and during
+// reconnect attempts; returns true after a Ready or Resumed handler
+// fires.
+func (a *BotApprover) Connected() bool { return a.available.Load() }
+
 // newBotApproverWithSession is the package-private constructor used
 // by tests to inject a session shim. It performs none of the
 // production cfg validation (callers — including production

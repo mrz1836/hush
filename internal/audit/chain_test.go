@@ -1,0 +1,424 @@
+package audit
+
+import (
+	"context"
+	"crypto/ecdsa"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
+	"math/big"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/decred/dcrd/dcrec/secp256k1/v4"
+
+	"github.com/mrz1836/hush/internal/keys"
+	"github.com/mrz1836/hush/internal/testutil"
+	"github.com/mrz1836/hush/internal/transport/sign"
+)
+
+func jsonStdUnmarshal(b []byte, v any) error { return json.Unmarshal(b, v) }
+
+// freshSecp256k1Key generates a new secp256k1 ECDSA key for tests that need
+// a key distinct from the deterministic testutil seed.
+func freshSecp256k1Key() (*ecdsa.PrivateKey, error) {
+	priv, err := secp256k1.GeneratePrivateKey()
+	if err != nil {
+		return nil, err
+	}
+	pub := priv.PubKey()
+	return &ecdsa.PrivateKey{
+		PublicKey: ecdsa.PublicKey{
+			Curve: secp256k1.S256(), //nolint:staticcheck // secp256k1 not in crypto/ecdh
+			X:     new(big.Int).SetBytes(pub.X().Bytes()[:]),
+			Y:     new(big.Int).SetBytes(pub.Y().Bytes()[:]),
+		},
+		D: new(big.Int).SetBytes(priv.Serialize()),
+	}, nil
+}
+
+// silence unused-import false positives if a build trims helpers below.
+var _ = rand.Reader
+
+func newTestSigningKey(t *testing.T) *ecdsa.PrivateKey {
+	t.Helper()
+	seed := testutil.NewTestKeys(t)
+	key, err := keys.DeriveAuditSigningKey(seed)
+	if err != nil {
+		t.Fatalf("DeriveAuditSigningKey: %v", err)
+	}
+	return key
+}
+
+func newTestLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+// runWriter starts w.Run in a goroutine and returns a cancel func + a
+// waiter the test calls to await Run's exit.
+func runWriter(t *testing.T, w Writer) (cancel context.CancelFunc, wait func() error) {
+	t.Helper()
+	ctx, c := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- w.Run(ctx) }()
+	return c, func() error {
+		select {
+		case err := <-errCh:
+			return err
+		case <-time.After(5 * time.Second):
+			t.Fatal("writer.Run did not return within 5s of cancel")
+			return nil
+		}
+	}
+}
+
+func appendN(t *testing.T, w Writer, n int) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		if err := w.Append(context.Background(), "test_event", map[string]any{"i": i}); err != nil {
+			t.Fatalf("Append #%d: %v", i, err)
+		}
+	}
+}
+
+func readEvents(t *testing.T, path string) []Event {
+	t.Helper()
+	raw, err := os.ReadFile(path) //nolint:gosec // test path
+	if err != nil {
+		t.Fatalf("read chain: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	out := make([]Event, 0, len(lines))
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		var ev Event
+		if err := jsonUnmarshal([]byte(line), &ev); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		out = append(out, ev)
+	}
+	return out
+}
+
+// jsonUnmarshal is a tiny indirection so we can swap to a strict decoder
+// later if needed.
+func jsonUnmarshal(b []byte, v any) error {
+	return jsonStdUnmarshal(b, v)
+}
+
+func TestAuditChain_GenesisPrevHashIsDomainSeparated(t *testing.T) {
+	t.Parallel()
+	expected := sha256.Sum256([]byte("hush.audit.chain.v1.genesis"))
+	got := GenesisPrevHashForTest()
+	if got != expected {
+		t.Fatalf("genesisPrevHash mismatch")
+	}
+}
+
+func TestAuditChain_HashLinkContiguous(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "audit.jsonl")
+	key := newTestSigningKey(t)
+
+	w, err := NewWriter(context.Background(), path, key, nil, newTestLogger())
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	cancel, wait := runWriter(t, w)
+	appendN(t, w, 5)
+	cancel()
+	if err := wait(); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	events := readEvents(t, path)
+	if len(events) != 5 {
+		t.Fatalf("got %d events; want 5", len(events))
+	}
+	genesis := GenesisPrevHashForTest()
+	if events[0].PrevHash != hex.EncodeToString(genesis[:]) {
+		t.Fatalf("first prev_hash mismatch: got %q", events[0].PrevHash)
+	}
+	for i, ev := range events {
+		if ev.Seq != uint64(i+1) {
+			t.Fatalf("event %d seq=%d; want %d", i, ev.Seq, i+1)
+		}
+		if i > 0 && ev.PrevHash != events[i-1].Hash {
+			t.Fatalf("event %d prev_hash=%q; want %q", i, ev.PrevHash, events[i-1].Hash)
+		}
+	}
+}
+
+func TestAuditChain_SignatureValid(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "audit.jsonl")
+	key := newTestSigningKey(t)
+
+	w, err := NewWriter(context.Background(), path, key, nil, newTestLogger())
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	cancel, wait := runWriter(t, w)
+	appendN(t, w, 3)
+	cancel()
+	if err := wait(); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if err := Verify(path, &key.PublicKey); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+}
+
+func TestAuditChain_BreakDetectedOnTamper(t *testing.T) { //nolint:gocognit // sequential tamper-then-verify steps
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "audit.jsonl")
+	key := newTestSigningKey(t)
+
+	w, err := NewWriter(context.Background(), path, key, nil, newTestLogger())
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	cancel, wait := runWriter(t, w)
+	for i := 0; i < 3; i++ {
+		if err := w.Append(context.Background(), "approved", map[string]any{"i": i}); err != nil {
+			t.Fatalf("Append #%d: %v", i, err)
+		}
+	}
+	cancel()
+	if err := wait(); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	// Mutate event 2's data on disk: replace "approved" with "denied  "
+	// (same byte length so the rest of the file remains aligned).
+	raw, err := os.ReadFile(path) //nolint:gosec // test path
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("expected 3 lines; got %d", len(lines))
+	}
+	mutated := strings.Replace(lines[1], `"action":"approved"`, `"action":"denied  "`, 1)
+	if mutated == lines[1] {
+		t.Fatalf("test setup: replace did not occur in line %q", lines[1])
+	}
+	lines[1] = mutated
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	err = Verify(path, &key.PublicKey)
+	if !errors.Is(err, ErrAuditChainBroken) {
+		t.Fatalf("Verify err = %v; want ErrAuditChainBroken", err)
+	}
+	var ce *ChainError
+	if !errors.As(err, &ce) {
+		t.Fatalf("errors.As ChainError: %v", err)
+	}
+	if ce.Seq != 2 {
+		t.Fatalf("ce.Seq = %d; want 2 (first tampered event)", ce.Seq)
+	}
+	if ce.Reason != ReasonHashMismatch {
+		t.Fatalf("ce.Reason = %q; want %q", ce.Reason, ReasonHashMismatch)
+	}
+}
+
+func TestAuditChain_BreakDetectedOnDelete(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "audit.jsonl")
+	key := newTestSigningKey(t)
+
+	w, err := NewWriter(context.Background(), path, key, nil, newTestLogger())
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	cancel, wait := runWriter(t, w)
+	appendN(t, w, 3)
+	cancel()
+	if err := wait(); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	raw, err := os.ReadFile(path) //nolint:gosec // test path
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	// Delete the second line (Seq=2).
+	survivors := []string{lines[0], lines[2]}
+	if err := os.WriteFile(path, []byte(strings.Join(survivors, "\n")+"\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	err = Verify(path, &key.PublicKey)
+	if !errors.Is(err, ErrAuditChainBroken) {
+		t.Fatalf("Verify err = %v; want ErrAuditChainBroken", err)
+	}
+	var ce *ChainError
+	if !errors.As(err, &ce) {
+		t.Fatalf("errors.As ChainError: %v", err)
+	}
+	// The deleted line means the third event's Seq=3 lands at expected
+	// position 2, so we expect Seq=3 with seq_gap.
+	if ce.Reason != ReasonSeqGap {
+		t.Fatalf("ce.Reason = %q; want %q", ce.Reason, ReasonSeqGap)
+	}
+}
+
+func TestAuditChain_BreakDetectedOnForgedSignature(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "audit.jsonl")
+	key := newTestSigningKey(t)
+
+	w, err := NewWriter(context.Background(), path, key, nil, newTestLogger())
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	cancel, wait := runWriter(t, w)
+	appendN(t, w, 3)
+	cancel()
+	if err := wait(); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	raw, err := os.ReadFile(path) //nolint:gosec // test path
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	// Replace event 2's signature field with a base64-valid-but-wrong one.
+	// Use a freshly-generated key (NOT testutil's memoized seed, which would
+	// collide with `key` and produce a still-valid signature).
+	otherKey, err := freshSecp256k1Key()
+	if err != nil {
+		t.Fatalf("fresh key: %v", err)
+	}
+	hashBytes, err := computeHash(mustHexBytes(t, mustReadEvent(t, lines[0]).Hash), mustReadEvent(t, lines[1]))
+	if err != nil {
+		t.Fatalf("computeHash: %v", err)
+	}
+	wrongSig, err := signEventHash(otherKey, hashBytes)
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	// Replace last "signature":"..." occurrence in line 1.
+	mutated := replaceSignature(t, lines[1], wrongSig)
+	lines[1] = mutated
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	err = Verify(path, &key.PublicKey)
+	var ce *ChainError
+	if !errors.As(err, &ce) {
+		t.Fatalf("errors.As ChainError: %v (err=%v)", err, err)
+	}
+	if ce.Seq != 2 {
+		t.Fatalf("ce.Seq = %d; want 2", ce.Seq)
+	}
+	if ce.Reason != ReasonSignatureInvalid {
+		t.Fatalf("ce.Reason = %q; want %q", ce.Reason, ReasonSignatureInvalid)
+	}
+}
+
+func TestAuditChain_HashCoversCanonicalEventWithoutHashOrSignature(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "audit.jsonl")
+	key := newTestSigningKey(t)
+
+	w, err := NewWriter(context.Background(), path, key, nil, newTestLogger())
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	cancel, wait := runWriter(t, w)
+	if err := w.Append(context.Background(), "approved", map[string]any{"k": "v"}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	cancel()
+	if err := wait(); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	events := readEvents(t, path)
+	if len(events) != 1 {
+		t.Fatalf("got %d events; want 1", len(events))
+	}
+	ev := events[0]
+
+	// Recompute hash from canonical preimage using the public CanonicalJSON
+	// path; this is the byte-level proof that Hash covers everything except
+	// Hash and Signature.
+	pre := canonicalEvent{
+		Action:   ev.Action,
+		Data:     ev.Data,
+		PrevHash: ev.PrevHash,
+		Seq:      ev.Seq,
+		Time:     ev.Time.UTC(),
+	}
+	canon, err := sign.CanonicalJSON(pre)
+	if err != nil {
+		t.Fatalf("CanonicalJSON: %v", err)
+	}
+	prev, err := hex.DecodeString(ev.PrevHash)
+	if err != nil {
+		t.Fatalf("hex decode prev_hash: %v", err)
+	}
+	hash := sha256.Sum256(append(prev, canon...))
+	if ev.Hash != hex.EncodeToString(hash[:]) {
+		t.Fatalf("recomputed hash mismatch:\n got %s\n want %s", ev.Hash, hex.EncodeToString(hash[:]))
+	}
+}
+
+// helpers
+
+func mustReadEvent(t *testing.T, line string) Event {
+	t.Helper()
+	var ev Event
+	if err := jsonStdUnmarshal([]byte(line), &ev); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	return ev
+}
+
+func mustHexBytes(t *testing.T, h string) []byte {
+	t.Helper()
+	b, err := hex.DecodeString(h)
+	if err != nil {
+		t.Fatalf("hex decode: %v", err)
+	}
+	return b
+}
+
+// replaceSignature swaps the `"signature":"..."` field in a serialised
+// event line with newSig. Returns the rewritten line. Fatally fails the
+// test if the field is not present.
+func replaceSignature(t *testing.T, line, newSig string) string {
+	t.Helper()
+	const tag = `"signature":"`
+	i := strings.Index(line, tag)
+	if i < 0 {
+		t.Fatalf("signature field not found in %q", line)
+	}
+	j := strings.Index(line[i+len(tag):], `"`)
+	if j < 0 {
+		t.Fatalf("malformed signature field in %q", line)
+	}
+	return line[:i+len(tag)] + newSig + line[i+len(tag)+j:]
+}
