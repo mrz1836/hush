@@ -806,6 +806,27 @@ startup checks, SIGHUP atomic vault reload, graceful shutdown). Files:
 - SIGHUP-driven reloads are serialised under a single mutex; each old
   store is destroyed exactly once after the configured drain window.
 
+### Exported API — locked at SDD-12
+
+POST `/claim` handler — see [docs/API.md](API.md) (locked at SDD-12).
+
+The handler is registered via `(*Server).RegisterHandlers()`; the chassis
+mounts `POST /h/<prefix>/claim` and runs the locked pipeline `shape →
+canonical-JSON+verify → nonce → timestamp → IP allowlist → TTL cap →
+Approver.RequestApproval → token.Issue`. Constitution II — no
+configuration surface can map `ErrApproverUnavailable` to HTTP 200.
+
+Additive Deps fields:
+- `TokenIssuer` (required) — `func(ctx, token.IssueParams) (*token.Token, error)`
+- `ClientKeyResolver` (optional, defaults to a file-loader over
+  `Cfg.Server.ClientRegistry`)
+
+Additive sentinels: `ErrApproverDenied`, `ErrApproverTimeout`,
+`ErrApproverUnavailable`, `ErrApproverRateLimited`, `ErrClientUnknown`,
+`ErrMissingTokenIssuer`. Additive audit-event type: `AuditClaimOutcome`.
+Additive config field: `Crypto.ClaimApprovalTimeout` (default 60 s,
+range [1 s, 10 min]).
+
 ---
 
 ## `internal/discord/`

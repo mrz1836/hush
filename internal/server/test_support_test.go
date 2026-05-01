@@ -182,6 +182,15 @@ func testCfg(t *testing.T) *config.Server {
 			AllowedCIDRs:     []string{"100.64.0.0/10"},
 			HealthBind:       listenAP,
 		},
+		Crypto: config.CryptoSection{
+			MaxInteractiveTTL:    config.DefaultMaxInteractiveTTL,
+			MaxSupervisorTTL:     config.DefaultMaxSupervisorTTL,
+			NonceTTL:             config.DefaultNonceTTL,
+			ClockSkew:            config.DefaultClockSkew,
+			JWTDefaultTTL:        config.DefaultJWTTTL,
+			DefaultMaxUses:       config.DefaultMaxUses,
+			ClaimApprovalTimeout: config.DefaultClaimApprovalTimeout,
+		},
 		Security: config.SecuritySection{
 			RequireFileModeChecks: true,
 			RequireKeychainACL:    false,
@@ -190,6 +199,13 @@ func testCfg(t *testing.T) *config.Server {
 		},
 	}
 	return c
+}
+
+// noopTokenIssuer is the TokenIssuer used by chassis tests that do not exercise
+// the claim-handler success path. Returns a zero-value Token with a fixed JTI
+// — sufficient to satisfy required-deps checks.
+func noopTokenIssuer(_ context.Context, _ token.IssueParams) (*token.Token, error) {
+	return &token.Token{JTI: "noop-jti", Encoded: "noop.encoded.jwt"}, nil
 }
 
 // alwaysSyncedClockProbe returns synced=true / drift=0 / err=nil.
@@ -223,6 +239,7 @@ func newTestServer(t *testing.T, mods ...func(d *Deps)) (*Server, *recordingAudi
 		Cfg:             cfg,
 		VaultPtr:        &ptr,
 		TokenStore:      token.NewStore(),
+		TokenIssuer:     noopTokenIssuer,
 		Approver:        approver,
 		Logger:          logger,
 		AuditWriter:     audit,

@@ -421,6 +421,7 @@ func TestLoadServer_AllErrorsAreSentinels(t *testing.T) {
 		ErrArgonMemoryTooLow, ErrArgonTimeTooLow, ErrArgonThreadsTooLow,
 		ErrArgonMemoryTooHigh, ErrArgonTimeTooHigh, ErrArgonThreadsTooHigh,
 		ErrSupervisorTTLOutOfRange,
+		ErrClaimApprovalTimeoutOutOfRange,
 		ErrConfigFileMode,
 	}
 
@@ -515,6 +516,50 @@ func TestLoadServer_AcceptsConfigAt0600(t *testing.T) {
 	s, err := LoadServer(context.Background(), cfg)
 	require.NoError(t, err)
 	require.NotNil(t, s)
+}
+
+// ---- claim_approval_timeout (SDD-12) ---------------------------------------
+
+func TestCryptoSection_ClaimApprovalTimeout_Default(t *testing.T) {
+	t.Parallel()
+	s, err := loadWithStateDir(t, "testdata/valid/minimal-valid.toml")
+	require.NoError(t, err)
+	assert.Equal(t, DefaultClaimApprovalTimeout, s.Crypto.ClaimApprovalTimeout,
+		"absent claim_approval_timeout must default to %s", DefaultClaimApprovalTimeout)
+	assert.Equal(t, 60*time.Second, s.Crypto.ClaimApprovalTimeout)
+}
+
+func TestCryptoSection_ClaimApprovalTimeout_OutOfRange(t *testing.T) {
+	t.Parallel()
+
+	// Build a valid base config and then mutate just the timeout field — we
+	// drive Validate directly so the test does not depend on TOML fixtures.
+	mkBase := func(t *testing.T) *Server {
+		t.Helper()
+		s, err := loadWithStateDir(t, "testdata/valid/minimal-valid.toml")
+		require.NoError(t, err)
+		return s
+	}
+
+	cases := []struct {
+		name string
+		val  time.Duration
+	}{
+		{"zero", 0},
+		{"below_floor_500ms", 500 * time.Millisecond},
+		{"above_ceiling_11m", 11 * time.Minute},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := mkBase(t)
+			s.Crypto.ClaimApprovalTimeout = tc.val
+			err := s.Validate()
+			require.Error(t, err)
+			require.ErrorIs(t, err, ErrClaimApprovalTimeoutOutOfRange,
+				"value %s should fail with ErrClaimApprovalTimeoutOutOfRange", tc.val)
+		})
+	}
 }
 
 // ---- Path-safety (audit_log) -----------------------------------------------
