@@ -50,7 +50,7 @@
 | SDD-11 | Approver interface + Discord bot + disconnect monitor | `internal/discord` | done | AC-3 |
 | SDD-12 | `/claim` handler (signed verify + Discord approval + JWT issue) | `internal/server` | done | AC-1, AC-3, AC-4 |
 | SDD-13 | `/s/<name>`, `/revoke/<jti>`, `/hz` handlers + audit log | `internal/server` + `internal/audit` | done | AC-1, AC-2, AC-4, AC-7 |
-| SDD-14 | cmd/hush + cli root + serve/health/version/revoke | `cmd/hush` + `internal/cli` | pending | AC-1 |
+| SDD-14 | cmd/hush + cli root + serve/health/version/revoke | `cmd/hush` + `internal/cli` | done | AC-1 |
 
 ## Phase 4 — Interactive CLI path
 

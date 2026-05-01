@@ -59,11 +59,13 @@ Must not contain:
 - vault parsing
 - supervisor logic
 
-### Exported API — locked
+### Exported API — locked at SDD-14
 
-> Filled by SDD-14 once cmd/hush is implemented. Until then, this section is
-> a placeholder. Consumers (none — this is `package main`) MUST NOT depend
-> on internal exports beyond the locked sections of `internal/cli`.
+#### Functions
+
+| Symbol | Description |
+|--------|-------------|
+| `func main()` | Two-line body: `os.Exit(cli.Execute(context.Background()))`. No business logic per the chunk contract. |
 
 ---
 
@@ -96,10 +98,44 @@ Must not contain:
 - Discord SDK logic
 - session store implementation
 
-### Exported API — locked
+### Exported API — locked at SDD-14
 
-> Filled by SDD-14, SDD-15, SDD-16, SDD-17, SDD-23 as each `internal/cli/*.go`
-> file is implemented. Until then, this section is a placeholder.
+#### Functions
+
+| Symbol | Description |
+|--------|-------------|
+| `func Execute(ctx context.Context) int` | Builds the cobra root, dispatches the subcommand matching `os.Args`, and returns the resolved exit code (one of the seven `Exit*` constants). The caller (`cmd/hush/main.go`) is responsible for `os.Exit`. |
+
+#### Constants (the public exit-code contract)
+
+| Symbol | Value | Meaning |
+|--------|-------|---------|
+| `ExitOK` | `0` | Clean completion |
+| `ExitErr` | `1` | Generic error: network failure, server 5xx, partial-health, panic recovery |
+| `ExitInputErr` | `2` | Operator-input error: missing/conflicting flag, malformed `--jti`, no passphrase source |
+| `ExitAuth` | `3` | Authentication failure: bad passphrase, signature rejected, JWT rejected |
+| `ExitNotFound` | `4` | Missing entity: `--config` not found, server returned 404 for `--jti` |
+| `ExitPerm` | `5` | OS-level permission denied: bind/file-mode rejected |
+| `ExitConfigStale` | `78` | `EX_CONFIG` sysexits sentinel — **reserved** for the supervisor↔child contract delivered by SDD-15/SDD-23. **Never raised by any subcommand in this chunk.** |
+
+#### Build identification (link-time injected)
+
+| Symbol | Default | Description |
+|--------|---------|-------------|
+| `var Version string` | `"dev"` | Semantic version; GoReleaser injects via `-ldflags "-X .../cli.Version=..."`. |
+| `var Commit string` | `"unknown"` | Short commit identifier. |
+| `var Date string` | `"unknown"` | RFC 3339 build date. |
+
+#### Subcommands delivered by SDD-14
+
+| Subcommand | Synopsis | Behaviour summary |
+|------------|----------|-------------------|
+| `serve` | `hush serve` | Brings the vault online. Resolves passphrase via `stdin pipe → TTY prompt → ExitInputErr` (never `os.Getenv`). Composes the chassis from already-locked surfaces. SIGTERM/SIGINT graceful shutdown via `signal.NotifyContext`. |
+| `health` | `hush health --server <url>` | 5 s-bounded `GET /hz`. TTY: per-dimension table; pipe: server's JSON body verbatim. Partial-health → full summary + `ExitErr` (FR-017a). Connection-refused/timeout literal-text contract per SDD-14 contract §6. |
+| `version` | `hush version` | Prints build metadata. TTY: human lines. Pipe: locked JSON shape `{"version","commit","date"}` with `dev`/`unknown`/`unknown` placeholders. Always `ExitOK`. |
+| `revoke` | `hush revoke --server <url> --jti <uuid>` | Builds canonical `{jti, nonce, timestamp}`, signs via `internal/transport/sign`, POSTs to `/revoke`. Status → exit code: 200→0, 401/403→3, 404→4, 5xx/network→1. |
+
+Subsequent CLI chunks (SDD-15 `init`, SDD-16 `request`, SDD-17 `secret`, SDD-23 `supervise`/`client`) mount on top of this skeleton.
 
 ---
 
