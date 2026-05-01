@@ -833,10 +833,98 @@ Must not contain:
 - JWT signing
 - supervisor process management
 
-### Exported API — locked
+### Exported API — locked at SDD-11
 
-> Filled by SDD-11 (Approver interface + bot + monitor) and SDD-28 (alert
-> classes + tiered routing). Until then, this section is a placeholder.
+Path: `github.com/mrz1836/hush/internal/discord`
+
+```go
+// Package github.com/mrz1836/hush/internal/discord
+
+// Approver gates every secret-claim path. *BotApprover is the
+// production implementation; tests may substitute alternative
+// implementations.
+type Approver interface {
+    RequestApproval(ctx context.Context, req ApprovalRequest) (Decision, error)
+}
+
+// ApprovalRequest is the input to every approval call. SupervisorName
+// MUST be non-empty when SessionType is token.SessionSupervisor and
+// MUST be empty otherwise.
+type ApprovalRequest struct {
+    MachineName    string
+    ClientIP       string
+    Reason         string
+    Scope          []string
+    RequestedTTL   time.Duration
+    SessionType    token.SessionType
+    SupervisorName string
+}
+
+// Decision is returned by RequestApproval only on the operator-Approve
+// path. v0.1.0: ApprovedTTL == request.RequestedTTL exactly,
+// Reason == "" — the fields exist for forward-compatible UX.
+type Decision struct {
+    Approved    bool
+    ApprovedTTL time.Duration
+    Reason      string
+}
+
+// BotConfig parameterises NewBotApprover.
+type BotConfig struct {
+    Token          *securebytes.SecureBytes
+    OwnerID        string
+    AppID          string
+    AuditChannelID string
+    DMRateLimit    time.Duration
+}
+
+// BotApprover is the production Approver, backed by a *discordgo.Session.
+type BotApprover struct{ /* unexported */ }
+
+// NewBotApprover constructs a Discord-backed Approver. Validation
+// failures return the bare matching ErrMissing* sentinel; transport-
+// down at boot is NOT a construction error (FR-013a).
+func NewBotApprover(ctx context.Context, cfg BotConfig, logger *slog.Logger) (*BotApprover, error)
+
+// DefaultDMRateLimit is the default value applied when
+// BotConfig.DMRateLimit ≤ 0 (FR-021).
+const DefaultDMRateLimit = 5 * time.Minute
+
+// Sentinel errors. Compare via errors.Is. Static category messages —
+// no token bytes, no ApprovalRequest fields, no key material.
+var ErrDiscordUnavailable error // (a) available flag false at entry; (b) delivery failure mid-call; (c) WebSocket disconnected with in-flight request
+var ErrApprovalDenied     error // operator clicked Deny
+var ErrApprovalTimeout    error // ctx deadline elapsed before any operator action — wraps context.DeadlineExceeded
+var ErrRateLimited        error // bucket for (SupervisorName, ClientIP) key already delivered within the configured window
+var ErrMissingToken       error // cfg.Token == nil OR cfg.Token.Len() == 0
+var ErrMissingOwnerID     error // cfg.OwnerID == ""
+var ErrMissingAppID       error // cfg.AppID == ""
+var ErrMissingLogger      error // logger == nil
+```
+
+Behavioural contract:
+- *BotApprover never returns Decision{Approved: true} except on the
+  operator-Approve interaction path (Constitution II non-negotiable;
+  asserted by TestBotApprover_NeverAutoApprovesOnDiscordError and
+  TestBotApprover_NoAutoApproveKnobExists).
+- The available flag is checked BEFORE the rate-limit bucket so a
+  transport-unavailable request never consumes a token (FR-021a).
+- The monitor goroutine is owned by the constructor's ctx; on
+  cancellation it closes the session, drains pending channels with
+  ErrDiscordUnavailable, and exits within ≤100 ms (FR-026).
+- DM templates use distinct visual prefixes for interactive (✅) vs
+  [DAEMON] (⚠) requests so the operator never approves the wrong
+  request type silently (FR-006).
+- Reconnect uses hush-controlled exponential backoff capped at 60 s,
+  retrying indefinitely until the constructor's ctx is cancelled
+  (FR-013b).
+- Bot token flows through *securebytes.SecureBytes; sentinel error
+  messages are static categories (Constitution X). Absence asserted
+  by TestBotApprover_TokenAbsentFromAllArtifacts.
+
+SDD-28 will add the alert-class catalogue + tiered routing as a
+sibling sub-package (`internal/discord/alerts`). SDD-28 MUST NOT alter
+any symbol above.
 
 ---
 

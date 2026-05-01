@@ -3,5 +3,5 @@
 See [.github/CLAUDE.md](.github/CLAUDE.md) for the canonical agent guide.
 
 <!-- SPECKIT START -->
-Active feature plan: [specs/010-server-skeleton/plan.md](specs/010-server-skeleton/plan.md) — SDD-10 `internal/server` (HTTP chassis: stdlib `net/http.ServeMux` at `/h/<prefix>/...`, ordered startup checks `clock_sync → file_modes → tailscale_bind → state_dir`, SIGHUP atomic vault reload with 30s drain window, middleware request ID → IP allow-list → panic recover (no body in logs); AC-1 / AC-2 / AC-8).
+Active feature plan: [specs/011-discord-bot/plan.md](specs/011-discord-bot/plan.md) — SDD-11 `internal/discord` (Approver interface + Discord-backed BotApprover via `bwmarrin/discordgo`; distinct interactive vs `[DAEMON]` DM templates; per-`(SupervisorName, ClientIP)` token-bucket rate limit defaulting to 5 min, deferred-consume on transport-unavailable; WebSocket monitor flips `available` flag, drains in-flight on disconnect, 60s exponential-backoff cap on reconnect, indefinite retry; bot token loaded once via `*securebytes.SecureBytes`; AC-3).
 <!-- SPECKIT END -->
