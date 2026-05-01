@@ -3,6 +3,7 @@ module github.com/mrz1836/hush
 go 1.26.1
 
 require (
+	github.com/bwmarrin/discordgo v0.29.0
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1
 	github.com/decred/dcrd/hdkeychain/v3 v3.1.3
 	github.com/golang-jwt/jwt/v5 v5.3.1
@@ -14,12 +15,11 @@ require (
 )
 
 require (
-	github.com/bwmarrin/discordgo v0.29.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/decred/base58 v1.0.6 // indirect
 	github.com/decred/dcrd/crypto/blake256 v1.1.0 // indirect
 	github.com/decred/dcrd/crypto/ripemd160 v1.0.2 // indirect
-	github.com/gorilla/websocket v1.4.2 // indirect
+	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
