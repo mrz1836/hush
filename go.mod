@@ -4,10 +4,12 @@ go 1.26.1
 
 require (
 	github.com/bwmarrin/discordgo v0.29.0
+	github.com/creack/pty v1.1.21
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1
 	github.com/decred/dcrd/hdkeychain/v3 v3.1.3
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/pelletier/go-toml/v2 v2.3.0
+	github.com/spf13/cobra v1.8.1
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/crypto v0.50.0
 	golang.org/x/sys v0.43.0
@@ -15,7 +17,6 @@ require (
 )
 
 require (
-	github.com/creack/pty v1.1.21 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/decred/base58 v1.0.6 // indirect
 	github.com/decred/dcrd/crypto/blake256 v1.1.0 // indirect
@@ -23,7 +24,6 @@ require (
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
-	github.com/spf13/cobra v1.8.1 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
