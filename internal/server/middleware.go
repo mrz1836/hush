@@ -172,10 +172,12 @@ func (s *Server) recoverFromHandlerPanic(w http.ResponseWriter, r *http.Request,
 // request ID → IP allow-list → body cap → panic recover → handler.
 //
 // Outermost (executed first) is the request-ID assignment; innermost (just
-// outside the handler) is the panic-recover. A request from a
-// non-allow-listed IP is rejected before the panic-recover layer runs, so
-// a panic that originates inside a handler is captured but a 403 from the
-// allow-list short-circuits without invoking recover (FR-026).
+// outside the handler) is the panic-recover. The panic-recover layer
+// always wraps the handler — it is unconditional. When the IP allow-list
+// rejects a request the handler is never invoked, so no panic can
+// originate from it; the 403 path simply returns before recover has any
+// work to do. This is a structural guarantee, not a conditional bypass
+// of the chain (FR-026).
 func (s *Server) middlewareChain(handler http.Handler) http.Handler {
 	allowed := parseAllowedCIDRs(s.cfg.Network.AllowedCIDRs)
 

@@ -1076,6 +1076,42 @@ func TestClaim_ErrorBodyNoSentinel(t *testing.T) {
 	}
 }
 
+// TestClaim_HappyPath_NoSentinelInResponse is the success-path counterpart
+// to TestClaim_ErrorBodyNoSentinel: a future refactor that accidentally
+// echoes user-supplied fields (e.g. reason, machine_name) into a 200-OK
+// response, slog buffer, or audit Detail must be caught here.
+func TestClaim_HappyPath_NoSentinelInResponse(t *testing.T) {
+	t.Parallel()
+	const sentinel = "SECRET_SHOULD_NEVER_APPEAR_HAPPY_PATH"
+	h := newClaimHarness(t,
+		withApproverScript(
+			[]Decision{{Approved: true, GrantedTTL: time.Hour, ApproverID: "test"}},
+			[]error{nil},
+		),
+	)
+	o := defaultClaimBodyOpts(h)
+	o.Reason = sentinel
+	o.MachineName = sentinel + "-host"
+	rr, _ := h.do(t, signedClaimBody(t, h, o))
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	if bytes.Contains(rr.Body.Bytes(), []byte(sentinel)) {
+		t.Errorf("response body leaks sentinel: %q", rr.Body.String())
+	}
+	if bytes.Contains(h.slogBuf.Bytes(), []byte(sentinel)) {
+		t.Errorf("slog buffer leaks sentinel: %q", h.slogBuf.String())
+	}
+	for _, ev := range h.auditEvents() {
+		for k, v := range ev.Detail {
+			if strings.Contains(v, sentinel) {
+				t.Errorf("audit detail leaks sentinel at %q: %q", k, v)
+			}
+		}
+	}
+}
+
 func TestClaim_ShortCircuitOrdering(t *testing.T) {
 	t.Parallel()
 
@@ -1876,6 +1912,49 @@ func TestClaim_DefaultClientKeyResolver_LoadErrors(t *testing.T) {
 	})
 	if _, err := srv2.clientKeyResolver("0123456789abcdef"); err == nil {
 		t.Fatal("expected error for malformed registry")
+	}
+}
+
+// TestClaim_DefaultClientKeyResolver_RetriesAfterFailedLoad pins the
+// invariant that a malformed registry file does not get its load error
+// cached forever: once the operator repairs the file in place, the
+// next /claim attempt must pick up the fix without a chassis restart.
+func TestClaim_DefaultClientKeyResolver_RetriesAfterFailedLoad(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	registry := filepath.Join(dir, "registry.json")
+	// Start with a malformed registry.
+	if err := os.WriteFile(registry, []byte(`not json`), 0o600); err != nil {
+		t.Fatalf("write malformed: %v", err)
+	}
+
+	srv, _, _, _ := newTestServer(t, func(d *Deps) {
+		d.Cfg.Server.ClientRegistry = registry
+		d.ClientKeyResolver = nil
+	})
+
+	// First call — load fails, error surfaces.
+	if _, err := srv.clientKeyResolver("0123456789abcdef"); err == nil {
+		t.Fatal("first call: expected error from malformed registry")
+	}
+
+	// Operator repairs the file in place.
+	good := []byte(`[{"fingerprint":"abc","public_key":"02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"}]`)
+	if err := os.WriteFile(registry, good, 0o600); err != nil {
+		t.Fatalf("write good: %v", err)
+	}
+
+	// Next call must retry the load — a known fingerprint resolves;
+	// unknown returns ErrClientUnknown (registry is now well-formed).
+	pub, err := srv.clientKeyResolver("abc")
+	if err != nil {
+		t.Fatalf("post-repair lookup: %v", err)
+	}
+	if pub == nil {
+		t.Fatal("post-repair lookup returned nil pubkey")
+	}
+	if _, err := srv.clientKeyResolver("nope"); !errors.Is(err, ErrClientUnknown) {
+		t.Fatalf("unknown fingerprint after repair: got %v, want ErrClientUnknown", err)
 	}
 }
 
