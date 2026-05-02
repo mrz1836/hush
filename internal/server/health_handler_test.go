@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -206,5 +207,23 @@ func TestHealth_ZeroUptimeBeforeRun(t *testing.T) {
 	_, resp := h.do(t)
 	if resp.Uptime != "0s" {
 		t.Fatalf("uptime=%q want 0s", resp.Uptime)
+	}
+}
+
+// TestHealth_BackwardClockJumpClampedToZero asserts that a wall-clock
+// jump backward (NTP step, VM live-migrate) does not surface a negative
+// uptime to /hz clients.
+func TestHealth_BackwardClockJumpClampedToZero(t *testing.T) {
+	t.Parallel()
+	h := newHealthHarness(t, map[string][]byte{"X": []byte("v")})
+	// Pin runStartedAt to a wall-clock instant in the future, simulating
+	// the system clock having stepped backward since the chassis booted.
+	h.server.runStartedAt = time.Now().Add(5 * time.Minute)
+	_, resp := h.do(t)
+	if resp.Uptime != "0s" {
+		t.Fatalf("uptime=%q want 0s (clamped from negative)", resp.Uptime)
+	}
+	if strings.HasPrefix(resp.Uptime, "-") {
+		t.Fatalf("uptime=%q has negative prefix", resp.Uptime)
 	}
 }

@@ -121,7 +121,10 @@ func NewBotApprover(ctx context.Context, cfg BotConfig, logger *slog.Logger) (*B
 	if useErr := cfg.Token.Use(func(b []byte) {
 		s, err := discordgo.New("Bot " + string(b))
 		if err != nil {
-			openErr = err
+			// Anonymise: discordgo's error formatter is normally
+			// token-safe, but this boundary does not depend on a
+			// third-party redaction guarantee.
+			openErr = errSessionInitFailed
 			return
 		}
 		s.ShouldReconnectOnError = false

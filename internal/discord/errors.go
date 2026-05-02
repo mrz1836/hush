@@ -43,4 +43,11 @@ var (
 	// ErrMissingLogger is returned by NewBotApprover when the logger
 	// argument is nil.
 	ErrMissingLogger = errors.New("hush/discord: missing logger")
+
+	// errSessionInitFailed anonymises a discordgo.New construction
+	// failure so the wrapped error chain at NewBotApprover never relies
+	// on a third-party package's redaction discipline. Caller-facing
+	// behavior is unchanged: errors.Is(err, ErrDiscordUnavailable) still
+	// matches.
+	errSessionInitFailed = errors.New("hush/discord: session init failed")
 )

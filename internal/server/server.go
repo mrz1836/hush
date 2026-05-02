@@ -349,31 +349,63 @@ type clientRegistryEntry struct {
 
 // newDefaultClientKeyResolver returns a [ClientKeyResolver] that lazily loads
 // cfg.Server.ClientRegistry on first invocation and caches the
-// fingerprint→pubkey map for the lifetime of the chassis. Loader errors are
-// returned to the caller — handler logic translates that to
-// [ErrClientUnknown] so the operator-facing error stays uniform.
+// fingerprint→pubkey map for the lifetime of the chassis on success.
+// Loader errors are returned to the caller and are NOT cached — the
+// next call retries the load, so an operator who fixes a malformed
+// registry file does not need to restart the chassis to pick up the
+// fix. Handler logic translates resolver errors to [ErrClientUnknown]
+// so the wire-facing response stays uniform.
 //
 // Lazy load (rather than eager load in [New]) preserves the chassis
 // "zero I/O in New" invariant from SDD-10.
 func newDefaultClientKeyResolver(cfg *config.Server) ClientKeyResolver {
-	var (
-		once sync.Once
-		keys map[string]*ecdsa.PublicKey
-		err  error
-	)
-	return func(fingerprint string) (*ecdsa.PublicKey, error) {
-		once.Do(func() {
-			keys, err = loadClientRegistry(cfg.Server.ClientRegistry)
-		})
+	c := &lazyClientKeyCache{path: cfg.Server.ClientRegistry}
+	return c.resolve
+}
+
+// lazyClientKeyCache is the shared mutable state for the default
+// resolver. A successful load is cached for the chassis lifetime; a
+// failed load is NOT cached, so an operator who repairs the registry
+// file picks up the fix on the next request without restarting.
+type lazyClientKeyCache struct {
+	path   string
+	mu     sync.RWMutex
+	keys   map[string]*ecdsa.PublicKey
+	loaded bool
+}
+
+// resolve is the [ClientKeyResolver] callback. Fast path takes a read
+// lock; slow path acquires the write lock and attempts the load.
+func (c *lazyClientKeyCache) resolve(fingerprint string) (*ecdsa.PublicKey, error) {
+	c.mu.RLock()
+	if c.loaded {
+		pub, ok := c.keys[fingerprint]
+		c.mu.RUnlock()
+		return resolveLookup(pub, ok)
+	}
+	c.mu.RUnlock()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.loaded {
+		k, err := loadClientRegistry(c.path)
 		if err != nil {
 			return nil, err
 		}
-		pub, ok := keys[fingerprint]
-		if !ok {
-			return nil, ErrClientUnknown
-		}
-		return pub, nil
+		c.keys = k
+		c.loaded = true
 	}
+	pub, ok := c.keys[fingerprint]
+	return resolveLookup(pub, ok)
+}
+
+// resolveLookup translates the (pub, ok) pair into the
+// [ClientKeyResolver] return values.
+func resolveLookup(pub *ecdsa.PublicKey, ok bool) (*ecdsa.PublicKey, error) {
+	if !ok {
+		return nil, ErrClientUnknown
+	}
+	return pub, nil
 }
 
 // loadClientRegistry parses the JSON registry file and returns a

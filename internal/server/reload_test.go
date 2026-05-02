@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -354,6 +355,53 @@ func TestVaultPointerSwap_NoRace(t *testing.T) {
 	time.Sleep(150 * time.Millisecond)
 	close(stop)
 	wg.Wait()
+}
+
+// TestReloadVault_NonceCacheCoherency pins the invariant that the nonce
+// cache (which tracks replay-protection across the lifetime of the
+// chassis) is NOT cleared when the vault is reloaded — the cache lives
+// outside the vault pointer. A nonce burned by /claim before reload
+// must still be rejected as a replay after reload, otherwise SIGHUP
+// would silently widen the replay window.
+func TestReloadVault_NonceCacheCoherency(t *testing.T) {
+	t.Parallel()
+
+	storeB := newFakeStore("B", []byte("b"))
+	h := newClaimHarness(t,
+		withApproverScript(
+			[]Decision{{Approved: true, GrantedTTL: time.Hour, ApproverID: "test"}},
+			[]error{nil},
+		),
+		withDepsMutator(func(d *Deps) {
+			d.LoadVaultFn = stubLoadVault(storeB, nil)
+			d.ReloadDrainWindow = 1 * time.Millisecond
+		}),
+	)
+
+	o := defaultClaimBodyOpts(h)
+	body := signedClaimBody(t, h, o)
+
+	// First /claim with nonce N1 → 200.
+	rr1, _ := h.do(t, body)
+	if rr1.Code != http.StatusOK {
+		t.Fatalf("first claim status=%d want 200; body=%s", rr1.Code, rr1.Body.String())
+	}
+
+	// SIGHUP-equivalent: swap the vault.
+	key := makeKey(t)
+	defer func() { _ = key.Destroy() }()
+	if err := h.server.ReloadVault(context.Background(), "/reload/path", key); err != nil {
+		t.Fatalf("ReloadVault: %v", err)
+	}
+
+	// Second /claim with the SAME body (and therefore same nonce) → 403
+	// nonce_replay. If the cache had been cleared by reload, this would
+	// otherwise have approved a second time.
+	rr2, _ := h.do(t, body)
+	if rr2.Code != http.StatusForbidden {
+		t.Fatalf("post-reload claim status=%d want 403 (nonce_replay); body=%s", rr2.Code, rr2.Body.String())
+	}
+	assertErrorBodyShape(t, rr2, "nonce_replay")
 }
 
 // TestWrapReloadError_Categories pins each branch of the categoriser.

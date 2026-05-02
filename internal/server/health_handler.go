@@ -49,10 +49,16 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 }
 
 // uptimeString returns the Go-duration form of (now − runStartedAt),
-// rounded to the nearest second.
+// rounded to the nearest second. A backward wall-clock jump (NTP step,
+// VM live-migrate, manual `date`) is clamped to "0s" so /hz never
+// surfaces a negative duration.
 func (s *Server) uptimeString() string {
 	if s.runStartedAt.IsZero() {
 		return "0s"
 	}
-	return time.Since(s.runStartedAt).Round(time.Second).String()
+	elapsed := time.Since(s.runStartedAt)
+	if elapsed < 0 {
+		elapsed = 0
+	}
+	return elapsed.Round(time.Second).String()
 }
