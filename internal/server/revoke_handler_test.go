@@ -559,3 +559,37 @@ func assertOneRevokeAudit(t *testing.T, h *revokeTestHarness, wantAction string)
 		t.Fatalf("audit type=%q want %q", got, wantAction)
 	}
 }
+
+// TestRevoke_AuditEmittedBeforeResponseWrite is a regression test for the
+// audit-chain integrity invariant: /revoke must emit the audit event
+// before flushing the response body. Mirrors the /s assertion.
+func TestRevoke_AuditEmittedBeforeResponseWrite(t *testing.T) {
+	t.Parallel()
+	var seq atomic.Int64
+	auditRec := &orderingAudit{seq: &seq}
+	h := newRevokeHarness(t, func(d *Deps) { d.AuditWriter = auditRec })
+	jti := h.issueToken(t)
+	body := h.signedBody(t, signedRevokeOpts{JTI: jti})
+
+	chassisID := freshChassisID()
+	ctx := context.WithValue(t.Context(), requestIDKey, chassisID)
+	r := httptest.NewRequestWithContext(ctx, http.MethodPost, "/h/abcdef/revoke", bytes.NewReader(body))
+	r.RemoteAddr = h.clientIP
+	r.Header.Set("Content-Type", "application/json")
+	w := &orderingResponseWriter{rr: httptest.NewRecorder(), seq: &seq}
+	h.server.handleRevoke(w, r)
+
+	if w.rr.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200; body=%s", w.rr.Code, w.rr.Body.String())
+	}
+	auditAt, writeAt := auditRec.auditAt.Load(), w.writeAt.Load()
+	if auditAt == 0 {
+		t.Fatal("audit.Write was never called")
+	}
+	if writeAt == 0 {
+		t.Fatal("response writer was never invoked")
+	}
+	if auditAt >= writeAt {
+		t.Fatalf("audit (seq=%d) must precede response write (seq=%d)", auditAt, writeAt)
+	}
+}

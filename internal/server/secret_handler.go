@@ -154,6 +154,15 @@ func (s *Server) handleSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Emit audit BEFORE flushing the envelope: a crash between WriteHeader
+	// and the next persisted line would leave the client with the secret
+	// and the chain with no record of the retrieval. False-negative gaps
+	// in the audit chain are worse than false-positives, so we record the
+	// success the moment the envelope is materialized. FR-027 still holds
+	// (one event per request); a downstream wire-write failure is logged
+	// at WARN but does not retract the audit entry.
+	s.emitSecretAudit(ctx, audit.ActionSecretRetrieved, requestID, peer, name, string(claims.SessionType), "secret_retrieved")
+
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "no-store")
@@ -164,13 +173,8 @@ func (s *Server) handleSecret(w http.ResponseWriter, r *http.Request) {
 			"request_id", requestID,
 			"err_class", "response_write_failed",
 		)
-		// Audit reflects the success path AND the write failure; spec
-		// FR-027 requires exactly one event so we record the success
-		// outcome (the secret is materialized; the wire-write failure is
-		// a downstream concern).
 	}
 
-	s.emitSecretAudit(ctx, audit.ActionSecretRetrieved, requestID, peer, name, string(claims.SessionType), "secret_retrieved")
 	s.logger.InfoContext(ctx, "secret retrieved",
 		"request_id", requestID,
 		"client_ip", peer.String(),

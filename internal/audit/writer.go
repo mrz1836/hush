@@ -290,15 +290,23 @@ func (w *writerImpl) buildEvent(p *pending) (Event, []byte, error) {
 	return ev, hashBytes, nil
 }
 
-// persistLine writes line to the bufio.Writer and Flushes.  Either step
-// can fail when the underlying file is closed; the caller maps both to
-// the producer's ack error.
+// persistLine writes line to the bufio.Writer, Flushes, then fsyncs the
+// underlying file.  The fsync upholds FR-033 ("returns nil only AFTER
+// the event is on disk"): bufio.Flush only drains user-space buffers
+// into the kernel page cache; without Sync, a kernel panic or power
+// loss before the next periodic writeback would lose the chain tail.
+// Approval volume is human-paced so the per-event sync cost is
+// negligible.  Any step can fail when the underlying file is closed;
+// the caller maps the failure to the producer's ack error.
 func (w *writerImpl) persistLine(line []byte) error {
 	if _, err := w.bw.Write(line); err != nil {
 		return fmt.Errorf("audit: write: %w", err)
 	}
 	if err := w.bw.Flush(); err != nil {
 		return fmt.Errorf("audit: flush: %w", err)
+	}
+	if err := w.file.Sync(); err != nil {
+		return fmt.Errorf("audit: sync: %w", err)
 	}
 	return nil
 }

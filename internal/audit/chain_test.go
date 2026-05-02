@@ -406,6 +406,64 @@ func mustHexBytes(t *testing.T, h string) []byte {
 	return b
 }
 
+// TestAuditChain_TornWriteRecovery simulates a crash mid-write (kernel
+// panic / power loss between bufio.Flush and the next event) by
+// truncating the chain file inside the last record. NewWriter MUST
+// surface ErrChainTailUnreadable rather than silently appending from a
+// corrupt prevHash, per the operator-intervention contract documented
+// on ErrChainTailUnreadable.
+func TestAuditChain_TornWriteRecovery(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "audit.jsonl")
+	key := newTestSigningKey(t)
+
+	// 1. Build a clean chain of 10 events.
+	w, err := NewWriter(context.Background(), path, key, nil, newTestLogger())
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	cancel, wait := runWriter(t, w)
+	appendN(t, w, 10)
+	cancel()
+	if err := wait(); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	// 2. Truncate the file inside the last line: read all bytes, find the
+	//    second-to-last newline (boundary between events 9 and 10), then
+	//    truncate to (boundary + half of event 10's body).
+	raw, err := os.ReadFile(path) //nolint:gosec // test path
+	if err != nil {
+		t.Fatalf("read chain: %v", err)
+	}
+	lastNL := -1
+	for i := len(raw) - 2; i >= 0; i-- { // -2 so the trailing \n on the last line is skipped
+		if raw[i] == '\n' {
+			lastNL = i
+			break
+		}
+	}
+	if lastNL < 0 {
+		t.Fatalf("could not locate boundary newline; file=%dB", len(raw))
+	}
+	tailStart := lastNL + 1
+	tailLen := len(raw) - tailStart
+	if tailLen < 4 {
+		t.Fatalf("last line too short to truncate: %d bytes", tailLen)
+	}
+	truncTo := tailStart + tailLen/2 // chop event 10 in half
+	if err := os.WriteFile(path, raw[:truncTo], 0o600); err != nil {
+		t.Fatalf("truncate chain: %v", err)
+	}
+
+	// 3. Reopen — NewWriter MUST refuse to append onto a torn tail.
+	_, err = NewWriter(context.Background(), path, key, nil, newTestLogger())
+	if !errors.Is(err, ErrChainTailUnreadable) {
+		t.Fatalf("NewWriter on torn chain: got %v, want ErrChainTailUnreadable", err)
+	}
+}
+
 // replaceSignature swaps the `"signature":"..."` field in a serialised
 // event line with newSig. Returns the rewritten line. Fatally fails the
 // test if the field is not present.

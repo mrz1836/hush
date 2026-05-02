@@ -779,6 +779,103 @@ func assertOneAudit(t *testing.T, h *secretTestHarness, wantAction string) {
 	}
 }
 
+// orderingAudit records call-ordering against a shared monotonic counter.
+// Used to assert audit.Write happens before the first response-write call.
+type orderingAudit struct {
+	seq      *atomic.Int64
+	auditAt  atomic.Int64
+	auditErr error
+}
+
+func (a *orderingAudit) Write(_ context.Context, _ AuditEvent) error {
+	a.auditAt.Store(a.seq.Add(1))
+	return a.auditErr
+}
+
+// orderingResponseWriter wraps an httptest.ResponseRecorder and records the
+// monotonic position of the first Write/WriteHeader call.
+type orderingResponseWriter struct {
+	rr      *httptest.ResponseRecorder
+	seq     *atomic.Int64
+	writeAt atomic.Int64
+}
+
+func (w *orderingResponseWriter) Header() http.Header { return w.rr.Header() }
+func (w *orderingResponseWriter) WriteHeader(s int) {
+	w.writeAt.CompareAndSwap(0, w.seq.Add(1))
+	w.rr.WriteHeader(s)
+}
+
+func (w *orderingResponseWriter) Write(b []byte) (int, error) {
+	w.writeAt.CompareAndSwap(0, w.seq.Add(1))
+	return w.rr.Write(b)
+}
+
+// TestSecret_HappyPath_NoSentinelInArtifacts is the success-path
+// counterpart to TestSecret_ErrorBodyNoSentinel: the secret value is
+// the sentinel; the ECIES envelope must not contain it as plaintext,
+// and the audit Detail map + slog buffer must not contain it at all.
+// Pins the redaction contract on the 200-OK path so a future refactor
+// that accidentally logs the secret value or copies it into audit
+// detail is caught immediately.
+func TestSecret_HappyPath_NoSentinelInArtifacts(t *testing.T) {
+	t.Parallel()
+	sentinel := testutil.SentinelSecret(13)
+	h := newSecretHarness(t, map[string][]byte{"X": []byte(sentinel)})
+	_, encoded := h.issueToken(t, []string{"X"}, token.SessionInteractive, 1, time.Hour, h.ephPubHex())
+
+	rr, _ := h.do(t, "X", encoded)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	if bytes.Contains(rr.Body.Bytes(), []byte(sentinel)) {
+		t.Fatal("response body contains plaintext sentinel — ECIES envelope expected")
+	}
+	testutil.AssertSentinelAbsent(t, sentinel, h.slogBuf.String())
+	for _, ev := range h.audit.snapshot() {
+		blob, _ := json.Marshal(ev.Detail)
+		testutil.AssertSentinelAbsent(t, sentinel, string(blob))
+	}
+}
+
+// TestSecret_AuditEmittedBeforeResponseWrite is a regression test for the
+// audit-chain integrity invariant: a crash between WriteHeader and the
+// audit append must not leave the client with the secret and the chain
+// without a record. Pins handler ordering for /s.
+func TestSecret_AuditEmittedBeforeResponseWrite(t *testing.T) {
+	t.Parallel()
+	var seq atomic.Int64
+	auditRec := &orderingAudit{seq: &seq}
+	h := newSecretHarness(t, map[string][]byte{"X": []byte("v")}, func(d *Deps) {
+		d.AuditWriter = auditRec
+	})
+	_, encoded := h.issueToken(t, []string{"X"}, token.SessionInteractive, 1, time.Hour, h.ephPubHex())
+
+	chassisID := freshChassisID()
+	ctx := context.WithValue(t.Context(), requestIDKey, chassisID)
+	r := httptest.NewRequestWithContext(ctx, http.MethodGet, "/h/abcdef/s/X", nil)
+	r.SetPathValue("name", "X")
+	r.RemoteAddr = h.clientIP
+	r.Header.Set("Authorization", "Bearer "+encoded)
+
+	w := &orderingResponseWriter{rr: httptest.NewRecorder(), seq: &seq}
+	h.server.handleSecret(w, r)
+
+	if w.rr.Code != http.StatusOK {
+		t.Fatalf("status=%d want 200; body=%s", w.rr.Code, w.rr.Body.String())
+	}
+	auditAt, writeAt := auditRec.auditAt.Load(), w.writeAt.Load()
+	if auditAt == 0 {
+		t.Fatal("audit.Write was never called")
+	}
+	if writeAt == 0 {
+		t.Fatal("response writer was never invoked")
+	}
+	if auditAt >= writeAt {
+		t.Fatalf("audit (seq=%d) must precede response write (seq=%d)", auditAt, writeAt)
+	}
+}
+
 // silence unused
 var (
 	_ = big.NewInt
