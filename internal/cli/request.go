@@ -76,6 +76,25 @@ const (
 // the server's regex; chars not in this set are stripped.
 var hostnameSanitiseRe = regexp.MustCompile(`[^A-Za-z0-9._-]`)
 
+// scopeNameRE accepts POSIX-portable shell identifiers — a leading
+// letter or underscore followed by 0..255 letter/digit/underscore. The
+// invariant guards `--format eval` output (where scope names are
+// embedded into the operator's shell verbatim) and prevents a
+// malformed name from masquerading as a shell-control sequence.
+var scopeNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,255}$`)
+
+// validateScopeNames refuses any --scope entry that fails scopeNameRE.
+// Returns errInvalidScopeName for the first offender; the error wraps
+// the violating value so tests can assert on it.
+func validateScopeNames(names []string) error {
+	for _, n := range names {
+		if !scopeNameRE.MatchString(n) {
+			return fmt.Errorf("%w (got %q)", errInvalidScopeName, n)
+		}
+	}
+	return nil
+}
+
 // formatModeEval is the only literal accepted by --format.
 const formatModeEval = "eval"
 
@@ -297,6 +316,10 @@ func parseAndValidateFlags(cmd *cobra.Command, args []string) (requestFlags, err
 		return flags, errMaxUsesTooLow
 	}
 
+	if err := validateScopeNames(scope); err != nil {
+		return flags, err
+	}
+
 	// Trailing positional argv after `--` becomes child argv[1:].
 	if dash := cmd.ArgsLenAtDash(); dash >= 0 && dash <= len(args) {
 		flags.childArgs = append(flags.childArgs, args[dash:]...)
@@ -377,7 +400,10 @@ func runRequest(parentCtx context.Context, stdout, stderr *Stream, deps requestD
 	// 6. Mode dispatch.
 	switch flags.modeOf() {
 	case "exec":
-		env := buildChildEnv(flags.scope, secrets, os.Environ())
+		env, envErr := buildChildEnv(flags.scope, secrets, os.Environ())
+		if envErr != nil {
+			return envErr
+		}
 		return runChild(parentCtx, deps, flags.execProgram, flags.childArgs, env, stderr)
 	case formatModeEval:
 		return writeEvalExports(stdout, stderr, flags.scope, secrets)

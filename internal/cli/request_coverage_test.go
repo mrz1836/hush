@@ -402,7 +402,10 @@ func TestRequest_BuildChildEnv_PreservesEqualsInValue(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	defer func() { _ = sb.Destroy() }()
-	env := buildChildEnv([]string{"NEW"}, []*securebytes.SecureBytes{sb}, parent)
+	env, err := buildChildEnv([]string{"NEW"}, []*securebytes.SecureBytes{sb}, parent)
+	if err != nil {
+		t.Fatalf("buildChildEnv: %v", err)
+	}
 	hasA := false
 	hasMalformed := false
 	for _, kv := range env {

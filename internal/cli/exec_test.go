@@ -52,7 +52,10 @@ func TestBuildChildEnv_StripsPreExistingScope(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	defer func() { _ = sb.Destroy() }()
-	env := buildChildEnv([]string{"SECRET_A"}, []*securebytes.SecureBytes{sb}, parent)
+	env, err := buildChildEnv([]string{"SECRET_A"}, []*securebytes.SecureBytes{sb}, parent)
+	if err != nil {
+		t.Fatalf("buildChildEnv: %v", err)
+	}
 
 	hasSecretAOld := false
 	hasSecretANew := false
@@ -83,11 +86,35 @@ func TestBuildChildEnv_StripsPreExistingScope(t *testing.T) {
 
 func TestBuildChildEnv_NilSecretSlot(t *testing.T) {
 	t.Parallel()
-	env := buildChildEnv([]string{"X"}, []*securebytes.SecureBytes{nil}, []string{"PATH=/bin"})
+	env, err := buildChildEnv([]string{"X"}, []*securebytes.SecureBytes{nil}, []string{"PATH=/bin"})
+	if err != nil {
+		t.Fatalf("buildChildEnv: %v", err)
+	}
 	for _, kv := range env {
 		if strings.HasPrefix(kv, "X=") {
 			t.Errorf("nil secret slot produced env entry: %q", kv)
 		}
+	}
+}
+
+// TestBuildChildEnv_DestroyedSecretReturnsError covers the contract
+// fix: a SecureBytes that has already been destroyed must surface as
+// an error so the child never runs with a partial env.
+func TestBuildChildEnv_DestroyedSecretReturnsError(t *testing.T) {
+	t.Parallel()
+	sb, err := securebytes.New([]byte("v"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if destroyErr := sb.Destroy(); destroyErr != nil {
+		t.Fatalf("Destroy: %v", destroyErr)
+	}
+	env, err := buildChildEnv([]string{"X"}, []*securebytes.SecureBytes{sb}, []string{"PATH=/bin"})
+	if err == nil {
+		t.Fatalf("expected error, got env=%v", env)
+	}
+	if env != nil {
+		t.Errorf("expected nil env on error, got %v", env)
 	}
 }
 

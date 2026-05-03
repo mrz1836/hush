@@ -133,6 +133,8 @@ func newInitCmd() *cobra.Command {
 	return cmd
 }
 
+// newInitServerCmd builds the `hush init server` subcommand. The cobra
+// command tree is the contract; no exported symbols.
 func newInitServerCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "server",
@@ -148,6 +150,8 @@ func newInitServerCmd() *cobra.Command {
 	}
 }
 
+// newInitClientCmd builds the `hush init client` subcommand. The cobra
+// command tree is the contract; no exported symbols.
 func newInitClientCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "client",
@@ -169,10 +173,11 @@ func newInitClientCmd() *cobra.Command {
 }
 
 // runInitServer is the orchestration entry-point for `hush init server`.
+// All output goes to stderr (operator messages); stdout is intentionally
+// unused so machine-piped consumers see an empty data stream on success.
 //
 //nolint:gocognit,gocyclo,cyclop // sequential bootstrap flow; complexity is structural per data-model §1
-func runInitServer(ctx context.Context, stdout, stderr *Stream, in *os.File, deps *initDeps) error {
-	_ = stdout
+func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *initDeps) error {
 	if !deps.platformACL() {
 		_ = stderr.WriteText(initMsgPlatformUnsupported, runtime.GOOS)
 		return fmt.Errorf("%w: %s", errPlatformACLUnsupported, runtime.GOOS)
@@ -197,7 +202,11 @@ func runInitServer(ctx context.Context, stdout, stderr *Stream, in *os.File, dep
 		return err
 	}
 	defer func() { _ = confirm.Destroy() }()
-	if !secureBytesEqual(pass, confirm) {
+	equal, cmpErr := secureBytesEqual(pass, confirm)
+	if cmpErr != nil {
+		return cmpErr
+	}
+	if !equal {
 		_ = stderr.WriteText(initMsgPassphraseMismatch)
 		return errPassphraseMismatch
 	}
@@ -363,7 +372,11 @@ func runInitClient(ctx context.Context, stdout, stderr *Stream, in *os.File, cmd
 		return err
 	}
 	defer func() { _ = confirm.Destroy() }()
-	if !secureBytesEqual(pass, confirm) {
+	equal, cmpErr := secureBytesEqual(pass, confirm)
+	if cmpErr != nil {
+		return cmpErr
+	}
+	if !equal {
 		_ = stderr.WriteText(initMsgPassphraseMismatch)
 		return errPassphraseMismatch
 	}
@@ -404,7 +417,10 @@ func runInitClient(ctx context.Context, stdout, stderr *Stream, in *os.File, cmd
 	if err != nil {
 		return err
 	}
-	priv := serializeECPrivKey(clientKey)
+	priv, err := serializeECPrivKey(clientKey)
+	if err != nil {
+		return err
+	}
 	defer func() { _ = priv.Destroy() }()
 
 	if err := deps.keychain.Store(ctx, kcServiceClient, account, priv, binPath); err != nil {
@@ -477,20 +493,29 @@ func readLineFromTTY(in *os.File, prompt io.Writer, label string) (string, error
 }
 
 // secureBytesEqual reports whether the byte payloads of a and b are
-// equal. The comparison is constant-time within each Use callback.
-func secureBytesEqual(a, b *securebytes.SecureBytes) bool {
-	if a.Len() != b.Len() {
-		return false
-	}
-	var equal bool
-	if useErr := a.Use(func(ab []byte) {
-		_ = b.Use(func(bb []byte) {
+// equal. The comparison is constant-time within each Use callback
+// (subtleEqual handles unequal lengths). A SecureBytes that has
+// already been destroyed (or whose lock fails) surfaces as a non-nil
+// error so the caller can distinguish "values differ" from "compare
+// could not run" — masking the latter as the former produces the wrong
+// operator-facing error message.
+func secureBytesEqual(a, b *securebytes.SecureBytes) (bool, error) {
+	var (
+		equal    bool
+		innerErr error
+	)
+	outerErr := a.Use(func(ab []byte) {
+		innerErr = b.Use(func(bb []byte) {
 			equal = subtleEqual(ab, bb)
 		})
-	}); useErr != nil {
-		return false
+	})
+	if outerErr != nil {
+		return false, fmt.Errorf("hush/cli: compare: %w", outerErr)
 	}
-	return equal
+	if innerErr != nil {
+		return false, fmt.Errorf("hush/cli: compare: %w", innerErr)
+	}
+	return equal, nil
 }
 
 // subtleEqual is a constant-time byte comparison. Avoids importing
@@ -728,24 +753,27 @@ func writeConfigTOMLAtomic(path string, doc tomlDocument) error {
 }
 
 // serializeECPrivKey returns the 32-byte fixed-width big-endian
-// scalar of priv wrapped in a *SecureBytes the caller owns.
+// scalar of priv wrapped in a *SecureBytes the caller owns. On
+// SecureBytes.New failure (typically mlock under RLIMIT_MEMLOCK
+// pressure) the scratch buffer is zeroed and the error is propagated;
+// callers must abort init rather than enroll a degraded key.
 //
 // secp256k1 is not supported by crypto/ecdh (Go 1.26), so the
 // stdlib's PrivateKey.Bytes / ParseRawPrivateKey path is unavailable
 // and priv.D is the only way to extract the scalar; see internal/keys
 // for the same pattern.
-func serializeECPrivKey(priv *ecdsa.PrivateKey) *securebytes.SecureBytes {
+func serializeECPrivKey(priv *ecdsa.PrivateKey) (*securebytes.SecureBytes, error) {
 	buf := make([]byte, 32)
 	//nolint:staticcheck // secp256k1 unsupported by crypto/ecdh; .D is read-only here
 	priv.D.FillBytes(buf)
 	sb, err := securebytes.New(buf)
 	if err != nil {
-		// SecureBytes only fails on mlock errors; fall back to a
-		// plain wrapper that the runtime finalizer will still zero.
-		sb2, _ := securebytes.New(make([]byte, 32))
-		return sb2
+		for i := range buf {
+			buf[i] = 0
+		}
+		return nil, fmt.Errorf("hush/cli: init: wrap client key: %w", err)
 	}
-	return sb
+	return sb, nil
 }
 
 // sec1Compress returns the 33-byte SEC1-compressed encoding of pub

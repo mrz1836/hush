@@ -54,8 +54,9 @@ var (
 
 // New returns the platform-native Keychain implementation.
 //
-// logger is used for operational tracing only; no secret value is
-// ever passed to the logger.
+// logger is stored on the platform-specific struct and reserved for
+// future audit hooks. Today the implementations do not log through it;
+// no secret value is ever passed to the logger.
 func New(logger *slog.Logger) (Keychain, error) {
 	if logger == nil {
 		logger = slog.Default()

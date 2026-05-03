@@ -29,7 +29,14 @@ const formatEvalWarning = "WARNING: --format eval prints secret values to stdout
 // callbacks. The returned []string contains plaintext secret bytes;
 // it is owned by exec.Cmd.Env until the exec syscall returns. See
 // SECURITY.md §6 for the residual-risk note.
-func buildChildEnv(scope []string, secrets []*securebytes.SecureBytes, parentEnv []string) []string {
+//
+// A non-nil error from any SecureBytes.Use is propagated rather than
+// silently dropping the entry — the operator must see "secret was not
+// available" rather than running a child that thinks the variable is
+// simply unset.
+//
+//nolint:gocognit // sequential parent-strip + per-scope materialize; complexity is structural
+func buildChildEnv(scope []string, secrets []*securebytes.SecureBytes, parentEnv []string) ([]string, error) {
 	skip := make(map[string]struct{}, len(scope))
 	for _, name := range scope {
 		skip[name] = struct{}{}
@@ -50,11 +57,13 @@ func buildChildEnv(scope []string, secrets []*securebytes.SecureBytes, parentEnv
 		if i >= len(secrets) || secrets[i] == nil {
 			continue
 		}
-		_ = secrets[i].Use(func(b []byte) {
+		if err := secrets[i].Use(func(b []byte) {
 			env = append(env, name+"="+string(b))
-		})
+		}); err != nil {
+			return nil, fmt.Errorf("hush/cli: request: materialize %s: %w", name, err)
+		}
 	}
-	return env
+	return env, nil
 }
 
 // runChild resolves program via deps.looker, constructs an

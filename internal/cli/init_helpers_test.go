@@ -523,28 +523,40 @@ func TestServerInputs_DefaultsStateDirWhenEmpty(t *testing.T) {
 	require.NotEmpty(t, got.Server.StateDir)
 }
 
-// TestSecureBytesEqual_DifferentLength returns false when lengths
-// differ.
+// TestSecureBytesEqual_DifferentLength returns (false, nil) when
+// lengths differ — a length mismatch is a legitimate "values differ"
+// answer, not a compare failure.
 func TestSecureBytesEqual_DifferentLength(t *testing.T) {
 	t.Parallel()
 	a := mustSecureForTest(t, []byte("abcd"))
 	b := mustSecureForTest(t, []byte("abcdef"))
-	require.False(t, secureBytesEqual(a, b))
+	equal, err := secureBytesEqual(a, b)
+	require.NoError(t, err)
+	require.False(t, equal)
 }
 
 func TestSecureBytesEqual_SameContent(t *testing.T) {
 	t.Parallel()
 	a := mustSecureForTest(t, []byte("abcdef"))
 	b := mustSecureForTest(t, []byte("abcdef"))
-	require.True(t, secureBytesEqual(a, b))
+	equal, err := secureBytesEqual(a, b)
+	require.NoError(t, err)
+	require.True(t, equal)
 }
 
-func TestSecureBytesEqual_AfterDestroyReturnsFalse(t *testing.T) {
+// TestSecureBytesEqual_AfterDestroyReturnsError verifies that a Use
+// failure (here: destroyed input) surfaces as an error rather than
+// being collapsed into "values differ". The latter would mislead the
+// operator into retyping their passphrase when the real fault is
+// internal.
+func TestSecureBytesEqual_AfterDestroyReturnsError(t *testing.T) {
 	t.Parallel()
 	a, _ := securebytes.New([]byte("abcdef"))
 	b := mustSecureForTest(t, []byte("abcdef"))
 	require.NoError(t, a.Destroy())
-	require.False(t, secureBytesEqual(a, b))
+	equal, err := secureBytesEqual(a, b)
+	require.Error(t, err)
+	require.False(t, equal)
 }
 
 func TestGuardFileAbsent_ReturnsExistsError(t *testing.T) {

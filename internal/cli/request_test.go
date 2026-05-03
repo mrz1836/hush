@@ -471,6 +471,58 @@ func TestRequest_ParseAndValidateFlags_MaxUsesTooLow(t *testing.T) {
 	}
 }
 
+func TestRequest_ParseAndValidateFlags_RejectsShellMetaInScope(t *testing.T) {
+	t.Parallel()
+	// pflag's StringSlice CSV parser truncates values at \n, so embedded
+	// newlines never reach validateScopeNames; those are exercised
+	// directly in TestValidateScopeNames below.
+	cases := []string{"X; echo y", "1FOO", "FOO BAR", "X$Y"}
+	for _, name := range cases {
+		_, err := runValidator(t,
+			"--scope="+name,
+			"--max-uses=8",
+			"--exec=/bin/true",
+		)
+		if !errors.Is(err, errInvalidScopeName) {
+			t.Errorf("scope=%q err=%v want errInvalidScopeName", name, err)
+		}
+		if err != nil && mapErr(err) != ExitInputErr {
+			t.Errorf("scope=%q mapErr=%d want %d", name, mapErr(err), ExitInputErr)
+		}
+	}
+}
+
+func TestRequest_ParseAndValidateFlags_AcceptsValidScope(t *testing.T) {
+	t.Parallel()
+	cases := []string{"FOO", "_FOO", "Foo123", "foo_bar", "X"}
+	for _, name := range cases {
+		_, err := runValidator(t,
+			"--scope="+name,
+			"--max-uses=8",
+			"--exec=/bin/true",
+		)
+		if err != nil {
+			t.Errorf("scope=%q unexpected err=%v", name, err)
+		}
+	}
+}
+
+func TestValidateScopeNames(t *testing.T) {
+	t.Parallel()
+	bad := []string{"", "1FOO", "FOO BAR", "X; echo y", "X$Y", "X\nY", "FOO-BAR"}
+	for _, n := range bad {
+		if err := validateScopeNames([]string{n}); !errors.Is(err, errInvalidScopeName) {
+			t.Errorf("name=%q err=%v want errInvalidScopeName", n, err)
+		}
+	}
+	good := []string{"FOO", "_FOO", "Foo123", "foo_bar", "X", "_"}
+	for _, n := range good {
+		if err := validateScopeNames([]string{n}); err != nil {
+			t.Errorf("name=%q unexpected err=%v", n, err)
+		}
+	}
+}
+
 func TestRequest_ParseAndValidateFlags_HappyPathExec(t *testing.T) {
 	t.Parallel()
 	flags, err := runValidator(t, "--exec=/bin/echo")

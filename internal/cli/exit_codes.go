@@ -125,6 +125,11 @@ var errFormatNotEval = errors.New(`hush: request: --format only accepts the lite
 // of scopes".
 var errMaxUsesTooLow = errors.New("hush: request: --max-uses must be ≥ number of scopes")
 
+// errInvalidScopeName surfaces a --scope entry that doesn't match the
+// POSIX shell-identifier regex. Defence-in-depth so a malformed scope
+// can't survive into --format eval output. Mapped to [ExitInputErr].
+var errInvalidScopeName = errors.New("hush: request: --scope must match ^[A-Za-z_][A-Za-z0-9_]*$")
+
 // errChildExitCode wraps the integer exit status of a child process
 // launched by `hush request --exec`. mapErr unwraps it via errors.As
 // and returns the child's code verbatim, preserving FR-010's exit-code
@@ -173,6 +178,7 @@ func mapErr(err error) int {
 		errors.Is(err, errExecAndFormatBothSet),
 		errors.Is(err, errFormatNotEval),
 		errors.Is(err, errMaxUsesTooLow),
+		errors.Is(err, errInvalidScopeName),
 		errors.Is(err, server.ErrMissingConfig),
 		errors.Is(err, config.ErrTOMLDecode),
 		errors.Is(err, config.ErrUnknownField),
