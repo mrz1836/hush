@@ -291,7 +291,7 @@ func runServe(ctx context.Context, stdout, stderr *Stream, deps serveDeps) error
 //
 //nolint:gocognit,nestif // sequential pipe→tty→fail dispatch; branching is inherent to FR-008
 func resolvePassphrase(_ context.Context, in *os.File, prompt io.Writer) (*securebytes.SecureBytes, error) {
-	isTerminal := in != nil && term.IsTerminal(int(in.Fd())) //nolint:gosec // uintptr→int safe on supported platforms
+	isTerminal := in != nil && term.IsTerminal(int(in.Fd()))
 
 	if !isTerminal {
 		stat, err := in.Stat()
@@ -319,7 +319,7 @@ func resolvePassphrase(_ context.Context, in *os.File, prompt io.Writer) (*secur
 	if _, err := io.WriteString(prompt, "Vault passphrase: "); err != nil {
 		return nil, fmt.Errorf("hush/cli: serve: prompt: %w", err)
 	}
-	raw, err := term.ReadPassword(int(in.Fd())) //nolint:gosec // uintptr→int safe on supported platforms
+	raw, err := term.ReadPassword(int(in.Fd()))
 	// Newline after the no-echo read so subsequent stderr lines start
 	// on a fresh row.
 	_, _ = io.WriteString(prompt, "\n")

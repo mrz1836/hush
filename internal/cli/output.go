@@ -37,7 +37,7 @@ func newStream(w io.Writer, isTTY, noColor bool) *Stream {
 func streamFor(f *os.File, noColorFlag bool) *Stream {
 	isTTY := false
 	if f != nil {
-		isTTY = term.IsTerminal(int(f.Fd())) //nolint:gosec // uintptr→int safe on supported platforms
+		isTTY = term.IsTerminal(int(f.Fd()))
 	}
 	noColor := noColorFlag || !isTTY
 	return &Stream{w: f, isTTY: isTTY, noColor: noColor}

@@ -165,7 +165,7 @@ artifacts off disk.
 
 | ID | Title | Package | Blocked by | Chunk file |
 |----|-------|---------|------------|------------|
-| SDD-15 | `hush init` (server + client modes; Keychain ACL) | `internal/cli` + `internal/keychain` | SDD-01, SDD-03, SDD-14 | [docs/sdd/SDD-15.md](sdd/SDD-15.md) |
+| ✅ SDD-15 | `hush init` (server + client modes; Keychain ACL) | `internal/cli` + `internal/keychain` | SDD-01, SDD-03, SDD-14 | [docs/sdd/SDD-15.md](sdd/SDD-15.md) — see [internal/cli/init.go](../internal/cli/init.go) and [internal/keychain/keychain.go](../internal/keychain/keychain.go) |
 | SDD-16 | `hush request` (interactive; ECIES decrypt; --exec injection) | `internal/cli` | SDD-08, SDD-09, SDD-13, SDD-15 | [docs/sdd/SDD-16.md](sdd/SDD-16.md) |
 | SDD-17 | `hush secret` add/remove/list/rotate (TTY-only) | `internal/cli` | SDD-03, SDD-15 | [docs/sdd/SDD-17.md](sdd/SDD-17.md) |
 

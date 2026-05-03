@@ -108,7 +108,7 @@ func New(opts Options) *slog.Logger {
 		useText = false
 	case FormatAuto:
 		f, ok := out.(*os.File)
-		useText = ok && term.IsTerminal(int(f.Fd())) //nolint:gosec // uintptr→int: safe on all supported 64-bit platforms
+		useText = ok && term.IsTerminal(int(f.Fd()))
 	}
 
 	resolved := FormatJSON

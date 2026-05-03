@@ -148,6 +148,17 @@
                         "nolintlint"
                     ],
                     "path": "internal/server/(secret_handler_test|revoke_handler_test|health_handler_test|audit_adapter_test)\\.go"
+                },
+                {
+                    "linters": [
+                        "goconst",
+                        "err113",
+                        "errcheck",
+                        "gosec",
+                        "nolintlint",
+                        "testifylint"
+                    ],
+                    "path": "_test\\.go"
                 }
             ]
         },

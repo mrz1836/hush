@@ -67,6 +67,34 @@ var errNoPassphraseSource = errors.New("no passphrase source: stdin is not a pip
 // revoke subcommand on HTTP 401/403.
 var errAuthFailed = errors.New("auth failed")
 
+// errVaultExists surfaces the existing-vault refusal in init server
+// (FR-012). Mapped to [ExitErr] by [mapErr].
+var errVaultExists = errors.New("vault already exists")
+
+// errConfigExists surfaces the existing-config refusal in init
+// server. Mapped to [ExitErr] by [mapErr].
+var errConfigExists = errors.New("config already exists")
+
+// errKeychainItemExists surfaces a pre-existing keychain item under
+// the same (service, account) pair. Mapped to [ExitErr] by [mapErr].
+var errKeychainItemExists = errors.New("keychain item already exists")
+
+// errPassphraseTooShort surfaces a passphrase shorter than 12 bytes.
+// Mapped to [ExitInputErr] by [mapErr].
+var errPassphraseTooShort = errors.New("passphrase too short")
+
+// errPassphraseMismatch surfaces a confirmation mismatch in init.
+// Mapped to [ExitInputErr] by [mapErr].
+var errPassphraseMismatch = errors.New("passphrase confirmation mismatch")
+
+// errNoTTY surfaces a non-interactive stdin in init. Mapped to
+// [ExitInputErr] by [mapErr].
+var errNoTTY = errors.New("stdin not a tty")
+
+// errPlatformACLUnsupported surfaces init's platform refusal on hosts
+// without per-binary keychain ACL semantics. Mapped to [ExitErr].
+var errPlatformACLUnsupported = errors.New("platform has no per-binary keychain ACL")
+
 // errNotFound is the abstract not-found sentinel raised by the revoke
 // subcommand on HTTP 404 (and by serve when --config points at a
 // nonexistent path).
@@ -91,6 +119,9 @@ func mapErr(err error) int {
 		errors.Is(err, errConfigUnreadable),
 		errors.Is(err, errInvalidJTI),
 		errors.Is(err, errNoPassphraseSource),
+		errors.Is(err, errPassphraseTooShort),
+		errors.Is(err, errPassphraseMismatch),
+		errors.Is(err, errNoTTY),
 		errors.Is(err, server.ErrMissingConfig),
 		errors.Is(err, config.ErrTOMLDecode),
 		errors.Is(err, config.ErrUnknownField),
@@ -142,6 +173,15 @@ func mapErr(err error) int {
 		errors.Is(err, vault.ErrFilePermsLoose),
 		errors.Is(err, config.ErrConfigFileMode):
 		return ExitPerm
+	}
+
+	// init-specific failures all collapse to ExitErr.
+	switch {
+	case errors.Is(err, errVaultExists),
+		errors.Is(err, errConfigExists),
+		errors.Is(err, errKeychainItemExists),
+		errors.Is(err, errPlatformACLUnsupported):
+		return ExitErr
 	}
 
 	// Context-cancellation surfaces as ExitErr (operator cancelled or
