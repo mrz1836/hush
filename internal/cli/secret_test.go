@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -568,6 +567,7 @@ func TestSecret_RotateAtomic(t *testing.T) {
 }
 
 func TestSecret_RotateSendsSIGHUP(t *testing.T) {
+	t.Parallel()
 	fx := newSecretFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}})
 
 	pidPath := filepath.Join(fx.tempDir, pidFilename)
@@ -577,13 +577,11 @@ func TestSecret_RotateSendsSIGHUP(t *testing.T) {
 		pid int
 		sig syscall.Signal
 	}
-	var muSentinel int32
 	fx.deps.kill = func(pid int, sig syscall.Signal) error {
 		killCalls = append(killCalls, struct {
 			pid int
 			sig syscall.Signal
 		}{pid, sig})
-		atomic.AddInt32(&muSentinel, 1)
 		return nil
 	}
 	fx.deps.readPIDFile = os.ReadFile

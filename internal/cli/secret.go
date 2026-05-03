@@ -248,17 +248,33 @@ func validateSecretName(name string) error {
 	return nil
 }
 
+// auditEvent emits a structured audit record with the canonical Phase
+// 4 secret-verb schema: every record carries `verb` and `outcome`,
+// optional `name` (omitted when empty), and any caller-supplied extras
+// appended verbatim. Centralizing the shape prevents drift across the
+// ten-plus call sites in this file when SDD-13 hardens the audit log.
+func auditEvent(ctx context.Context, logger *slog.Logger, level slog.Level, event, verb, name, outcome string, extras ...any) {
+	args := make([]any, 0, 6+len(extras))
+	args = append(args, "verb", verb)
+	if name != "" {
+		args = append(args, "name", name)
+	}
+	args = append(args, "outcome", outcome)
+	args = append(args, extras...)
+	logger.Log(ctx, level, event, args...)
+}
+
 // enforceStdinTTY is the universal first-line defence across every
 // verb. Returns errNoTTY (mapped to ExitInputErr) on a piped stdin
 // AND emits the contract-locked stderr message and a security-relevant
 // slog WARN record so an operator monitoring stderr sees the refusal
 // AND the audit log captures the attempt.
-func enforceStdinTTY(in *os.File, deps *secretDeps, stderr *Stream, verb string) error {
+func enforceStdinTTY(ctx context.Context, in *os.File, deps *secretDeps, stderr *Stream, verb string) error {
 	if deps.isStdinTTY(in) {
 		return nil
 	}
 	_ = stderr.WriteText(secretMsgNoTTY)
-	deps.logger.Warn("secret_tty_refused", "verb", verb, "outcome", "tty_refused")
+	auditEvent(ctx, deps.logger, slog.LevelWarn, "secret_tty_refused", verb, "", "tty_refused")
 	return errNoTTY
 }
 
@@ -339,7 +355,7 @@ func destroySecrets(secrets []vault.Secret) {
 //
 //nolint:gocognit,gocyclo,cyclop // sequential add flow; complexity is structural per data-model §3.1
 func runSecretAdd(ctx context.Context, stderr *Stream, in *os.File, deps *secretDeps, args []string) error {
-	if err := enforceStdinTTY(in, deps, stderr, "add"); err != nil {
+	if err := enforceStdinTTY(ctx, in, deps, stderr, "add"); err != nil {
 		return err
 	}
 	name := args[0]
@@ -373,7 +389,7 @@ func runSecretAdd(ctx context.Context, stderr *Stream, in *os.File, deps *secret
 	secrets, err := deps.loadSecrets(ctx, vaultPath, vaultKey)
 	if err != nil {
 		if errors.Is(err, vault.ErrAuthFailed) {
-			deps.logger.Warn("secret_passphrase_failed", "verb", "add", "name", name, "outcome", "passphrase_failed")
+			auditEvent(ctx, deps.logger, slog.LevelWarn, "secret_passphrase_failed", "add", name, "passphrase_failed")
 		}
 		return err
 	}
@@ -391,9 +407,13 @@ func runSecretAdd(ctx context.Context, stderr *Stream, in *os.File, deps *secret
 	}
 	defer func() { _ = confirm.Destroy() }()
 
-	if !secureBytesEqual(value, confirm) {
+	equal, cmpErr := secureBytesEqual(value, confirm)
+	if cmpErr != nil {
+		return cmpErr
+	}
+	if !equal {
 		_ = stderr.WriteText(secretMsgValueMismatch)
-		deps.logger.Warn("secret_confirmation_mismatch", "verb", "add", "name", name, "outcome", "value_mismatch")
+		auditEvent(ctx, deps.logger, slog.LevelWarn, "secret_confirmation_mismatch", "add", name, "value_mismatch")
 		return errSecretValueMismatch
 	}
 
@@ -421,7 +441,7 @@ func runSecretAdd(ctx context.Context, stderr *Stream, in *os.File, deps *secret
 		return err
 	}
 
-	deps.logger.Info("secret_added", "verb", "add", "name", name, "outcome", "success")
+	auditEvent(ctx, deps.logger, slog.LevelInfo, "secret_added", "add", name, "success")
 	return nil
 }
 
@@ -432,7 +452,7 @@ func runSecretAdd(ctx context.Context, stderr *Stream, in *os.File, deps *secret
 //
 //nolint:gocognit,gocyclo,cyclop // sequential remove flow; complexity is structural per data-model §3.2
 func runSecretRemove(ctx context.Context, stderr *Stream, in *os.File, deps *secretDeps, args []string) error {
-	if err := enforceStdinTTY(in, deps, stderr, "remove"); err != nil {
+	if err := enforceStdinTTY(ctx, in, deps, stderr, "remove"); err != nil {
 		return err
 	}
 	name := args[0]
@@ -466,7 +486,7 @@ func runSecretRemove(ctx context.Context, stderr *Stream, in *os.File, deps *sec
 	secrets, err := deps.loadSecrets(ctx, vaultPath, vaultKey)
 	if err != nil {
 		if errors.Is(err, vault.ErrAuthFailed) {
-			deps.logger.Warn("secret_passphrase_failed", "verb", "remove", "name", name, "outcome", "passphrase_failed")
+			auditEvent(ctx, deps.logger, slog.LevelWarn, "secret_passphrase_failed", "remove", name, "passphrase_failed")
 		}
 		return err
 	}
@@ -489,7 +509,7 @@ func runSecretRemove(ctx context.Context, stderr *Stream, in *os.File, deps *sec
 	}
 	if typed != name {
 		_ = stderr.WriteText(secretMsgRemoveTokenMismatch)
-		deps.logger.Warn("secret_confirmation_mismatch", "verb", "remove", "name", name, "outcome", "confirmation_mismatch")
+		auditEvent(ctx, deps.logger, slog.LevelWarn, "secret_confirmation_mismatch", "remove", name, "confirmation_mismatch")
 		return errConfirmationMismatch
 	}
 
@@ -501,7 +521,7 @@ func runSecretRemove(ctx context.Context, stderr *Stream, in *os.File, deps *sec
 		return err
 	}
 
-	deps.logger.Info("secret_removed", "verb", "remove", "name", name, "outcome", "success")
+	auditEvent(ctx, deps.logger, slog.LevelInfo, "secret_removed", "remove", name, "success")
 	return nil
 }
 
@@ -511,7 +531,7 @@ func runSecretRemove(ctx context.Context, stderr *Stream, in *os.File, deps *sec
 //
 //nolint:gocognit,gocyclo,cyclop // sequential list flow with TTY/pipe split
 func runSecretList(ctx context.Context, stdout, stderr *Stream, in, stdoutFile *os.File, deps *secretDeps) error {
-	if err := enforceStdinTTY(in, deps, stderr, "list"); err != nil {
+	if err := enforceStdinTTY(ctx, in, deps, stderr, "list"); err != nil {
 		return err
 	}
 
@@ -540,7 +560,7 @@ func runSecretList(ctx context.Context, stdout, stderr *Stream, in, stdoutFile *
 	secrets, err := deps.loadSecrets(ctx, vaultPath, vaultKey)
 	if err != nil {
 		if errors.Is(err, vault.ErrAuthFailed) {
-			deps.logger.Warn("secret_passphrase_failed", "verb", "list", "outcome", "passphrase_failed")
+			auditEvent(ctx, deps.logger, slog.LevelWarn, "secret_passphrase_failed", "list", "", "passphrase_failed")
 		}
 		return err
 	}
@@ -598,7 +618,7 @@ func renderListTTY(stdout, stderr *Stream, entries []listEntry) error {
 //
 //nolint:gocognit,gocyclo,cyclop // sequential rotate flow with PID-status dispatch
 func runSecretRotate(ctx context.Context, stderr *Stream, in *os.File, deps *secretDeps) error {
-	if err := enforceStdinTTY(in, deps, stderr, "rotate"); err != nil {
+	if err := enforceStdinTTY(ctx, in, deps, stderr, "rotate"); err != nil {
 		return err
 	}
 
@@ -631,7 +651,7 @@ func runSecretRotate(ctx context.Context, stderr *Stream, in *os.File, deps *sec
 	secrets, err := deps.loadSecrets(ctx, vaultPath, vaultKey)
 	if err != nil {
 		if errors.Is(err, vault.ErrAuthFailed) {
-			deps.logger.Warn("secret_passphrase_failed", "verb", "rotate", "outcome", "passphrase_failed")
+			auditEvent(ctx, deps.logger, slog.LevelWarn, "secret_passphrase_failed", "rotate", "", "passphrase_failed")
 		}
 		return err
 	}
@@ -665,7 +685,7 @@ func runSecretRotate(ctx context.Context, stderr *Stream, in *os.File, deps *sec
 		_ = stderr.WriteText(secretMsgPidUnreadable)
 	}
 
-	deps.logger.Info("vault_rotated", "verb", "rotate", "outcome", "success", "signalled", signalled)
+	auditEvent(ctx, deps.logger, slog.LevelInfo, "vault_rotated", "rotate", "", "success", "signalled", signalled)
 	return nil
 }
 
