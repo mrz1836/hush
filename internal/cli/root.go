@@ -54,6 +54,7 @@ func newRootCmd(initialOut *outputContext) *cobra.Command {
 	root.AddCommand(newRevokeCmd())
 	root.AddCommand(newInitCmd())
 	root.AddCommand(newRequestCmd())
+	root.AddCommand(newSecretCmd())
 
 	return root
 }

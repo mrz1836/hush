@@ -255,7 +255,9 @@
                     "serialised",
                     "behaviour",
                     "honoured",
-                    "cancelled"
+                    "cancelled",
+                    "defence",
+                    "signalled"
                 ],
                 "locale": "US"
             },
