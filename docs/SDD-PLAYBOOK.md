@@ -57,7 +57,7 @@
 | ID | Title | Package | Status | AC |
 |----|-------|---------|--------|-----|
 | SDD-15 | `hush init` (server + client modes; Keychain ACL) | `internal/cli` + `internal/keychain` | done | AC-1, AC-6 |
-| SDD-16 | `hush request` (interactive; ECIES decrypt; --exec injection) | `internal/cli` | pending | AC-5, AC-6 |
+| SDD-16 | `hush request` (interactive; ECIES decrypt; --exec injection) | `internal/cli` | done | AC-5, AC-6 |
 | SDD-17 | `hush secret` add/remove/list/rotate (TTY-only) | `internal/cli` | pending | AC-1, AC-2 |
 
 ## Phase 5 — Supervisor lifecycle

@@ -148,6 +148,16 @@ The `init` parent and its two subcommands are mounted under the SDD-14 cobra roo
 
 The two subcommands are mutually exclusive **structurally** — the cobra command tree separates them, so no flag combination can produce a conflict.
 
+### Exported API — locked at SDD-16
+
+The `request` subcommand is mounted under the SDD-14 cobra root via package-side-effect (`root.AddCommand(newRequestCmd())` in `Execute`). **No new exported package-level symbols are added to `internal/cli`** — the cobra command tree IS the contract for this chunk.
+
+| Subcommand | Synopsis | Behaviour summary |
+|------------|----------|-------------------|
+| `request` | `hush request --server <url> --scope <CSV> --reason <s> --ttl <dur> --max-uses <int> --machine-index <uint32> ( --exec <prog> [-- ARGS...] \| --format eval )` | Loads the per-machine client signing key from the OS keychain, generates a fresh secp256k1 ephemeral key, signs the canonical claim payload, POSTs `/claim`, awaits Discord approval (bounded by `--ttl`), ECIES-decrypts each requested secret. Then either (a) `--exec`: runs the supplied program with secrets injected as env vars; child exit code becomes the parent's exit code; OR (b) `--format eval`: prints `export NAME='value'` lines to stdout AND emits the locked stderr WARNING per `docs/SECURITY.md §6`. Mutually exclusive — neither set → `ExitInputErr` with no I/O. |
+
+The two delivery modes are validated at the input layer; no keychain or network call happens before mutual-exclusion + `--max-uses ≥ len(--scope)` checks succeed.
+
 ---
 
 ## `internal/keychain/`
