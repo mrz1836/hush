@@ -137,6 +137,63 @@ Must not contain:
 
 Subsequent CLI chunks (SDD-15 `init`, SDD-16 `request`, SDD-17 `secret`, SDD-23 `supervise`/`client`) mount on top of this skeleton.
 
+### Exported API — locked at SDD-15
+
+The `init` parent and its two subcommands are mounted under the SDD-14 cobra root via package-side-effect (`root.AddCommand(newInitCmd())` in `Execute`). No new exported symbols are added to `internal/cli` — the cobra command tree is the contract.
+
+| Subcommand | Synopsis | Behaviour summary |
+|------------|----------|-------------------|
+| `init server` | `hush init server` | Bootstraps the vault host. Reads passphrase + confirmation + Discord owner ID + application ID + bot token strictly from the controlling TTY. Writes `<state_dir>/secrets.vault` (mode `0600`) and `<state_dir>/config.toml` (mode `0600`, every default from `docs/CONFIG-SCHEMA.md`). Stores vault passphrase and bot token in the OS keychain with the running binary's absolute path as ACL. Refuses if any artifact pre-exists; refuses on Linux (no per-binary ACL). |
+| `init client --machine-index N` | `hush init client --machine-index 3` | Enrolls an agent. Derives the per-machine BIP32 client key, stores it in the OS keychain under `(hush-client, machine-N)` with the binary path as ACL, and prints exactly one `SHA256:<43-char-base64>` fingerprint line to stdout (50 chars + `\n`). |
+
+The two subcommands are mutually exclusive **structurally** — the cobra command tree separates them, so no flag combination can produce a conflict.
+
+---
+
+## `internal/keychain/`
+
+Path: `github.com/mrz1836/hush/internal/keychain`
+
+Purpose: cross-platform OS keychain wrapper. Per-binary ACL is required (macOS `-T` flag); platforms without per-binary ACL semantics report `false` from `PerBinaryACLSupported()` and init refuses up-front.
+
+Allowed importers: `internal/cli` only. No other internal package may import `internal/keychain`.
+
+### Exported API — locked at SDD-15
+
+```go
+// Keychain is the platform-agnostic OS keychain operations contract.
+type Keychain interface {
+    Store(ctx context.Context, service, account string, value *securebytes.SecureBytes, acl string) error
+    Retrieve(ctx context.Context, service, account string) (*securebytes.SecureBytes, error)
+    Delete(ctx context.Context, service, account string) error
+}
+
+// New returns the platform-native Keychain. Caller MUST gate via
+// PerBinaryACLSupported() before invoking Store.
+func New(logger *slog.Logger) (Keychain, error)
+
+// PerBinaryACLSupported reports whether the platform impl honours the
+// `acl` argument as a per-binary access restriction. macOS: true. Linux: false.
+func PerBinaryACLSupported() bool
+
+// FakeKeychain is the in-process test seam. Production code MUST NOT use it.
+type FakeKeychain struct{}
+func NewFake() *FakeKeychain
+func (f *FakeKeychain) Store(ctx, service, account, *securebytes.SecureBytes, acl string) error
+func (f *FakeKeychain) Retrieve(ctx, service, account string) (*securebytes.SecureBytes, error)
+func (f *FakeKeychain) Delete(ctx, service, account string) error
+func (f *FakeKeychain) Destroy()
+func (f *FakeKeychain) RecordedACL(service, account string) string
+
+// Sentinel errors returned by every Keychain implementation.
+var ErrKeychainItemNotFound = errors.New("hush/keychain: item not found")
+var ErrKeychainItemExists = errors.New("hush/keychain: item already exists")
+var ErrKeychainPermissionDenied = errors.New("hush/keychain: permission denied")
+var ErrKeychainUnsupportedPlatform = errors.New("hush/keychain: per-binary ACL unsupported on this platform")
+```
+
+Darwin implementation shells out to `/usr/bin/security add-generic-password ... -T <acl> -w` with the secret on stdin (never argv). Linux implementation wraps `github.com/zalando/go-keyring` and is build-target-only — production callers refuse on Linux per FR-020a.
+
 ---
 
 ## `internal/config/`
