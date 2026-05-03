@@ -3,10 +3,12 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 
 	"github.com/mrz1836/hush/internal/config"
+	"github.com/mrz1836/hush/internal/keychain"
 	"github.com/mrz1836/hush/internal/server"
 	"github.com/mrz1836/hush/internal/token"
 	"github.com/mrz1836/hush/internal/transport/sign"
@@ -100,6 +102,43 @@ var errPlatformACLUnsupported = errors.New("platform has no per-binary keychain 
 // nonexistent path).
 var errNotFound = errors.New("not found")
 
+// errMissingExecOrFormat surfaces a hush request invocation that
+// supplied neither --exec nor --format eval. Mapped to [ExitInputErr].
+// Locked stderr message: "hush: request: must specify --exec or
+// --format eval".
+var errMissingExecOrFormat = errors.New("hush: request: must specify --exec or --format eval")
+
+// errExecAndFormatBothSet surfaces a hush request invocation that
+// supplied both --exec and --format. Mapped to [ExitInputErr]. Locked
+// stderr message: "hush: request: --exec and --format eval are
+// mutually exclusive".
+var errExecAndFormatBothSet = errors.New("hush: request: --exec and --format eval are mutually exclusive")
+
+// errFormatNotEval surfaces a --format value other than the literal
+// "eval". Mapped to [ExitInputErr]. Locked stderr message:
+// `hush: request: --format only accepts the literal value "eval"`.
+var errFormatNotEval = errors.New(`hush: request: --format only accepts the literal value "eval"`)
+
+// errMaxUsesTooLow surfaces a --max-uses value smaller than the
+// number of comma-separated --scope entries. Mapped to [ExitInputErr].
+// Locked stderr message: "hush: request: --max-uses must be ≥ number
+// of scopes".
+var errMaxUsesTooLow = errors.New("hush: request: --max-uses must be ≥ number of scopes")
+
+// errChildExitCode wraps the integer exit status of a child process
+// launched by `hush request --exec`. mapErr unwraps it via errors.As
+// and returns the child's code verbatim, preserving FR-010's exit-code
+// propagation contract. Name is contract-locked at SDD-16
+// (contracts/cli-request.md §6).
+//
+//nolint:errname // contract-locked name; see contracts/cli-request.md §6
+type errChildExitCode struct{ code int }
+
+// Error implements error.
+func (e *errChildExitCode) Error() string {
+	return fmt.Sprintf("hush: request: child exited with code %d", e.code)
+}
+
 // mapErr resolves an error returned by a subcommand's RunE into one of
 // the seven locked exit codes. nil maps to ExitOK; unrecognized errors
 // fall back to ExitErr. mapErr never returns ExitConfigStale (78) —
@@ -112,6 +151,14 @@ func mapErr(err error) int {
 		return ExitOK
 	}
 
+	// Child-exit propagation: --exec returns the child's status
+	// verbatim per FR-010. Must be checked before generic ExitErr
+	// classification so the child's code (which may be any int) wins.
+	var childExit *errChildExitCode
+	if errors.As(err, &childExit) {
+		return childExit.code
+	}
+
 	// Input errors — operator typed something wrong.
 	switch {
 	case errors.Is(err, errFlagConflict),
@@ -122,6 +169,10 @@ func mapErr(err error) int {
 		errors.Is(err, errPassphraseTooShort),
 		errors.Is(err, errPassphraseMismatch),
 		errors.Is(err, errNoTTY),
+		errors.Is(err, errMissingExecOrFormat),
+		errors.Is(err, errExecAndFormatBothSet),
+		errors.Is(err, errFormatNotEval),
+		errors.Is(err, errMaxUsesTooLow),
 		errors.Is(err, server.ErrMissingConfig),
 		errors.Is(err, config.ErrTOMLDecode),
 		errors.Is(err, config.ErrUnknownField),
@@ -171,7 +222,8 @@ func mapErr(err error) int {
 	case errors.Is(err, os.ErrPermission),
 		errors.Is(err, server.ErrFileModeLoose),
 		errors.Is(err, vault.ErrFilePermsLoose),
-		errors.Is(err, config.ErrConfigFileMode):
+		errors.Is(err, config.ErrConfigFileMode),
+		errors.Is(err, keychain.ErrKeychainPermissionDenied):
 		return ExitPerm
 	}
 
