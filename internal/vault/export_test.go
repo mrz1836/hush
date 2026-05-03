@@ -120,8 +120,15 @@ var (
 	// CheckParentMode exposes the internal checkParentMode helper for direct unit tests.
 	CheckParentMode = checkParentMode
 
-	// ParseAndDecrypt exposes the internal parseAndDecrypt helper for direct unit tests.
-	ParseAndDecrypt = parseAndDecrypt
+	// ParseAndDecrypt exposes the internal decrypt-only helper for direct
+	// unit tests, returning a Store assembled from the wires.
+	ParseAndDecrypt = func(data []byte, vaultKey *securebytes.SecureBytes) (Store, error) {
+		wires, err := decryptWires(data, vaultKey)
+		if err != nil {
+			return nil, err
+		}
+		return newMemStore(wires), nil
+	}
 
 	// WriteTmp exposes the internal writeTmp helper for direct unit tests.
 	WriteTmp = writeTmp

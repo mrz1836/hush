@@ -71,6 +71,35 @@ type Store interface {
 
 // Load reads, validates, and decrypts the vault file at path using vaultKey.
 func Load(ctx context.Context, path string, vaultKey *securebytes.SecureBytes) (Store, error) {
+	wires, err := loadWires(ctx, path, vaultKey)
+	if err != nil {
+		return nil, err
+	}
+	return newMemStore(wires), nil
+}
+
+// LoadSecrets reads, validates, and decrypts the vault file at path,
+// returning the full Secret slice (Name, Description, Value) suitable
+// for management operations that need access to descriptions and value
+// handles in one pass. Unlike Load (which returns a long-lived Store
+// optimized for the server claim path), LoadSecrets hands ownership of
+// each Secret.Value *SecureBytes to the caller — every returned Value
+// MUST be Destroy-ed by the caller when no longer needed.
+func LoadSecrets(ctx context.Context, path string, vaultKey *securebytes.SecureBytes) ([]Secret, error) {
+	wires, err := loadWires(ctx, path, vaultKey)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Secret, len(wires))
+	for i, w := range wires {
+		out[i] = Secret{Name: w.Name, Description: w.Description, Value: w.Value.sb}
+	}
+	return out, nil
+}
+
+// loadWires performs the read+decrypt prelude shared by Load and
+// LoadSecrets and returns the raw wire-shape slice.
+func loadWires(ctx context.Context, path string, vaultKey *securebytes.SecureBytes) ([]wireSecret, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -103,13 +132,14 @@ func Load(ctx context.Context, path string, vaultKey *securebytes.SecureBytes) (
 		return nil, fmt.Errorf("vault: read %q: %w", path, err)
 	}
 
-	return parseAndDecrypt(data, vaultKey)
+	return decryptWires(data, vaultKey)
 }
 
-// parseAndDecrypt validates the HUSH envelope and decrypts the payload.
+// decryptWires validates the HUSH envelope and decrypts the payload
+// into the raw []wireSecret slice. Shared by Load and LoadSecrets.
 //
 //nolint:gocyclo // sequential header-parse state machine; complexity is structural
-func parseAndDecrypt(data []byte, vaultKey *securebytes.SecureBytes) (Store, error) {
+func decryptWires(data []byte, vaultKey *securebytes.SecureBytes) ([]wireSecret, error) {
 	// Length-class invariants per data-model.md §1.
 	if len(data) < 4 {
 		return nil, fmt.Errorf("vault: %w", ErrShortHeader)
@@ -142,8 +172,7 @@ func parseAndDecrypt(data []byte, vaultKey *securebytes.SecureBytes) (Store, err
 	if err = json.Unmarshal(plaintext, &wires); err != nil {
 		return nil, fmt.Errorf("vault: decode payload: %w", ErrAuthFailed)
 	}
-
-	return newMemStore(wires), nil
+	return wires, nil
 }
 
 // Save encrypts secrets to the vault file at path using vaultKey.

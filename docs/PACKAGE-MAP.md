@@ -158,6 +158,26 @@ The `request` subcommand is mounted under the SDD-14 cobra root via package-side
 
 The two delivery modes are validated at the input layer; no keychain or network call happens before mutual-exclusion + `--max-uses ≥ len(--scope)` checks succeed.
 
+### Exported API — locked at SDD-17
+
+The `secret` parent and its four subcommands are mounted under the SDD-14 cobra root via package-side-effect (`root.AddCommand(newSecretCmd())` in `Execute`). **No new exported package-level symbols are added to `internal/cli`** — the cobra command tree IS the contract for this chunk. (One additive function — `vault.LoadSecrets` — is added to `internal/vault` so the CLI can read names + descriptions in one pass; see the `internal/vault/` section.)
+
+| Subcommand | Synopsis | Behaviour summary |
+|------------|----------|-------------------|
+| `secret add NAME` | `hush secret add ANTHROPIC_API_KEY` | TTY-only. Prompts for passphrase, secret value (twice; mismatch → `ExitInputErr`), optional description. Refuses if the entry already exists (locked stderr message directs the operator to `hush secret rotate`). Atomic via `vault.Save` (SDD-03). |
+| `secret remove NAME` | `hush secret remove FOO` | TTY-only. Prompts for passphrase, then the typed-name confirmation token. Mismatched token → `ExitInputErr`. Absent entry → `ExitNotFound` BEFORE the confirmation prompt. |
+| `secret list` | `hush secret list` (TTY) / `hush secret list \| jq` (pipe) | TTY stdin gate (universal). Renders `NAME — description` on stdout-TTY (em-dash U+2014; bare `NAME` when description empty); JSON `[{"name":"…","description":"…"},…]` on stdout-pipe (locked field set). NEVER prints values — value `*SecureBytes` handles are `Destroy()`-ed before the renderer runs. Empty vault → stderr `(vault is empty)` on TTY, stdout `[]\n` on pipe. |
+| `secret rotate` | `hush secret rotate` | TTY-only. Re-encrypts the vault file with a fresh nonce + salt (plaintext set preserved; SDD-03). Then signals a running server via `syscall.Kill(pid, SIGHUP)` if `<state_dir>/hush.pid` parses as a live, owner-signal-able PID. Tolerates absent / stale (`ESRCH`) / not-our-user (`EPERM`) / unreadable PID — emits a stderr WARN line and exits `0` in every branch. |
+
+Universal invariants (every verb):
+
+- **TTY-first refusal**: `term.IsTerminal(int(os.Stdin.Fd()))` is checked BEFORE any vault I/O, keychain read, or flag interpretation. Non-TTY stdin → `ExitInputErr` with the locked stderr message `hush: secret: this command requires an interactive TTY (rogue-process defence)` and a `secret_tty_refused` slog WARN record.
+- **No `--value`-class flag**: `--value`, `--secret`, `--password`, `--description`, `--force`, `--yes`, `--no-confirm` are all structurally absent. Cobra rejects any such flag with its own "unknown flag" error before our code runs.
+- **Name validation**: `add` and `remove` validate `NAME` against `^[A-Z_][A-Z0-9_]*$` length 1–64 BEFORE opening the vault file. Failing → `ExitInputErr`.
+- **Audit log discipline**: every `add`/`remove`/`rotate` success emits a slog INFO record (`secret_added`/`secret_removed`/`vault_rotated`); security-relevant failures emit slog WARN (`secret_tty_refused`/`secret_passphrase_failed`/`secret_confirmation_mismatch`). `list` success is NOT audited (read-only). Routine input-validation refusals (bad name, missing arg, unknown flag) NOT logged. NO record EVER carries the secret value, the confirmation token, the passphrase, or any byte derived from them.
+
+Test surface: 33 named tests in `internal/cli/secret_test.go`; 88.6% statement coverage on `secret.go` (target: 85%).
+
 ---
 
 ## `internal/keychain/`
@@ -480,6 +500,13 @@ func Load(ctx context.Context, path string, vaultKey *securebytes.SecureBytes) (
 // Save encrypts secrets to the vault file at path using vaultKey,
 // committing the result atomically (write to <path>.tmp → fsync → rename → chmod 0600).
 func Save(ctx context.Context, path string, vaultKey *securebytes.SecureBytes, secrets []Secret) error
+
+// LoadSecrets (added in SDD-17) reads, validates, and decrypts the vault file
+// returning the full Secret slice (Name, Description, Value). Use this for
+// one-shot management operations that need access to descriptions + values
+// in a single pass; the caller owns each Secret.Value *SecureBytes and MUST
+// Destroy them.
+func LoadSecrets(ctx context.Context, path string, vaultKey *securebytes.SecureBytes) ([]Secret, error)
 
 // Sentinel errors — compare with errors.Is.
 var (
