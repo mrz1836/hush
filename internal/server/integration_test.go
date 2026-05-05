@@ -48,6 +48,36 @@ func hasTailscaleAddr() (string, bool) {
 	return "", false
 }
 
+// newLoopbackListener binds an ephemeral-port listener on 127.0.0.1 and
+// returns it alongside a synthetic CGNAT [netip.AddrPort] to feed
+// Cfg.Server.ListenAddr. The chassis only inspects the configured address
+// during startup checks (paired with a stubInterfaceLister); real TCP
+// traffic flows over loopback, sidestepping Tailscale userspace networking
+// proxies that intercept connections to 100.x.x.x on macOS and corrupt
+// the response (502s, post-close hangs).
+func newLoopbackListener(t *testing.T) (net.Listener, netip.AddrPort) {
+	t.Helper()
+	var lc net.ListenConfig
+	listener, err := lc.Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	return listener, netip.MustParseAddrPort("100.64.0.1:1234")
+}
+
+// newIsolatedClient returns an [http.Client] with a private [http.Transport]
+// (no DefaultTransport pool sharing) and DisableKeepAlives so a stale
+// connection from a prior request can never be reused. Combined with the
+// per-call timeout this guarantees tests fail fast rather than hanging on
+// half-open sockets.
+func newIsolatedClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: &http.Transport{DisableKeepAlives: true},
+	}
+}
+
 // TestStartupChecks_HappyPath — correctly-configured chassis on a real
 // Tailscale-CGNAT host runs through every check and binds a listener.
 func TestStartupChecks_HappyPath(t *testing.T) {
@@ -96,17 +126,7 @@ func TestStartupChecks_HappyPath(t *testing.T) {
 //
 //nolint:gocognit,cyclop,funlen // multi-step orchestration: bind → request → SIGHUP → assert; complexity is structural
 func TestSIGHUP_AtomicReload(t *testing.T) {
-	tsAddr, ok := hasTailscaleAddr()
-	if !ok {
-		t.Skip("no Tailscale CGNAT address on this host")
-	}
-
-	var lc net.ListenConfig
-	listener, err := lc.Listen(t.Context(), "tcp", tsAddr+":0")
-	if err != nil {
-		t.Fatalf("listen on %s: %v", tsAddr, err)
-	}
-	t.Cleanup(func() { _ = listener.Close() })
+	listener, cfgAddr := newLoopbackListener(t)
 
 	stateDir := t.TempDir()
 	if err := os.Chmod(stateDir, 0o700); err != nil {
@@ -148,11 +168,11 @@ func TestSIGHUP_AtomicReload(t *testing.T) {
 	vaultPtrRef = &ptr
 
 	srv, audit, _, _ := newTestServer(t, func(d *Deps) {
-		d.Cfg.Server.ListenAddr = netip.MustParseAddrPort(tsAddr + ":1234")
+		d.Cfg.Server.ListenAddr = cfgAddr
 		d.Cfg.Server.StateDir = stateDir
-		d.Cfg.Network.AllowedCIDRs = []string{"100.64.0.0/10"}
+		d.Cfg.Network.AllowedCIDRs = []string{"127.0.0.0/8", "::1/128"}
 		d.Listener = listener
-		d.InterfaceLister = nil
+		d.InterfaceLister = stubInterfaceLister(cfgAddr.Addr())
 		d.LoadVaultFn = loadFn
 		d.VaultKey = makeKey(t)
 		d.ReloadDrainWindow = 100 * time.Millisecond
@@ -174,12 +194,13 @@ func TestSIGHUP_AtomicReload(t *testing.T) {
 
 	addr := "http://" + listener.Addr().String() + "/h/abcdef"
 
-	// Begin the slow request that will hold the old vault.
+	// Begin the slow request that will hold the old vault. Each request
+	// uses a private transport to avoid pool sharing across tests.
 	slowDone := make(chan *http.Response, 1)
 	slowErr := make(chan error, 1)
 	go func() {
 		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, addr+"/slow", nil)
-		client := &http.Client{Timeout: 5 * time.Second}
+		client := newIsolatedClient(5 * time.Second)
 		resp, err := client.Do(req)
 		if err != nil {
 			slowErr <- err
@@ -238,12 +259,13 @@ func TestSIGHUP_AtomicReload(t *testing.T) {
 		t.Fatal("slow request did not return")
 	}
 
-	// New request now sees B.
+	// New request now sees B. Use an isolated client so the second
+	// request does not reuse a connection from the slow-request transport.
 	getReq, err := http.NewRequestWithContext(ctx, http.MethodGet, addr+"/fast", nil)
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
-	resp2, err := http.DefaultClient.Do(getReq)
+	resp2, err := newIsolatedClient(2 * time.Second).Do(getReq)
 	if err != nil {
 		t.Fatalf("GET /fast: %v", err)
 	}
@@ -289,16 +311,7 @@ func TestSIGHUP_AtomicReload(t *testing.T) {
 //
 //nolint:gocognit,cyclop // multi-step lifecycle test
 func TestRun_GracefulShutdown_DrainsInflight(t *testing.T) {
-	tsAddr, ok := hasTailscaleAddr()
-	if !ok {
-		t.Skip("no Tailscale CGNAT address on this host")
-	}
-	var lc net.ListenConfig
-	listener, err := lc.Listen(t.Context(), "tcp", tsAddr+":0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	t.Cleanup(func() { _ = listener.Close() })
+	listener, cfgAddr := newLoopbackListener(t)
 
 	release := make(chan struct{})
 	probe := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -307,10 +320,10 @@ func TestRun_GracefulShutdown_DrainsInflight(t *testing.T) {
 	})
 
 	srv, _, _, _ := newTestServer(t, func(d *Deps) {
-		d.Cfg.Server.ListenAddr = netip.MustParseAddrPort(tsAddr + ":1234")
-		d.Cfg.Network.AllowedCIDRs = []string{"100.64.0.0/10"}
+		d.Cfg.Server.ListenAddr = cfgAddr
+		d.Cfg.Network.AllowedCIDRs = []string{"127.0.0.0/8", "::1/128"}
 		d.Listener = listener
-		d.InterfaceLister = nil
+		d.InterfaceLister = stubInterfaceLister(cfgAddr.Addr())
 		d.ShutdownTimeout = 2 * time.Second
 		d.VaultKey = makeKey(t)
 	})
@@ -319,6 +332,7 @@ func TestRun_GracefulShutdown_DrainsInflight(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
 	runDone := make(chan error, 1)
 	go func() { runDone <- srv.Run(ctx) }()
 	time.Sleep(50 * time.Millisecond)
@@ -330,9 +344,8 @@ func TestRun_GracefulShutdown_DrainsInflight(t *testing.T) {
 	var inflightStatus int
 	go func() {
 		defer wg.Done()
-		client := &http.Client{Timeout: 4 * time.Second}
 		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, addr+"/wait", nil)
-		resp, err := client.Do(req)
+		resp, err := newIsolatedClient(4 * time.Second).Do(req)
 		if err != nil {
 			t.Errorf("inflight err: %v", err)
 			return
@@ -361,8 +374,13 @@ func TestRun_GracefulShutdown_DrainsInflight(t *testing.T) {
 		t.Fatal("Run did not return within ShutdownTimeout")
 	}
 
+	// Post-shutdown probe: use an isolated client with both a request
+	// timeout and DisableKeepAlives so we never recycle a connection from
+	// the inflight transport's idle pool — that pool is the failure mode
+	// when the listener has been closed but a half-open connection is
+	// still present at the kernel layer.
 	postReq, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, addr+"/wait", nil)
-	_, err = http.DefaultClient.Do(postReq)
+	_, err := newIsolatedClient(2 * time.Second).Do(postReq)
 	if err == nil {
 		t.Fatal("post-shutdown request should fail")
 	}

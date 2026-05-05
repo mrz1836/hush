@@ -153,7 +153,7 @@ call when the platform doesn't honour ACLs (matches SDD-15's posture).
 
 **Project Type**: CLI subcommand on top of the SDD-14 cobra root.
 
-**Performance Goals**: 
+**Performance Goals**:
 - Latency from `--exec` path resolution to child-process `Run()`: bounded by
   the operator's Discord approval round-trip + `len(scope) × ECIES
   decrypt time` (~ms each for typical secret sizes). No tight inner loop.
