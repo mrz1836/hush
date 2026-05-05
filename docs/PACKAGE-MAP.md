@@ -1361,6 +1361,124 @@ mutable globals beyond sentinel-class `var`s, no goroutines), X (no
 secret values in struct or errors), XI (zero new direct deps — reuses
 `pelletier/go-toml/v2` from SDD-06).
 
+### Exported API — locked at SDD-19
+
+Path: `github.com/mrz1836/hush/internal/supervise`
+
+This package owns the supervisor daemon's lifecycle state machine and
+snapshot store — the single source of truth that SDD-20 (child fork/
+exec), SDD-21 (refill / refresh / grace), and SDD-22 (status socket)
+all consult. The state model holds NO goroutines and NO side-effects:
+it is purely a guarded data type. Subsequent chunks add behaviour on
+top of this surface without modifying it.
+
+```go
+// State is the supervisor's lifecycle state. Exactly five values are
+// valid (FR-019-1). The string forms are part of the operator-visible
+// contract (status socket JSON, audit log).
+type State string
+
+const (
+    StateFetching         State = "fetching"
+    StateRunning          State = "running"
+    StateAwaitingApproval State = "awaiting-approval"
+    StateGraceRestart     State = "grace-restart"
+    StateStopped          State = "stopped"
+)
+
+// Event is the closed vocabulary of lifecycle events the state
+// machine recognizes (FR-019-21). The string forms are part of the
+// audit-log contract.
+type Event string
+
+const (
+    EventFetchOK               Event = "fetch-ok"
+    EventFetchAuthRequired     Event = "fetch-auth-required"
+    EventClaimDenied           Event = "claim-denied"
+    EventClaimUnavailable      Event = "claim-unavailable"
+    EventValidatorFailed       Event = "validator-failed"
+    EventBootRetryExhausted    Event = "boot-retry-exhausted"
+    EventChildExitClean        Event = "child-exit-clean"
+    EventChildExitCrash        Event = "child-exit-crash"
+    EventChildExit78Stale      Event = "child-exit-78-stale"
+    EventRefreshRequested      Event = "refresh-requested"
+    EventGraceRestartTriggered Event = "grace-restart-triggered"
+    EventGraceRestartOK        Event = "grace-restart-ok"
+    EventGraceExpired          Event = "grace-expired"
+    EventApprovalGranted       Event = "approval-granted"
+    EventStopRequested         Event = "stop-requested"
+)
+
+// Clock is the wall-clock seam consulted on every successful
+// transition (FR-019-20). Single-method interface defined at the
+// consumer per Constitution IX. Production wires time.Now(); tests
+// wire a fake.
+type Clock interface {
+    Now() time.Time
+}
+
+// Store is the supervisor's guarded state container. Safe for
+// concurrent Transition and Snapshot from many goroutines. Construct
+// via NewStore; the zero value is NOT usable. Owns no goroutines
+// (FR-019-12) and triggers no side-effects (FR-019-13).
+type Store struct{ /* opaque */ }
+
+// NewStore returns a fresh Store in StateFetching with
+// LastTransitionAt stamped from clock.Now(). Passing a nil clock is
+// a programmer error and panics at construction.
+func NewStore(ctx context.Context, clock Clock) *Store
+
+// Transition applies event under the write lock. Legal transitions
+// are table-driven from the locked 5×15 state-table; illegal
+// transitions return ErrInvalidTransition wrapped with the source
+// state and rejected event named (FR-019-15). EventStopRequested is
+// idempotent from every state including StateStopped (FR-019-17).
+// Rejected transitions leave the store unchanged (FR-019-6).
+func (s *Store) Transition(ctx context.Context, event Event) error
+
+// Snapshot returns a defensive-copy point-in-time view of the store
+// (FR-019-7, FR-019-8). The Token pointer (if non-nil) is shared
+// with the store but bytes are borrow-only via SecureBytes.Use.
+func (s *Store) Snapshot() Snapshot
+
+// Snapshot is the by-value view returned by Store.Snapshot. Renders
+// Token as "[redacted]" through slog (Constitution X).
+type Snapshot struct {
+    State            State
+    ChildPID         int
+    LastTransitionAt time.Time
+    Token            *securebytes.SecureBytes
+    Reason           string
+}
+
+// ErrInvalidTransition is wrapped by Transition when no edge exists
+// for the (currentState, event) pair, when the event is outside the
+// closed vocabulary, or when both. Identifiable via errors.Is.
+var ErrInvalidTransition = errors.New("supervise: invalid transition")
+```
+
+Wrapping form for invalid transitions:
+
+```go
+fmt.Errorf("supervise: %w (state=%s event=%s)", ErrInvalidTransition, current, event)
+```
+
+Anti-API (deliberately NOT exported in this chunk): `SetToken` (token
+write seam deferred to SDD-21), `State()` / `ChildPID()` per-field
+accessors (readers go through `Snapshot()`), `Reset()` / `Stop()` (no
+escape hatch from `StateStopped` — operators construct a fresh
+`Store`), package-level `var Now = time.Now` (clock seam is the
+`Clock` interface, not a swappable global), and any string-event /
+`LoadReader` entry point.
+
+Constitution principles in scope: IV (TTL discipline through the
+state model — child exit never reaches `stopped`), V (status socket
+sees `Snapshot`, exit-78 and validator failure are first-class state
+edges), VIII (TDD-mandatory, ≥95% coverage, race-clean), IX (no
+`init`, no goroutines, single-method `Clock` interface at the
+consumer, errors wrapped with `%w`), X (`Token` redacts via SDD-02's
+`*SecureBytes` contract; no secret bytes in errors).
+
 ---
 
 ## `internal/logging/`

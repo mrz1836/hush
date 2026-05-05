@@ -236,7 +236,7 @@ AC-10 owner — the lifecycle integration harness).
 **Supporting chunks** (provide the building blocks for these scenarios):
 
 - SDD-18 (supervisor config TOML — **done**: `internal/supervise/config/config_test.go`, `internal/supervise/config/validate_test.go`, `internal/supervise/config/config_fuzz_test.go`; ≥95% coverage; 60s fuzz clean)
-- SDD-19 (state machine)
+- SDD-19 (state machine — **done**: `internal/supervise/state.go`, `internal/supervise/state_test.go`; 15 tests T-01..T-15 covering the locked 5×15 transition table — 19 legal cells via `TestStore_LegalTransitions`, 56 illegal cells via `TestStore_IllegalTransitionErr`; defensive snapshot + race-clean concurrent test; `*SecureBytes` redaction proven by `TestStore_TokenLogValueRedacts`; 100% coverage on `state.go`)
 - SDD-20 (child fork/exec, exit-78 detection)
 - SDD-21 (refill, refresh, grace cache)
 - SDD-22 (pidfile, status socket)
