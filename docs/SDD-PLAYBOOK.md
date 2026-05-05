@@ -64,7 +64,7 @@
 
 | ID | Title | Package | Status | AC |
 |----|-------|---------|--------|-----|
-| SDD-18 | Supervisor TOML schema + validation | `internal/supervise/config` | pending | AC-10 |
+| SDD-18 | Supervisor TOML schema + validation | `internal/supervise/config` | done | AC-10 |
 | SDD-19 | Supervisor state machine + transitions + store | `internal/supervise` | pending | AC-10 |
 | SDD-20 | Child fork/exec + signals + exit-78 + process-group death-watch | `internal/supervise` | pending | AC-10 |
 | SDD-21 | Refill + refresh + grace cache | `internal/supervise` | pending | AC-10 |

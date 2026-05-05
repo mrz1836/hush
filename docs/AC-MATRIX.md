@@ -184,7 +184,7 @@ crash.
 | 2 | JWT parse/validate | SDD-07 (`FuzzJWTValidate`) |
 | 3 | ECIES decrypt input | SDD-09 (`FuzzECIESDecrypt`) |
 | 4 | Request signature payload | SDD-08 (`FuzzVerifyRequest`) |
-| 5 | Supervisor config TOML | SDD-18 (`FuzzSupervisorTOML`) |
+| 5 | Supervisor config TOML | SDD-18 (`FuzzSuperviseTOML` — `internal/supervise/config/config_fuzz_test.go`; **done** 60s clean) |
 | 6 | Status socket JSON encoding (only if custom parsing exists) | SDD-22 (optional) |
 
 **Coverage targets per package** (from Constitution VIII matrix):
@@ -235,7 +235,7 @@ AC-10 owner — the lifecycle integration harness).
 
 **Supporting chunks** (provide the building blocks for these scenarios):
 
-- SDD-18 (supervisor config TOML)
+- SDD-18 (supervisor config TOML — **done**: `internal/supervise/config/config_test.go`, `internal/supervise/config/validate_test.go`, `internal/supervise/config/config_fuzz_test.go`; ≥95% coverage; 60s fuzz clean)
 - SDD-19 (state machine)
 - SDD-20 (child fork/exec, exit-78 detection)
 - SDD-21 (refill, refresh, grace cache)

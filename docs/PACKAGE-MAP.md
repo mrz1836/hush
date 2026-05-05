@@ -1246,6 +1246,121 @@ Must not contain:
 > SDD-26 + SDD-27 (validators, watchdog). Until then, this section is a
 > placeholder.
 
+### Exported API — locked at SDD-18
+
+Sub-package path: `github.com/mrz1836/hush/internal/supervise/config`
+
+This package owns the per-supervisor TOML schema, defaults catalog, and
+strict-mode validation. SDD-18's symbols are additive — no SDD-06
+(`internal/config`) symbol is altered. The two packages share a TOML
+decoder (pelletier/v2 with strict mode) but live in separate import
+paths and have no cross-package dependency.
+
+```go
+// Public types — read-only after Load returns. No field carries a secret
+// value (Constitution X / FR-014); reference fields hold non-secret labels
+// only.
+type Supervisor struct {
+    Name                   string
+    Reason                 string
+    ServerURL              string
+    ClientMachineIndex     uint32
+    SessionType            string         // always "supervisor" after Validate
+    RequestedTTL           time.Duration
+    RefreshWindow          string         // canonical "HH:MM-HH:MM"
+    RefreshNudgeBefore     time.Duration
+    BootRetryTimeout       time.Duration
+    CacheSecretsForRestart bool
+    CacheGraceTTL          time.Duration  // 0 when CacheSecretsForRestart is false
+    StatusSocket           string         // absolute, ~-expanded
+    PIDFile                string         // absolute, ~-expanded
+    LogLevel               string         // one of {debug, info, warn, error}
+    Scope                  []string       // non-empty after Validate
+
+    Child      Child
+    Discord    DiscordRouting
+    Validators map[string]Validator
+    Watchdog   Watchdog
+}
+
+type Child struct {
+    Command            []string
+    WorkingDir         string
+    EnvPassthrough     []string
+    RestartOnCleanExit bool
+    RestartOnExit78    bool
+}
+
+type DiscordRouting struct {
+    DaemonLabel    string
+    AlertChannelID string
+}
+
+type Watchdog struct {
+    Enabled          bool
+    Patterns         []string
+    MaxAlertsPerHour int
+}
+
+type Validator string  // values constrained by validatorAllowList
+
+// Entry points.
+func Load(ctx context.Context, path string) (*Supervisor, error)
+func (s *Supervisor) Validate() error
+
+// Default constants — every value exactly equals the corresponding
+// documented default in docs/CONFIG-SCHEMA.md "Supervisor config".
+var (
+    DefaultRequestedTTL              time.Duration  // 20 * time.Hour
+    DefaultRefreshWindow             string         // "09:00-10:00"
+    DefaultRefreshNudgeBefore        time.Duration  // 30 * time.Minute
+    DefaultBootRetryTimeout          time.Duration  // 10 * time.Minute
+    DefaultCacheSecretsForRestart    bool           // false
+    DefaultGraceWindow               time.Duration  // 60 * time.Minute (cache-enabled)
+    DefaultLogLevel                  string         // "info"
+    DefaultRestartOnCleanExit        bool           // true
+    DefaultRestartOnExit78           bool           // false
+    DefaultWatchdogEnabled           bool           // true
+    DefaultWatchdogMaxAlertsPerHour  int            // 6
+    DefaultWatchdogPatterns          []string       // []string{} (non-nil empty)
+    DefaultDMRateLimit               time.Duration  // 5 * time.Minute (forwarded to discord.BotConfig)
+    MaxGraceWindow                   time.Duration  // 4 * time.Hour (Constitution IV cap)
+    MaxRequestedTTL                  time.Duration  // 24 * time.Hour (v0.1.0 ceiling)
+)
+
+// Sentinel errors — every documented rejection category maps to exactly
+// one. errors.Is is the only matching primitive. Sentinel messages are
+// static category strings; ErrUnknownValidator's wrapping includes only
+// the offending validator NAME (RHS), never the LHS secret name (FR-014
+// + FR-020 + Constitution X).
+var (
+    ErrTOMLDecode             error
+    ErrUnknownField           error
+    ErrMissingRequiredField   error
+    ErrInvalidDuration        error
+    ErrUnknownValidator       error
+    ErrGraceWindowTooLong     error
+    ErrGraceTTLWithoutCache   error
+    ErrRefreshWindowFormat    error
+    ErrRefreshWindowOrder     error
+    ErrCommandEmpty           error
+    ErrCommandPathRelative    error
+    ErrScopeEmpty             error
+    ErrSessionTypeInvalid     error
+    ErrRequestedTTLOutOfRange error
+    ErrServerURLInvalid       error
+    ErrLogLevelInvalid        error
+    ErrWatchdogRateInvalid    error
+)
+```
+
+Constitution principles in scope: IV (TTL discipline + grace-window cap),
+V (operator visibility — validator allow-list explicit), VIII (TDD +
+≥95% coverage + fuzz target #5 `FuzzSuperviseTOML`), IX (no `init`, no
+mutable globals beyond sentinel-class `var`s, no goroutines), X (no
+secret values in struct or errors), XI (zero new direct deps — reuses
+`pelletier/go-toml/v2` from SDD-06).
+
 ---
 
 ## `internal/logging/`

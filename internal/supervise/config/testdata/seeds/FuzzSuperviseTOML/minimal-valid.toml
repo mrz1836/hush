@@ -1,0 +1,18 @@
+name = "example-daemon"
+reason = "Example long-running daemon"
+server_url = "http://100.96.10.4:7743/h/a8k2f9"
+client_machine_index = 2
+session_type = "supervisor"
+requested_ttl = "20h"
+refresh_window = "09:00-10:00"
+status_socket = "/tmp/hush/supervise-example-daemon.sock"
+pid_file = "/tmp/hush/supervise-example-daemon.pid"
+scope = ["ANTHROPIC_API_KEY"]
+
+[child]
+command = ["/usr/local/bin/daemon", "start"]
+working_dir = "/tmp"
+env_passthrough = ["PATH"]
+
+[validators]
+ANTHROPIC_API_KEY = "anthropic"
