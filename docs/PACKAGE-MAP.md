@@ -1479,6 +1479,111 @@ edges), VIII (TDD-mandatory, ≥95% coverage, race-clean), IX (no
 consumer, errors wrapped with `%w`), X (`Token` redacts via SDD-02's
 `*SecureBytes` contract; no secret bytes in errors).
 
+### Exported API — locked at SDD-20
+
+Path: `github.com/mrz1836/hush/internal/supervise`
+
+SDD-20 extends the `internal/supervise` package with the supervised
+**child runner**: fork/exec a daemon in its own process group, drain
+its stdout/stderr through a 64 KB FIFO ring per stream, forward
+signals to the daemon's PGID via a per-`Start` goroutine, return
+`(exitCode, signal, err)` from `Wait`, and provide kernel-enforced
+parent-death cleanup on Linux (`Pdeathsig`) plus a best-effort
+kqueue death-watch on Darwin (R-009 SIGKILL gap documented). No
+SDD-18 (`config/`) or SDD-19 (`state.go`) symbol is altered.
+
+```go
+// ChildConfig is the input to NewChild. Reference-shared slices
+// (Command, Env) are read-only from the layer's perspective; the
+// layer never logs, inspects, or copies Env values (Constitution X).
+type ChildConfig struct {
+    Command []string     // argv; element 0 absolute path (FR-020-1/2/3)
+    Env     []string     // KEY=VALUE pairs; consumed by execve
+    Dir     string       // working directory; "" inherits supervisor CWD
+    Stdout  io.Writer    // stdout sink; nil → discard
+    Stderr  io.Writer    // stderr sink; nil → discard
+    Logger  *slog.Logger // structured logger; non-nil required
+}
+
+// Child is a handle to a single supervised daemon process. Single-
+// use: once Wait returns the exit disposition, the cached *exec.Cmd
+// is cleared (FR-020-11) and every subsequent Wait/Forward call
+// returns ErrChildNotStarted. Owns no goroutines at rest; per Start
+// spawns 3 goroutines on linux (forwarding + 2 drain) or 5 on
+// darwin (forwarding + 2 drain + kqueue blocker + waker), all
+// joined via Child.wg in Wait. Concurrent Wait callers: exactly
+// one wins the sync.Once race per Clarification 1.
+type Child struct{ /* opaque */ }
+
+// NewChild constructs a Child handle from cfg. Pure value
+// constructor — no validation, no syscalls. Allocates two ring
+// buffers of capacity 64 KB. Panics if cfg.Logger is nil
+// (Constitution IX startup-wiring exemption).
+func NewChild(cfg ChildConfig) *Child
+
+// Start validates cfg.Command (returns ErrCommandEmpty or
+// ErrCommandPathRelative), then forks/execs with
+// SysProcAttr.Setpgid=true plus platform-specific death-watch
+// attributes. Spawns the per-Start goroutines.
+func (c *Child) Start(ctx context.Context) error
+
+// Wait blocks until the daemon exits and returns the three-tuple
+// disposition (FR-020-8). exitCode is verbatim — Exit78 surfaces
+// as 78 with no remap (FR-020-9, FR-020-10). Concurrent / re-
+// entrant callers receive (0, 0, ErrChildNotStarted).
+func (c *Child) Wait() (exitCode int, signal syscall.Signal, err error)
+
+// Forward sends sig to the daemon's process group via the per-
+// Start forwarding goroutine. Returns ErrChildNotStarted if no
+// live child exists at call time (Clarification 2).
+func (c *Child) Forward(sig os.Signal) error
+
+// PID returns the daemon's process ID, or 0 if no child is live
+// (FR-020-11). Pure scalar read; not an error path.
+func (c *Child) PID() int
+
+// Exit78 is the project-wide stale-credential exit-code contract
+// (FR-020-9, Constitution V). Callers compare against this
+// constant rather than a magic number.
+const Exit78 = 78
+
+// Sentinel errors. All identifiable via errors.Is.
+var (
+    ErrChildNotStarted     = errors.New("supervise: child not started")     // every "no live child" case (Clarification 2, R-011)
+    ErrCommandEmpty        = errors.New("supervise: command empty")          // FR-020-2
+    ErrCommandPathRelative = errors.New("supervise: command path not absolute") // FR-020-3 (distinct from ErrCommandEmpty)
+)
+```
+
+Wrapping forms:
+
+```go
+fmt.Errorf("supervise: %w", ErrCommandEmpty)
+fmt.Errorf("supervise: %w (got %q)", ErrCommandPathRelative, cmd[0])
+fmt.Errorf("supervise: %w", ErrChildNotStarted)
+```
+
+Anti-API (deliberately NOT exported, locked off):
+`Restart()` (single-use is the contract; FR-020-11), per-component
+`ExitCode()` / `Signal()` accessors (the three-tuple Wait return
+is locked, FR-020-8), `Stdout() []byte` / `Stderr() []byte` (no
+read-back of the bounded ring; sinks are operator-supplied), a
+distinct `ErrChildExited` sentinel (forbidden by Clarification 2),
+a struct-typed `ExitDisposition` return, a `Wait(ctx)`
+ctx-cancellable variant (`cmd.Wait` is uncancellable; cancellation
+flows through `Forward(SIGTERM)`), per-stream ring-size override
+(64 KB locked), and any `cmd/test-helper-*` binary
+(`os.Executable()` re-invocation per R-012).
+
+Constitution principles in scope: IV (lifecycle integrity — child
+exit never reaches `stopped`; supervisor decides via SDD-21), VIII
+(TDD-mandatory; race-clean; ≥90% coverage on `child{,_linux,_darwin}.go`),
+IX (`os/exec` stdlib; no shell parsing; no `init()`; sentinel-class
+`var Err...` and `const Exit78`; every per-Start goroutine has
+explicit termination + top-frame `recover`), X (no secret values
+in errors; overflow `slog.Warn` carries stream label only — never
+buffer contents).
+
 ---
 
 ## `internal/logging/`
