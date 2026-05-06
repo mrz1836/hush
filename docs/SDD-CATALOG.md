@@ -173,7 +173,7 @@ artifacts off disk.
 
 | ID | Title | Package | Blocked by | Chunk file |
 |----|-------|---------|------------|------------|
-| SDD-18 | Supervisor TOML schema + validation | `internal/supervise/config` | SDD-06 | [docs/sdd/SDD-18.md](sdd/SDD-18.md) |
+| ✅ SDD-18 | Supervisor TOML schema + validation | `internal/supervise/config` | SDD-06 | [docs/sdd/SDD-18.md](sdd/SDD-18.md) |
 | ✅ SDD-19 | Supervisor state machine + transitions + store | `internal/supervise` | SDD-07, SDD-18 | [docs/sdd/SDD-19.md](sdd/SDD-19.md) |
 | ✅ SDD-20 | Child fork/exec + signals + exit-78 + process-group death-watch | `internal/supervise` | SDD-19 | [docs/sdd/SDD-20.md](sdd/SDD-20.md) |
 | SDD-21 | Refill + refresh + grace cache | `internal/supervise` | SDD-09, SDD-13, SDD-19 | [docs/sdd/SDD-21.md](sdd/SDD-21.md) |
