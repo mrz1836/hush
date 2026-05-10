@@ -1584,6 +1584,104 @@ explicit termination + top-frame `recover`), X (no secret values
 in errors; overflow `slog.Warn` carries stream label only — never
 buffer contents).
 
+### Exported API — locked at SDD-21
+
+Path: `github.com/mrz1836/hush/internal/supervise`
+
+SDD-21 extends the `internal/supervise` package with the supervisor's
+**credential lifecycle helpers**: a per-scope HTTP+ECIES `Refiller`,
+a window+T-30 `Refresher`, and a per-name `Grace` cache holding
+last-decrypted `*SecureBytes` across child exits. Every decrypted
+secret stays in `*SecureBytes` end-to-end — no `string(...)` of vault
+payload anywhere. Refresher owns the chunk's only goroutine type
+(its tick loop); Grace owns zero. The locked API is exactly **three
+constructors + four methods + two sentinels + one Clarification-5
+addition (`Evict`)**.
+
+```go
+// Refiller fetches per-scope ECIES envelopes from the vault server
+// using the cached supervisor JWT, decrypts to *SecureBytes, and
+// commits to Grace.Set on full success or destroys all decrypted
+// material on any error (atomic). Caller (SDD-23) drives retries.
+type Refiller struct{ /* opaque */ }
+
+// NewRefiller constructs a Refiller. Panics on any nil dep.
+// Locked 3-arg signature; Grace handle, ECIES private key, and
+// server URL prefix are wired post-construction by the orchestrator
+// via the package-private (*Refiller).attach.
+func NewRefiller(client *http.Client, store *Store, logger *slog.Logger) *Refiller
+
+// Refill fetches every name in scopes, ECIES-decrypts each response,
+// and on full success commits via Grace.Set. Returns ErrJTIUnknown
+// (wrapped) on 401+{"error":"unknown_jti"}; otherwise returns a
+// wrapped underlying error. Never retries internally.
+func (r *Refiller) Refill(ctx context.Context, scopes []string) error
+
+// Refresher schedules at most one refill callback fire per (window,
+// calendar-day) pair plus at most one T-30 fallback fire per session.
+// Single-shot — Run returns errRefresherAlreadyRan on second call.
+type Refresher struct{ /* opaque */ }
+
+// NewRefresher panics on a window-string parse failure or nil deps.
+// Locked 4-arg signature.
+func NewRefresher(window string, ttl time.Duration, refill func(ctx context.Context) error, logger *slog.Logger) *Refresher
+
+// Run drives the tick loop. Returns ctx.Err() on cancellation; never
+// any other error. Spawns ZERO sub-goroutines; refill callback runs
+// inline. Non-nil refill error counts as "issued" (FR-021-11a) — log
+// WARN, advance lastFiredDay, never propagate.
+func (r *Refresher) Run(ctx context.Context) error
+
+// Grace is the per-supervisor cache of last-decrypted *SecureBytes
+// keyed by name. Effective TTL is min(window, 4h). enabled=false or
+// window<=0 produces a permanently empty cache (caller retains
+// ownership of any value passed to Set).
+type Grace struct{ /* opaque */ }
+
+// NewGrace caps window at 4h. Owns ZERO goroutines (Constitution IX);
+// expired entries are destroyed lazily inside Get.
+func NewGrace(window time.Duration, enabled bool) *Grace
+
+// Get returns the cached *SecureBytes for name, or (nil, false) when
+// absent / expired / cache disabled. On TTL elapse, Get destroys the
+// entry inline and removes the map slot (R-008 lazy-evict).
+func (g *Grace) Get(name string) (*securebytes.SecureBytes, bool)
+
+// Set records (name, value) with expiry now()+window. Overwrite
+// destroys the prior entry first. Disabled / window<=0 → silent no-op.
+func (g *Grace) Set(name string, value *securebytes.SecureBytes)
+
+// Evict destroys the entry for name (if present) and removes the
+// map slot. Absent name is a silent no-op. (Clarification 5 / FR-021-16.)
+func (g *Grace) Evict(name string)
+
+// Sentinel errors. Both identifiable via errors.Is.
+var (
+    ErrJTIUnknown   = errors.New("supervise: vault rejected JWT (unknown jti)")
+    ErrBootTimeout  = errors.New("supervise: boot retry timeout exhausted")
+)
+```
+
+Anti-API (deliberately NOT exported): `RunSweeper` on `Grace`
+(R-008 final — lazy-evict suffices), `ErrTransient` sentinel
+(R-006 — stdlib error types provide the typed-distinguishability
+FR-021-4 demands), any `string(decryptedBytes)` site (Constitution X
+strict — JWT bearer-header materialization inside
+`Snapshot.Token.Use(func(b []byte){})` closure is the SOLE permitted
+`string(...)` site, scoped to JWT material, not vault payload), an
+`init()` (Constitution IX), package-level mutable state, any new
+direct dependency in `go.mod`.
+
+Constitution principles in scope: IV (4h grace cap; lifecycle
+integrity — chunk emits typed errors only, SDD-23 drives transitions),
+V (Refresher WARN on rate-limit drop = operator-visible loud failure),
+VIII (TDD-mandatory; ≥95% coverage on the three new files;
+race-clean), IX (no init, no globals, single Refresher tick goroutine
+with owner+ctx+termination+recover, sentinel-class `var Err…`, errors
+wrap with `%w`), X (`*SecureBytes` flow only — no `string(decryptedBytes)`;
+type-driven redaction via `LogValue() → "[redacted]"`; marker-byte
+capture tests assert no leakage).
+
 ---
 
 ## `internal/logging/`
