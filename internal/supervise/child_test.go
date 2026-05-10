@@ -23,11 +23,28 @@ import (
 
 const helperEnv = "HUSH_CHILD_TEST_HELPER_MODE"
 
-//nolint:gocognit,gocyclo // TestMain dispatches 11 helper modes per R-012 — branching is inherent
+// pidfilePathEnv is the env-var read by the "pidfile-acquire-and-exit"
+// helper mode (SDD-22 stale-acquired test). The helper acquires the
+// configured PID file via supervise.AcquirePidFile and exits 0 without
+// calling Release — the OS releases the flock at process death so the
+// parent test can re-acquire cleanly.
+const pidfilePathEnv = "HUSH_PIDFILE_TEST_PATH"
+
+//nolint:gocognit,gocyclo // TestMain dispatches 12 helper modes per R-012 — branching is inherent
 func TestMain(m *testing.M) {
 	switch os.Getenv(helperEnv) {
 	case "":
 		os.Exit(m.Run())
+	case "pidfile-acquire-and-exit":
+		path := os.Getenv(pidfilePathEnv)
+		if path == "" {
+			os.Exit(2)
+		}
+		if _, err := supervise.AcquirePidFile(path); err != nil {
+			os.Exit(3)
+		}
+		// Exit without Release — OS drops the flock at process death.
+		os.Exit(0)
 	case "exit-zero":
 		os.Exit(0)
 	case "exit-seven":

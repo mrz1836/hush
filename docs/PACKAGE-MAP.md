@@ -1682,6 +1682,103 @@ wrap with `%w`), X (`*SecureBytes` flow only — no `string(decryptedBytes)`;
 type-driven redaction via `LogValue() → "[redacted]"`; marker-byte
 capture tests assert no leakage).
 
+### Exported API — locked at SDD-22
+
+Path: `github.com/mrz1836/hush/internal/supervise`
+
+SDD-22 extends the `internal/supervise` package with two operator-
+visibility primitives — a flock-backed PID file and a Unix domain status
+socket. Sentinel errors `ErrPidLocked`, `ErrSocketPermsLoose`, and
+`ErrAlreadyRunning` are exported alongside; the `StatusInputs` interface
+is the consumer-defined seam for FR-12 fields not held by SDD-19's
+`Snapshot`.
+
+```go
+// PID file (flock-backed exclusive supervisor lock).
+type PidFile struct{ /* opaque */ }
+func AcquirePidFile(path string) (*PidFile, error)
+func (p *PidFile) Release() error
+
+// Status socket (Unix domain; FS perms are the auth).
+type StatusServer struct{ /* opaque */ }
+func NewStatusServer(socketPath string, store *Store, logger *slog.Logger) *StatusServer
+func (s *StatusServer) Run(ctx context.Context) error
+
+// Consumer-defined interface — orchestrator implements this and wires it
+// post-construction via the package-private (*StatusServer).attach.
+type StatusInputs interface {
+    Name() string
+    SessionExpiresAt() time.Time
+    RefreshWindowNext() time.Time
+    ScopeHealthy() []string
+    ScopeStale() []string
+    LastAuthFailure() *time.Time
+    ChildUptime() time.Duration
+    DiscordConnected() bool
+}
+
+// Sentinel errors — identifiable via errors.Is.
+var (
+    ErrPidLocked        = errors.New("supervise: pidfile already locked")
+    ErrSocketPermsLoose = errors.New("supervise: parent directory mode laxer than 0700")
+    ErrAlreadyRunning   = errors.New("supervise: status server already running")
+)
+```
+
+Files: `pidfile.go` (PidFile + AcquirePidFile + Release + ErrPidLocked +
+ErrSocketPermsLoose), `socket.go` (StatusServer + NewStatusServer + Run
++ ErrAlreadyRunning + StatusInputs + private statusJSON DTO + private
+ensureParentMode0700 helper), `socket_darwin.go` / `socket_linux.go`
+(build-tagged test-helper `defaultRuntimeDir()` per OS), plus
+`pidfile_test.go` and `socket_test.go`.
+
+Behaviour contracts (locked at SDD-22):
+- `AcquirePidFile`: opens with mode `0600`, parent at `0700`, single
+  `unix.Flock(LOCK_EX|LOCK_NB)` attempt; OS-released stale flock acquired
+  cleanly with zero retries, zero PID-text parse, zero `kill(0)` probe;
+  refused acquire returns wrapped `ErrPidLocked` without modifying live
+  owner's record.
+- `Release`: unlock → close → `os.Remove` (best-effort; `IsNotExist` is
+  success).
+- `NewStatusServer`: pure value constructor, ZERO syscalls; panics on
+  nil logger (Constitution IX startup-wiring exemption).
+- `Run`: pre-listen sequence = parent-perms check → stale-inode unlink
+  → `net.ListenConfig.Listen("unix", ...)` → `os.Chmod(0o600)`. Single-
+  shot per instance; second `Run` returns wrapped `ErrAlreadyRunning`.
+- Graceful shutdown on `ctx.Done()` is sub-second: watcher closes the
+  listener and force-closes every tracked in-flight conn under `s.mu`;
+  every spawned goroutine joins via `sync.WaitGroup` before `Run`
+  returns.
+- Status response is the FR-12 JSON document with all 10 fields present;
+  `Snapshot.Token` is intentionally not a field of the `statusJSON` DTO
+  (Constitution X / FR-022-13). One `Store.Snapshot()` + one `inputs`
+  projection per request (FR-022-16).
+
+Anti-API (deliberately NOT exported): `(*StatusServer).Stop()` /
+`Shutdown()` / `Restart()`, `(*PidFile).IsAcquired()` / `PID()` /
+`Path()`, `WithStatusInputs(...)` / functional-options builders, public
+`ListenStatus(...)` global entry point, exported `ErrAlreadyReleased`,
+`init()` in any new file, package-level mutable globals.
+
+Constitution principles in scope: V (operator visibility — status
+socket; FS perms `0600` socket / `0700` parent ARE the auth — no
+bearer-token, no HTTP, no TCP loopback; `ErrSocketPermsLoose` refuses
+laxer parents loudly; `TestSocket_NoTCPListenerOrHTTPServer` static
+byte-grep guards regression), VIII (TDD-mandatory, ~22 named tests +
+`FuzzStatusJSON_Encode` seeded for the Constitution-VIII §6 mandatory
+fuzz target; race-clean; coverage ≥95% on platform-shim, high-90s on
+behavior files modulo defensive syscall-error returns that require
+fault injection to reach), IX (sentinel errors `var Err… =
+errors.New(…)`; error wrap `%w`; no `init()`; no globals; consumer-
+defined `StatusInputs` interface; explicit goroutine inventory: 1
+accept loop in `Run`'s frame + 1 watcher per `Run` + N per-conn
+handlers, each with owner+ctx+termination+top-frame `recover`; pure-Go
+CGO=0; no new direct go.mod dependency — `golang.org/x/sys` already
+in module), X (no `string(decryptedBytes)`; `Snapshot.Token` never
+marshalled — `statusJSON` DTO has no `Token` field; defense-in-depth
+marker-byte test `TestSocket_TokenInResponseRedacted` proves no leak;
+`slog` records carry mode/identifier only, never connection payload).
+
 ---
 
 ## `internal/logging/`
