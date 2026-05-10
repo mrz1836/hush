@@ -1,0 +1,128 @@
+package supervise
+
+import (
+	"sync"
+	"time"
+
+	"github.com/mrz1836/hush/internal/vault/securebytes"
+)
+
+// graceMaxWindow is the per-Constitution-IV hard cap on the grace
+// cache TTL. Even when the operator configures a larger window, the
+// effective TTL is min(window, 4h) (FR-021-12, GR-1).
+const graceMaxWindow = 4 * time.Hour
+
+// Grace is the per-supervisor cache of last-decrypted *SecureBytes
+// keyed by secret name. Lifecycle: NewGrace returns an empty cache;
+// Refiller.Refill calls Set after each successful decrypt cycle; the
+// orchestrator's restart path calls Get; the `hush client refresh`
+// flow calls Evict (Clarification 5 / FR-021-16).
+//
+// The cache is permanently empty when enabled=false or window<=0
+// (FR-021-14). Effective TTL is min(window, 4h) (FR-021-12).
+type Grace struct {
+	mu      sync.RWMutex
+	entries map[string]graceEntry
+	enabled bool
+	window  time.Duration
+	now     func() time.Time
+}
+
+type graceEntry struct {
+	sb      *securebytes.SecureBytes
+	expires time.Time
+}
+
+// NewGrace constructs a Grace cache. The window argument is hard-
+// capped at 4 hours per Constitution IV / FR-021-12. Disabled mode
+// (enabled=false) and zero-or-negative window both produce a
+// permanently-empty cache (FR-021-14).
+//
+// NewGrace owns no goroutines (Constitution IX, R-008). Expired
+// entries are destroyed lazily on the next Get call.
+//
+// Locked exported signature per docs/sdd/SDD-21.md.
+func NewGrace(window time.Duration, enabled bool) *Grace {
+	if window > graceMaxWindow {
+		window = graceMaxWindow
+	}
+	return &Grace{
+		entries: make(map[string]graceEntry),
+		enabled: enabled,
+		window:  window,
+		now:     time.Now,
+	}
+}
+
+// Get returns the cached *SecureBytes for name. Returns (nil, false)
+// when the entry is absent, expired, or when the cache is disabled.
+// On expiry, Get atomically destroys the entry's *SecureBytes and
+// removes the map slot before returning (R-008 lazy-evict).
+//
+// The returned *SecureBytes pointer is borrow-only — callers MUST NOT
+// call Destroy on it. Grace retains ownership until the next Set,
+// Evict, or expiry-on-Get.
+func (g *Grace) Get(name string) (*securebytes.SecureBytes, bool) {
+	g.mu.RLock()
+	if !g.enabled || g.window == 0 {
+		g.mu.RUnlock()
+		return nil, false
+	}
+	entry, ok := g.entries[name]
+	if !ok {
+		g.mu.RUnlock()
+		return nil, false
+	}
+	if !entry.expires.After(g.now()) {
+		g.mu.RUnlock()
+		// Lazy-evict: re-acquire write lock, re-check (LRU race), evict.
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		if cur, stillPresent := g.entries[name]; stillPresent && !cur.expires.After(g.now()) {
+			_ = cur.sb.Destroy()
+			delete(g.entries, name)
+		}
+		return nil, false
+	}
+	sb := entry.sb
+	g.mu.RUnlock()
+	return sb, true
+}
+
+// Set records (name, value) with expiry = now() + window. On
+// overwrite, the prior entry's *SecureBytes is destroyed first
+// (FR-021-13). When the cache is disabled or window<=0, Set is a
+// silent no-op and ownership of value remains with the caller (R-009,
+// FR-021-14).
+func (g *Grace) Set(name string, value *securebytes.SecureBytes) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !g.enabled || g.window <= 0 {
+		return
+	}
+	if prev, ok := g.entries[name]; ok {
+		_ = prev.sb.Destroy()
+	}
+	g.entries[name] = graceEntry{sb: value, expires: g.now().Add(g.window)}
+}
+
+// Evict destroys the entry for name (if present) and removes the
+// map slot. Calling Evict for an absent name is a silent no-op
+// (Clarification 5 / FR-021-16).
+func (g *Grace) Evict(name string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if entry, ok := g.entries[name]; ok {
+		_ = entry.sb.Destroy()
+		delete(g.entries, name)
+	}
+}
+
+// setClockForTest replaces the clock source used for expiry
+// computation. The seam is unexported and only available to package-
+// internal tests.
+func (g *Grace) setClockForTest(now func() time.Time) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.now = now
+}
