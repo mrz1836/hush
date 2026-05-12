@@ -447,7 +447,7 @@ func TestStore_SnapshotIsDefensiveCopy(t *testing.T) {
 		t.Fatalf("securebytes.New: %v", err)
 	}
 	t.Cleanup(func() { _ = tok.Destroy() })
-	s.setTokenForTest(tok)
+	s.setToken(tok)
 
 	snap1 := s.Snapshot()
 	original := snap1
@@ -491,7 +491,7 @@ func TestStore_TokenLogValueRedacts(t *testing.T) {
 
 	clk := newFakeClock(time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC))
 	s := NewStore(context.Background(), clk)
-	s.setTokenForTest(tok)
+	s.setToken(tok)
 	snap := s.Snapshot()
 
 	// Log the whole snapshot.
@@ -538,7 +538,7 @@ func TestStore_TokenZeroOnRelease(t *testing.T) {
 	}
 	clk := newFakeClock(time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC))
 	s := NewStore(context.Background(), clk)
-	s.setTokenForTest(tok)
+	s.setToken(tok)
 
 	var seen []byte
 	if useErr := tok.Use(func(b []byte) {

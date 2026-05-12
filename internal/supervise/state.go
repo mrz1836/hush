@@ -215,9 +215,12 @@ type Snapshot struct {
 	Reason           string
 }
 
-// setTokenForTest is a package-private seam used by state_test.go;
-// production token writes are owned by SDD-21.
-func (s *Store) setTokenForTest(tok *securebytes.SecureBytes) {
+// setToken is a package-private seam: the SDD-24 orchestrator writes the
+// JWT here after a successful /claim. Renamed from setTokenForTest at
+// SDD-24 (production-path seam now; tests still call it directly because
+// they live in the same package). The method remains unexported — the
+// SDD-19 PACKAGE-MAP exported-surface lock is preserved.
+func (s *Store) setToken(tok *securebytes.SecureBytes) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.token = tok

@@ -1820,6 +1820,138 @@ marshalled — `statusJSON` DTO has no `Token` field; defense-in-depth
 marker-byte test `TestSocket_TokenInResponseRedacted` proves no leak;
 `slog` records carry mode/identifier only, never connection payload).
 
+### Exported API — locked at SDD-24
+
+SDD-24 (supervisor orchestration glue) appends new symbols inside
+`internal/supervise/` that compose the SDD-19..22 primitives into the
+documented daemon lifecycle. The SDD-19/20/21/22 sections above are
+UNCHANGED. SDD-24's lock string: "one struct + one Deps + two
+constructors/methods (`NewLifecycle`, `Run`) + three interfaces
+(`Validator`, `Alerts`, `Watchdog`) + one enum (`AlertClass`, 10 values
+LOCKED) + one payload struct (`AlertPayload`) + four sentinels
+(`ErrLifecycleAlreadyRan`, `ErrValidatorFailed`,
+`ErrRefillFailedPostRunning`, `ErrClaimDenied`)".
+
+```go
+// Lifecycle is the supervisor orchestrator. Construct via NewLifecycle;
+// drive via Run(ctx). Single-shot.
+type Lifecycle struct { /* opaque */ }
+
+// Deps carries every injected dependency NewLifecycle requires.
+type Deps struct {
+    Logger          *slog.Logger
+    HTTPClient      *http.Client
+    Clock           Clock
+    ClaimSigningKey *ecdsa.PrivateKey
+    DecryptKey      *ecdsa.PrivateKey
+    AuditWriter     audit.Writer
+    PidFile         *PidFile
+    Validators      map[string]Validator
+    Alerts          Alerts
+    Watchdog        Watchdog
+    TailscaleProbe  func(ctx context.Context) error
+    VaultHzProbe    func(ctx context.Context, serverURL string) error
+    MachineName, EphemeralPubKeyHex, ClientKeyFingerprint string
+    NowFn           func() time.Time
+    NonceFn         func() string
+    RequestIDFn     func() string
+}
+
+func NewLifecycle(ctx context.Context, cfg *config.Supervisor, deps Deps) *Lifecycle
+func (l *Lifecycle) Run(ctx context.Context) error
+
+// Consumer-defined single-method interfaces — defaults are no-op.
+type Validator interface {
+    Validate(ctx context.Context, scope string, secret *securebytes.SecureBytes) error
+}
+type Alerts interface {
+    Emit(ctx context.Context, class AlertClass, payload AlertPayload)
+}
+type Watchdog interface {
+    OnStderrLine(ctx context.Context, line []byte)
+}
+
+// AlertClass — LOCKED at exactly 10 values (FR-026-016). SDD-28 MUST
+// NOT extend without a spec amendment.
+type AlertClass int
+const (
+    AlertClassValidatorFailure AlertClass = iota + 1
+    AlertClassExit78
+    AlertClassVaultRejectedJWT
+    AlertClassRefillFailed
+    AlertClassDiscordUnavailableOnClaim
+    AlertClassRefreshDenied
+    AlertClassRefreshTimeout
+    AlertClassGraceEntered
+    AlertClassLogPatternMatch
+    AlertClassBootTimeout
+)
+func (c AlertClass) String() string
+
+// AlertPayload — 3 string fields; structurally cannot carry secret bytes.
+type AlertPayload struct {
+    Scope      string
+    ErrorClass string
+    Reason     string
+}
+
+// Sentinels.
+var ErrLifecycleAlreadyRan      = errors.New("supervise: lifecycle already ran")
+var ErrValidatorFailed          = errors.New("supervise: validator failed")
+var ErrRefillFailedPostRunning  = errors.New("supervise: post-running refill failed")
+var ErrClaimDenied              = errors.New("supervise: claim denied (terminal)")
+```
+
+Behaviour contracts (locked at SDD-24):
+
+- Boot path: pidfile (acquired by caller) → spawn StatusServer + Refresher +
+  claimRefreshLoop → boot-retry loop (Tailscale + vault `/hz`) with
+  exponential backoff jittered ±20% capped at 30s/attempt, total budget
+  `cfg.BootRetryTimeout`. Exhaustion emits `AlertClassBootTimeout` +
+  `ActionSupervisorBootTimeout` and returns wrapped `ErrBootTimeout`.
+- `/claim` submission: caller-side signed via `sign.CanonicalJSON` +
+  `sign.Sign` (SDD-08); JWT stored via package-private `Store.setToken`.
+  503 + `discord_unavailable` → `AlertClassDiscordUnavailableOnClaim` +
+  retry inside boot budget. 401 / non-503 4xx → wrapped `ErrClaimDenied`.
+- Validator pass: `Deps.Validators[scope].Validate` (nil → no-op) runs
+  per-scope before child start. Failure → `AlertClassValidatorFailure` +
+  `ActionSupervisorStaleAlert` + `ActionSupervisorAwaitingApproval`
+  (`cause=validator`) + `EventValidatorFailed` transition.
+- Child env build: exactly one `string(*SecureBytes)` site at the OS
+  fork boundary (Constitution X — documented FR-026-008/FR-026-028 site).
+- Child-exit dispatch: code `0` → silent refill + restart; non-zero
+  non-`Exit78` → same silent refill + restart; `Exit78` → emit
+  `AlertClassExit78` + `ActionSupervisorChildExit78` +
+  `ActionSupervisorStaleAlert` + `ActionSupervisorAwaitingApproval`
+  (`cause=exit_78`) → DO NOT restart.
+- Silent refill: `ErrJTIUnknown` → `AlertClassVaultRejectedJWT` +
+  awaiting-approval; any other refill error post-running →
+  `AlertClassRefillFailed` + awaiting-approval (FR-026-010a; never
+  auto-retried).
+- Refresh tick: claimRefreshLoop submits a fresh signed `/claim`,
+  atomically swaps the JWT via package-private `Store.setToken`, child
+  PID unchanged. Deny → `AlertClassRefreshDenied`; timeout →
+  `AlertClassRefreshTimeout`; both preserve existing session.
+- Status-socket refresh verb: state-conditional dispatch per Plan §10 —
+  `awaiting-approval` drives the full refill+validate+restart;
+  `running`/`grace-restart` coalesce via the in-flight refresh coalescer;
+  `fetching`/`stopped` reject with state ack. Emits
+  `ActionClientRefreshInvoked`.
+- Shutdown: ctx cancel → `Child.Forward(SIGTERM)` → 10s grace →
+  `Child.Forward(SIGKILL)` → 5s wait → `wg.Wait()` → cli shim's
+  `defer pidfile.Release()`. Hard ceiling 15s.
+- Goroutine inventory: 5 goroutines (StatusServer.Run + Refresher.Run +
+  childWaitLoop + claimRefreshLoop + mainLoop) — each carries
+  owner + ctx + termination + top-frame `recover` per Constitution IX.
+
+Audit-vocabulary reconciliation: SDD-24 appends 12 constants to
+`internal/audit/chain.go` (`ActionSupervisorSessionClaimed`,
+`…SessionRefreshed`, `…SilentRefill`, `…ChildCleanExit`,
+`…ChildExitCrash`, `…ChildExit78`, `…AwaitingApproval`,
+`…StaleAlert`, `…GraceEntered`, `…GraceExited`, `…BootTimeout`,
+`ActionClientRefreshInvoked`). The block remains append-only per the
+file's line-33 header.
+
 ---
 
 ## `internal/logging/`

@@ -192,8 +192,9 @@ secret_fetched, token_expired, token_revoked, server_start, server_stop,
 auth_failed, vault_reloaded, file_perm_check_failed, discord_disconnected,
 discord_reconnected, supervisor_session_claimed, supervisor_session_refreshed,
 supervisor_silent_refill, supervisor_child_clean_exit,
-supervisor_child_exit_78, supervisor_stale_alert, supervisor_grace_entered,
-supervisor_grace_exited, supervisor_awaiting_approval, client_refresh_invoked.
+supervisor_child_exit_crash, supervisor_child_exit_78, supervisor_stale_alert,
+supervisor_grace_entered, supervisor_grace_exited, supervisor_awaiting_approval,
+supervisor_boot_timeout, client_refresh_invoked.
 
 ### FR-15 — File permissions enforced at startup
 Server validates that every file in `~/.hush/` is mode `0600` (directory

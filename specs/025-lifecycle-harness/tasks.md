@@ -28,25 +28,6 @@ description: "Task list for SDD-25 Lifecycle Integration Harness (AC-10 owner)"
 
 ---
 
-## ⛔ Implement-phase pause — SDD-24 activated 2026-05-12
-
-The implement-phase agent halted before T001 after read-and-plan analysis
-surfaced a load-bearing gap in SDD-19..23: `internal/cli/supervise.go`
-(SDD-23) ships only the dry-run path, primitive constructors, and a
-refresh-coalescer wired to the status socket. It performs **no initial
-`/claim`, no secret fetch, no `NewChild`/`Start`, no `Child.Wait`, no
-exit-code dispatch, no boot-retry, and no validator/alert/watchdog
-plumbing**. Without that orchestrator, scenarios 02–15 cannot reach
-their documented final state regardless of harness completeness.
-
-See [docs/sdd/SDD-24.md](../../docs/sdd/SDD-24.md) (now active) for the
-full gap analysis and the contract for the orchestrator that must ship
-before this tasks list is resumed.
-
-When SDD-24 lands, return to this file at T001.
-
----
-
 ## Phase 1: Setup (Shared Infrastructure)
 
 **Purpose**: Stand up the `tests/integration/` tree, the build-tag gate, and the depguard rule. Zero production code touched.
