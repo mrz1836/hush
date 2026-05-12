@@ -1,0 +1,218 @@
+// SDD-24 — Supervisor orchestration glue: audit emission helpers.
+//
+// lifecycle_audit.go binds the Lifecycle to the SDD-13 audit writer. Every
+// helper constructs an audit.Event Data map per the projection rules in
+// data-model.md §8 and calls Deps.AuditWriter.Append with one of the 12
+// new ActionSupervisor* / ActionClientRefresh* constants declared in
+// internal/audit/chain.go.
+//
+// Anti-contract: no Data key carries a *SecureBytes, a []byte sourced from
+// secret material, or a string(secretBytes) value (Constitution X /
+// spec FR-026-028). All "reason" strings are drawn from a closed phrase
+// map below.
+
+package supervise
+
+import (
+	"context"
+	"log/slog"
+	"time"
+
+	"github.com/mrz1836/hush/internal/audit"
+)
+
+// Closed reason / cause phrase map. Strings used in audit Data fields and
+// AlertPayload.Reason. The orchestrator never derives reason strings from
+// secret material — they are sentinel-class read-only labels (Constitution X).
+const (
+	causeValidator    = "validator"
+	causeUnknownJTI   = "unknown_jti"
+	causeExit78       = "exit_78"
+	causeRefillFailed = "refill_failed"
+	causeBootTimeout  = "boot_timeout"
+	causeClaimDenied  = "claim_denied"
+
+	errorClassTransient          = "transient"
+	errorClassUnknownJTI         = "unknown_jti"
+	errorClassDiscordUnavailable = "discord_unavailable"
+	errorClassDeny               = "deny"
+	errorClassTimeout            = "timeout"
+	errorClassCancelled          = "cancelled"
+
+	reasonValidatorRejected    = "validator rejected fetched secret"
+	reasonExit78               = "child exit 78 stale credentials"
+	reasonVaultRejectedJWT     = "vault rejected JWT (unknown jti)"
+	reasonRefillFailed         = "refill failed; awaiting approval"
+	reasonDiscordUnavailable   = "discord unavailable; retrying"
+	reasonBootTimeout          = "boot preconditions did not recover in time"
+	reasonRefreshDenied        = "refresh approval denied"
+	reasonRefreshTimeout       = "refresh approval timed out"
+	reasonGraceEntered         = "entered grace cache restart"
+	reasonLogPatternMatch      = "log pattern matched"
+	reasonClientRefreshInvoked = "client refresh invoked"
+)
+
+// emitSessionClaimed appends supervisor_session_claimed after a successful
+// initial /claim + JWT persist. Data carries jti, session_type, exp (RFC3339),
+// scope ([]string), outcome.
+func (l *Lifecycle) emitSessionClaimed(ctx context.Context, jti string, exp time.Time, scope []string) {
+	l.appendAudit(ctx, audit.ActionSupervisorSessionClaimed, map[string]any{
+		"jti":          jti,
+		"session_type": "supervisor",
+		"exp":          exp.UTC().Format(time.RFC3339),
+		"scope":        append([]string(nil), scope...),
+		"outcome":      "approved",
+	})
+}
+
+// emitSessionRefreshed appends supervisor_session_refreshed after a
+// successful refresh-window claim swap.
+func (l *Lifecycle) emitSessionRefreshed(ctx context.Context, jti, prevJTI string, exp time.Time) {
+	l.appendAudit(ctx, audit.ActionSupervisorSessionRefreshed, map[string]any{
+		"jti":      jti,
+		"prev_jti": prevJTI,
+		"exp":      exp.UTC().Format(time.RFC3339),
+		"outcome":  "approved",
+	})
+}
+
+// emitSilentRefill appends supervisor_silent_refill after a successful
+// silent refill following clean exit OR crash.
+func (l *Lifecycle) emitSilentRefill(ctx context.Context, scopes []string) {
+	l.appendAudit(ctx, audit.ActionSupervisorSilentRefill, map[string]any{
+		"scopes":  append([]string(nil), scopes...),
+		"outcome": "ok",
+	})
+}
+
+// emitChildCleanExit appends supervisor_child_clean_exit when Child.Wait
+// returns exit code 0.
+func (l *Lifecycle) emitChildCleanExit(ctx context.Context, pid int, uptime time.Duration) {
+	l.appendAudit(ctx, audit.ActionSupervisorChildCleanExit, map[string]any{
+		"child_pid": pid,
+		"uptime":    uptime.String(),
+	})
+}
+
+// emitChildExitCrash appends supervisor_child_exit_crash when Child.Wait
+// returns a non-zero exit code other than Exit78.
+func (l *Lifecycle) emitChildExitCrash(ctx context.Context, pid, code, sig int, uptime time.Duration) {
+	data := map[string]any{
+		"child_pid": pid,
+		"exit_code": code,
+		"uptime":    uptime.String(),
+	}
+	if sig != 0 {
+		data["signal"] = sig
+	}
+	l.appendAudit(ctx, audit.ActionSupervisorChildExitCrash, data)
+}
+
+// emitChildExit78 appends supervisor_child_exit_78 when Child.Wait returns
+// the Exit78 stale-credentials code.
+func (l *Lifecycle) emitChildExit78(ctx context.Context, pid int, uptime time.Duration) {
+	l.appendAudit(ctx, audit.ActionSupervisorChildExit78, map[string]any{
+		"child_pid": pid,
+		"uptime":    uptime.String(),
+	})
+}
+
+// emitAwaitingApproval appends supervisor_awaiting_approval with the cause
+// label. cause MUST be drawn from the closed cause* constants above.
+func (l *Lifecycle) emitAwaitingApproval(ctx context.Context, cause string) {
+	l.appendAudit(ctx, audit.ActionSupervisorAwaitingApproval, map[string]any{
+		"cause": cause,
+	})
+}
+
+// emitStaleAlert appends supervisor_stale_alert. class is AlertClass.String(),
+// scope is the offending scope (never the secret), errorClass is from the
+// closed errorClass* map.
+func (l *Lifecycle) emitStaleAlert(ctx context.Context, class AlertClass, scope, errorClass string) {
+	l.appendAudit(ctx, audit.ActionSupervisorStaleAlert, map[string]any{
+		"class":       class.String(),
+		"scope":       scope,
+		"error_class": errorClass,
+	})
+}
+
+// emitGraceEntered appends supervisor_grace_entered when grace-cache
+// restart activates. Reserved for the grace-restart wiring landing in a
+// follow-up (FR-026 grace-cache path; SDD-26 will exercise it).
+//
+//nolint:unused // wired by grace-restart follow-up; locked here at SDD-24
+func (l *Lifecycle) emitGraceEntered(ctx context.Context, scopes []string, ttlRem time.Duration) {
+	l.appendAudit(ctx, audit.ActionSupervisorGraceEntered, map[string]any{
+		"scopes":              append([]string(nil), scopes...),
+		"grace_ttl_remaining": ttlRem.String(),
+	})
+}
+
+// emitGraceExited appends supervisor_grace_exited when grace-cache restart
+// completes. outcome ∈ {"restart_ok", "refresh_window", "expired"}. Reserved
+// for the grace-restart wiring landing in a follow-up.
+//
+//nolint:unused // wired by grace-restart follow-up; locked here at SDD-24
+func (l *Lifecycle) emitGraceExited(ctx context.Context, scopes []string, outcome string) {
+	l.appendAudit(ctx, audit.ActionSupervisorGraceExited, map[string]any{
+		"scopes":  append([]string(nil), scopes...),
+		"outcome": outcome,
+	})
+}
+
+// emitBootTimeout appends supervisor_boot_timeout when boot_retry_timeout
+// exhausts.
+func (l *Lifecycle) emitBootTimeout(ctx context.Context, lastErrClass string) {
+	l.appendAudit(ctx, audit.ActionSupervisorBootTimeout, map[string]any{
+		"boot_retry_timeout": l.config.BootRetryTimeout.String(),
+		"last_error_class":   lastErrClass,
+	})
+}
+
+// emitClientRefreshInvoked appends client_refresh_invoked when the
+// status-socket refresh verb is consumed.
+func (l *Lifecycle) emitClientRefreshInvoked(ctx context.Context, state, outcome string) {
+	l.appendAudit(ctx, audit.ActionClientRefreshInvoked, map[string]any{
+		"state":   state,
+		"outcome": outcome,
+	})
+}
+
+// appendAudit is the single producer-side wrapper around the audit writer.
+// Append failures are logged but do not stop the orchestrator (audit chain
+// integrity is guarded by the writer's own contract).
+func (l *Lifecycle) appendAudit(ctx context.Context, action string, data map[string]any) {
+	if err := l.deps.AuditWriter.Append(ctx, action, data); err != nil {
+		l.deps.Logger.Warn("supervise: audit append failed",
+			slog.String("action", action), slog.Any("err", err))
+	}
+}
+
+// alertReasonFor returns the closed Reason phrase for an AlertClass.
+//
+//nolint:gocyclo // closed-set enum dispatch over 10 LOCKED AlertClass values
+func alertReasonFor(class AlertClass) string {
+	switch class {
+	case AlertClassValidatorFailure:
+		return reasonValidatorRejected
+	case AlertClassExit78:
+		return reasonExit78
+	case AlertClassVaultRejectedJWT:
+		return reasonVaultRejectedJWT
+	case AlertClassRefillFailed:
+		return reasonRefillFailed
+	case AlertClassDiscordUnavailableOnClaim:
+		return reasonDiscordUnavailable
+	case AlertClassRefreshDenied:
+		return reasonRefreshDenied
+	case AlertClassRefreshTimeout:
+		return reasonRefreshTimeout
+	case AlertClassGraceEntered:
+		return reasonGraceEntered
+	case AlertClassLogPatternMatch:
+		return reasonLogPatternMatch
+	case AlertClassBootTimeout:
+		return reasonBootTimeout
+	}
+	return ""
+}

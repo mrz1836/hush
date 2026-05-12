@@ -61,6 +61,23 @@ const (
 	ActionRevokeBadSignature             = "revoke_bad_signature"
 	ActionRevokeNonceReplay              = "revoke_nonce_replay"
 	ActionRevokeStaleTimestamp           = "revoke_stale_timestamp"
+
+	// Supervisor lifecycle — added in SDD-24. Emitted by the
+	// supervisor orchestrator in internal/supervise/lifecycle*.go.
+	// Future SDDs MAY append; never repurpose (per the line-33
+	// header invariant above).
+	ActionSupervisorSessionClaimed   = "supervisor_session_claimed"
+	ActionSupervisorSessionRefreshed = "supervisor_session_refreshed"
+	ActionSupervisorSilentRefill     = "supervisor_silent_refill"
+	ActionSupervisorChildCleanExit   = "supervisor_child_clean_exit"
+	ActionSupervisorChildExitCrash   = "supervisor_child_exit_crash"
+	ActionSupervisorChildExit78      = "supervisor_child_exit_78"
+	ActionSupervisorAwaitingApproval = "supervisor_awaiting_approval"
+	ActionSupervisorStaleAlert       = "supervisor_stale_alert"
+	ActionSupervisorGraceEntered     = "supervisor_grace_entered"
+	ActionSupervisorGraceExited      = "supervisor_grace_exited"
+	ActionSupervisorBootTimeout      = "supervisor_boot_timeout"
+	ActionClientRefreshInvoked       = "client_refresh_invoked"
 )
 
 // genesisDomainTag is the domain-separator string hashed once to derive

@@ -121,6 +121,6 @@ func newTestStoreWithToken(t *testing.T, jwt []byte) *Store {
 	t.Helper()
 	clk := &storeClock{now: time.Unix(1700000000, 0)}
 	store := NewStore(context.Background(), clk)
-	store.setTokenForTest(newSecureBytes(t, jwt))
+	store.setToken(newSecureBytes(t, jwt))
 	return store
 }
