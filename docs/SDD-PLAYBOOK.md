@@ -70,8 +70,8 @@
 | SDD-21 | Refill + refresh + grace cache | `internal/supervise` | done | AC-10 |
 | SDD-22 | PID file + flock + Unix status socket | `internal/supervise` | done | AC-10 |
 | SDD-23 | `hush supervise` + `hush client status` + `hush client refresh` | `internal/cli` | done | AC-10 |
-| SDD-25 | Lifecycle integration harness (15 scenarios — explicit AC-10 owner) | `tests/integration/` | pending | AC-9, AC-10 |
-| SDD-24 | (reserved — orchestration glue if SDD-25 surfaces gaps; default skipped) | — | skipped | — |
+| SDD-24 | Supervisor orchestration glue (activated 2026-05-12 by SDD-25 — see `docs/sdd/SDD-24.md`) | `internal/supervise/lifecycle` (proposed) | pending | AC-10 |
+| SDD-25 | Lifecycle integration harness (15 scenarios — explicit AC-10 owner) | `tests/integration/` | pending (blocked on SDD-24) | AC-9, AC-10 |
 
 ## Phase 6 — Validators + alerts
 
