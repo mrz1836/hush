@@ -609,7 +609,7 @@ func TestChild_ConcurrentWaitOK(t *testing.T) {
 
 // ---------- T-09b: Restart cycles — no goroutine leak ----------
 
-//nolint:gocognit // 100-cycle restart loop + warmup + settle window
+//nolint:gocognit // 20-cycle restart loop + warmup + settle window
 func TestChild_RestartCycles_NoGoroutineLeak(t *testing.T) {
 	// Warm up to avoid initial-allocation skew.
 	for i := 0; i < 3; i++ {
@@ -621,7 +621,10 @@ func TestChild_RestartCycles_NoGoroutineLeak(t *testing.T) {
 	}
 	runtime.GC()
 	baseline := runtime.NumGoroutine()
-	for i := 0; i < 100; i++ {
+	// A per-cycle goroutine leak grows linearly, so N=20 vs delta>5 still
+	// catches single-leak regressions with >3x headroom while keeping the
+	// fork+exec+wait cost (≈1s/cycle under -race) bounded.
+	for i := 0; i < 20; i++ {
 		c := supervise.NewChild(helperConfig(t, "exit-zero", nil))
 		if err := c.Start(context.Background()); err != nil {
 			t.Fatalf("Start cycle %d: %v", i, err)
