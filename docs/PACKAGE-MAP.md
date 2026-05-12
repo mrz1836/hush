@@ -178,6 +178,47 @@ Universal invariants (every verb):
 
 Test surface: 33 named tests in `internal/cli/secret_test.go`; 88.6% statement coverage on `secret.go` (target: 85%).
 
+### Exported API — locked at SDD-23
+
+The `supervise` subcommand and the `client` parent (with its two leaf
+subcommands, `client status` and `client refresh`) are mounted under
+the SDD-14 cobra root via package-side-effect:
+`root.AddCommand(newSuperviseCmd())` and `root.AddCommand(newClientCmd())`
+in `Execute`. **No new exported package-level symbols are added to
+`internal/cli`** — the cobra command tree IS the contract for this
+chunk.
+
+Two new sentinel-class errors land in `internal/cli/exit_codes.go`
+(`errInvalidGraceWindow`, `errSocketAmbiguous`, `errSocketUnreachable`,
+`errSupervisorRefused`, `errDuplicateSupervisor`) and are wired through
+`mapErr` to the locked exit-code taxonomy per data-model.md §5.
+
+| Subcommand | Synopsis | Behaviour summary |
+|------------|----------|-------------------|
+| `supervise` | `hush supervise <config-path> [--dry-run] [--grace-window <dur>] [--no-cache]` | Orchestrates SDD-18 (config), SDD-19 (state.Store), SDD-20 (Child), SDD-21 (Refiller/Refresher/Grace), SDD-22 (PidFile/StatusServer). `--dry-run` builds the canonical /claim payload via `sign.CanonicalJSON` and exits 0 with NO Discord / vault contact / pidfile / socket binding. Normal start: signal.NotifyContext → AcquirePidFile → NewStore → NewGrace → NewRefiller → NewRefresher → NewStatusServer (AttachStatusInputs + AttachRefreshHandler) → 2 spawned goroutines (StatusServer + Refresher, each with owner / ctx / recover per Constitution IX) → wait on rootCtx.Done() → wg.Wait() → pidfile.Release() via defer. Flag overrides applied pre-side-effect: `--grace-window` validated `>0 && ≤4h` else `errInvalidGraceWindow→ExitInputErr`; `--no-cache` beats `--grace-window` per FR-023-14. Duplicate start wraps `supervise.ErrPidLocked` as `errDuplicateSupervisor` with the FR-023-6 message naming the pidfile path. |
+| `client status` | `hush client status [--socket <path>] [--supervisor <name>] [--json]` | Resolves the supervisor socket path via the precedence rule `--socket > --supervisor → supervise.SocketPathForSupervisor > supervise.EnumerateSupervisorSockets()`. 2s ctx → dial unix → write `status\n` → read body. `--json` or non-TTY stdout → emit raw socket bytes verbatim (preserves SDD-22's locked DTO byte-for-byte). TTY stdout → unmarshal into `statusDoc` and render the locked human label format (`Supervisor:`, `State:`, `Child PID:`, `Child up:`, `Session expires:`, `Next refresh:`, `Healthy scopes:`, `Stale scopes:`, `Discord:`, `Last auth fail:`). |
+| `client refresh` | `hush client refresh [--socket <path>] [--supervisor <name>]` | 90s ctx → resolveSocketPath → write `refresh\n` → unmarshal `{ok,error}` ack. `{"ok":true}` → ExitOK; `{"ok":false,"error":<msg>}` → `errSupervisorRefused → ExitErr` with msg on stderr. NO `--json` flag (FR-023-17a). |
+
+Two minimal extensions land in `internal/supervise/`:
+
+- `internal/supervise/socket.go` gains a verb-dispatch branch in the
+  per-connection handler (`status` → existing render path; `refresh`
+  → `attachRefreshHandler` callback). Two new exported wiring
+  methods on `*StatusServer`: `AttachStatusInputs(StatusInputs)` and
+  `AttachRefreshHandler(func(ctx context.Context) error)` (mirrors
+  the package-private `attach` precedent, surfaced for the SDD-23
+  orchestrator). The "default = status" fallback preserves the
+  SDD-22 §2.5 advisory-payload backward-compatibility note.
+- `internal/supervise/socket_{darwin,linux}.go` gain two production
+  helpers: `SocketPathForSupervisor(name string) string` (per-OS
+  scheme) and `EnumerateSupervisorSockets() ([]string, error)`.
+
+Test surface: ~25 named tests in `internal/cli/supervise_test.go` +
+`internal/cli/client_test.go`; one integration test
+`TestSuperviseIntegration_DryRunWithDiscordStub` in
+`internal/cli/supervise_integration_test.go`. Average per-function
+coverage on `supervise.go` + `client.go`: ~94% (target: 85%).
+
 ---
 
 ## `internal/keychain/`

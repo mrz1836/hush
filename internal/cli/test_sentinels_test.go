@@ -22,3 +22,8 @@ var (
 	errSyntheticTimeout  = errors.New("net/http: request canceled (Client.Timeout exceeded)")
 	errSyntheticDeadline = errors.New("context deadline exceeded")
 )
+
+// secretMarkerBytes is the marker pattern used by the FR-023-27/28
+// sentinel-leak tests. Any operator-visible surface that contains
+// this marker is a failure.
+const secretMarkerBytes = "SECRET_MARKER_DEADBEEF"

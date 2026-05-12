@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -53,11 +54,12 @@ type StatusServer struct {
 	store      *Store
 	logger     *slog.Logger
 
-	mu      sync.Mutex
-	inputs  StatusInputs
-	started bool
-	conns   map[net.Conn]struct{}
-	wg      sync.WaitGroup
+	mu             sync.Mutex
+	inputs         StatusInputs
+	refreshHandler func(ctx context.Context) error
+	started        bool
+	conns          map[net.Conn]struct{}
+	wg             sync.WaitGroup
 }
 
 // NewStatusServer constructs a fresh StatusServer. Pure value constructor
@@ -111,16 +113,44 @@ func (s *StatusServer) Run(ctx context.Context) error {
 	s.wg.Add(1)
 	go s.watch(ctx, listener, done)
 
-	s.acceptLoop(listener)
+	s.acceptLoop(ctx, listener)
 
 	close(done)
 	s.wg.Wait()
 	return nil
 }
 
+// AttachStatusInputs is the exported wiring method consumed by
+// SDD-23's `internal/cli` orchestrator. Mirrors the package-private
+// `attach` precedent — wired once post-construction, before Run.
+// Subsequent calls overwrite the previous inputs. Safe to call from
+// any goroutine.
+func (s *StatusServer) AttachStatusInputs(inputs StatusInputs) {
+	s.attach(inputs)
+}
+
+// AttachRefreshHandler wires the orchestrator's refresh callback into
+// the status server. The handler is invoked for every `refresh\n`
+// verb received on the status socket (FR-023-20). Wired once
+// post-construction by `internal/cli/supervise.go`. Until called, the
+// refresh path returns a stable `refresh handler not wired` error
+// rather than panicking — defensive only (the orchestrator wires the
+// handler before starting `Run`).
+//
+// Single-shot: a second call panics (matches the SDD-22 one-shot
+// `Run` semantics; see socket-protocol.md §3.1).
+func (s *StatusServer) AttachRefreshHandler(handler func(ctx context.Context) error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.refreshHandler != nil {
+		panic("supervise: AttachRefreshHandler called twice on same StatusServer")
+	}
+	s.refreshHandler = handler
+}
+
 // attach wires inputs into the status server. Package-private; called by
-// the orchestrator (SDD-23) from inside package supervise. Mirrors
-// SDD-21's (*Refiller).attach precedent.
+// the orchestrator (SDD-23) from inside package supervise via
+// AttachStatusInputs. Mirrors SDD-21's (*Refiller).attach precedent.
 func (s *StatusServer) attach(inputs StatusInputs) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -153,7 +183,11 @@ func (s *StatusServer) watch(ctx context.Context, listener net.Listener, done ch
 // acceptLoop runs in Run's frame (no extra goroutine). On each accepted
 // conn, registers it under s.mu and spawns a per-connection handler. Exits
 // when Accept returns net.ErrClosed (listener.Close from watcher).
-func (s *StatusServer) acceptLoop(listener net.Listener) {
+//
+// ctx is the same context propagated to Run; it is threaded into each
+// per-connection handler so the SDD-23 refresh handler can observe
+// ctx-cancel and abort its in-flight refill (socket-protocol.md §3.3).
+func (s *StatusServer) acceptLoop(ctx context.Context, listener net.Listener) {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -167,14 +201,22 @@ func (s *StatusServer) acceptLoop(listener net.Listener) {
 		s.conns[conn] = struct{}{}
 		s.mu.Unlock()
 		s.wg.Add(1)
-		go s.handle(conn)
+		go s.handle(ctx, conn)
 	}
 }
 
 // handle is the per-connection goroutine. Owner: acceptLoop. Cancellation:
 // watcher's conn.Close() propagates as Read/Write error. Termination:
 // handler returns; wg.Done().
-func (s *StatusServer) handle(conn net.Conn) {
+//
+// Per SDD-23 (socket-protocol.md §2), the first line read is matched
+// against the recognized verb set:
+//   - "status" (or empty, or any unrecognized payload): render the
+//     status document — preserves SDD-22 §2.5 advisory-payload
+//     backward-compatibility.
+//   - "refresh": invoke the attached refresh handler; serialise the
+//     terminal ack as {"ok":true}\n or {"ok":false,"error":"<msg>"}\n.
+func (s *StatusServer) handle(ctx context.Context, conn net.Conn) {
 	defer s.wg.Done()
 	defer func() {
 		s.mu.Lock()
@@ -189,25 +231,69 @@ func (s *StatusServer) handle(conn net.Conn) {
 	}()
 
 	br := bufio.NewReader(conn)
-	if _, err := br.ReadString('\n'); err != nil {
-		// Tolerate unterminated request — render the document anyway.
+	line, err := br.ReadString('\n')
+	if err != nil {
+		// Tolerate unterminated request — fall through to status path.
 		// FR-022 §2.5: "request payload is advisory in v0.1.0; the connection IS the auth."
 		if !errors.Is(err, net.ErrClosed) {
 			s.logger.Debug("supervise: status request read error", "err", err)
 		}
 	}
+	verb := strings.TrimSpace(line)
 
-	body, err := s.renderStatus(s.snapshotForResponse())
-	if err != nil {
-		s.logger.Error("supervise: status encode error", "err", err)
+	if verb == "refresh" {
+		s.writeRefreshAck(ctx, conn)
+		return
+	}
+
+	body, encErr := s.renderStatus(s.snapshotForResponse())
+	if encErr != nil {
+		s.logger.Error("supervise: status encode error", "err", encErr)
 		return
 	}
 	body = append(body, '\n')
-	if _, err := conn.Write(body); err != nil {
-		if !errors.Is(err, net.ErrClosed) {
-			s.logger.Debug("supervise: status write error", "err", err)
+	if _, werr := conn.Write(body); werr != nil {
+		if !errors.Is(werr, net.ErrClosed) {
+			s.logger.Debug("supervise: status write error", "err", werr)
 		}
 	}
+}
+
+// writeRefreshAck dispatches the refresh verb to the attached handler
+// and writes the terminal ack to conn. ctx is the per-connection
+// derived ctx propagated from acceptLoop / handle so the handler's
+// in-flight refill aborts on supervisor SIGTERM (socket-protocol.md
+// §3.3). When no handler is attached, writes a stable error response
+// without panicking (socket-protocol.md §3.1).
+func (s *StatusServer) writeRefreshAck(ctx context.Context, conn net.Conn) {
+	s.mu.Lock()
+	handler := s.refreshHandler
+	s.mu.Unlock()
+
+	if handler == nil {
+		_, _ = conn.Write([]byte(`{"ok":false,"error":"refresh handler not wired"}` + "\n"))
+		return
+	}
+
+	handlerErr := handler(ctx)
+	if handlerErr == nil {
+		_, _ = conn.Write([]byte(`{"ok":true}` + "\n"))
+		return
+	}
+	msg := strings.ReplaceAll(handlerErr.Error(), "\n", " ")
+	body, mErr := json.Marshal(struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}{OK: false, Error: msg})
+	if mErr != nil {
+		// Fall back to a hand-built one-liner — never panic, never
+		// drop the ack silently.
+		fallback := `{"ok":false,"error":"refresh ack serialization failed"}` + "\n"
+		_, _ = conn.Write([]byte(fallback))
+		return
+	}
+	body = append(body, '\n')
+	_, _ = conn.Write(body)
 }
 
 // snapshotForResponse takes ONE Store.Snapshot() per request (FR-022-16).

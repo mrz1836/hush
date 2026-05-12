@@ -2,12 +2,14 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"os"
 	"testing"
 
 	"github.com/mrz1836/hush/internal/config"
 	"github.com/mrz1836/hush/internal/server"
+	"github.com/mrz1836/hush/internal/supervise"
 	"github.com/mrz1836/hush/internal/token"
 	"github.com/mrz1836/hush/internal/transport/sign"
 	"github.com/mrz1836/hush/internal/vault"
@@ -102,6 +104,14 @@ func TestExitCodes_AllSentinelsCovered(t *testing.T) {
 		{"config file mode", config.ErrConfigFileMode, ExitPerm},
 		{"context canceled", context.Canceled, ExitErr},
 		{"unknown error", errSyntheticUnknown, ExitErr},
+		// SDD-23 sentinels.
+		{"invalid grace window", errInvalidGraceWindow, ExitInputErr},
+		{"socket ambiguous", errSocketAmbiguous, ExitInputErr},
+		{"socket unreachable", errSocketUnreachable, ExitErr},
+		{"supervisor refused", errSupervisorRefused, ExitErr},
+		{"duplicate supervisor", errDuplicateSupervisor, ExitErr},
+		{"pidfile locked", supervise.ErrPidLocked, ExitErr},
+		{"wrapped pidfile locked", fmt.Errorf("%w: %w", errDuplicateSupervisor, supervise.ErrPidLocked), ExitErr},
 	}
 	for _, c := range cases {
 		if got := mapErr(c.in); got != c.want {

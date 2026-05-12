@@ -69,7 +69,7 @@
 | SDD-20 | Child fork/exec + signals + exit-78 + process-group death-watch | `internal/supervise` | done | AC-10 |
 | SDD-21 | Refill + refresh + grace cache | `internal/supervise` | done | AC-10 |
 | SDD-22 | PID file + flock + Unix status socket | `internal/supervise` | done | AC-10 |
-| SDD-23 | `hush supervise` + `hush client status` + `hush client refresh` | `internal/cli` | pending | AC-10 |
+| SDD-23 | `hush supervise` + `hush client status` + `hush client refresh` | `internal/cli` | done | AC-10 |
 | SDD-25 | Lifecycle integration harness (15 scenarios — explicit AC-10 owner) | `tests/integration/` | pending | AC-9, AC-10 |
 | SDD-24 | (reserved — orchestration glue if SDD-25 surfaces gaps; default skipped) | — | skipped | — |
 

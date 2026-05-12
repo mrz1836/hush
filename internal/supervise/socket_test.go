@@ -678,6 +678,228 @@ func TestSocket_NoTCPListenerOrHTTPServer(t *testing.T) {
 }
 
 // ============================================================
+// SDD-23 — verb dispatch (status | refresh) + handler wiring
+// ============================================================
+
+// dialAndDriveVerb sends the supplied verb (no trailing newline; one
+// is added) and reads the full response.
+func dialAndDriveVerb(t *testing.T, path, verb string) []byte {
+	t.Helper()
+	var d net.Dialer
+	conn, err := d.DialContext(context.Background(), "unix", path)
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+	if _, werr := conn.Write([]byte(verb + "\n")); werr != nil {
+		t.Fatalf("write verb: %v", werr)
+	}
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(2*time.Second)))
+	body, err := io.ReadAll(conn)
+	require.NoError(t, err)
+	return body
+}
+
+// TestSocket_VerbStatusReturnsStatusDocument — explicit "status\n"
+// produces the existing FR-12 status JSON document.
+func TestSocket_VerbStatusReturnsStatusDocument(t *testing.T) {
+	path := tempSocketPath(t)
+	srv := NewStatusServer(path, nil, silentLogger())
+	srv.AttachStatusInputs(&stubStatusInputs{name: "x"})
+
+	stop := startServer(t, srv)
+	body := dialAndDriveVerb(t, path, "status")
+	require.NoError(t, stop())
+
+	body = bytes.TrimSpace(body)
+	var doc map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(body, &doc))
+	assert.Equal(t, `"x"`, string(doc["supervisor"]))
+}
+
+// TestSocket_VerbRefreshInvokesHandler — handler returns nil, response
+// is {"ok":true}\n.
+func TestSocket_VerbRefreshInvokesHandler(t *testing.T) {
+	path := tempSocketPath(t)
+	srv := NewStatusServer(path, nil, silentLogger())
+	srv.AttachRefreshHandler(func(_ context.Context) error { return nil })
+
+	stop := startServer(t, srv)
+	body := dialAndDriveVerb(t, path, "refresh")
+	require.NoError(t, stop())
+
+	assert.Equal(t, "{\"ok\":true}\n", string(body))
+}
+
+// TestSocket_VerbRefreshErrorIsSerialised — handler returns a single-
+// line error, response carries the message verbatim.
+func TestSocket_VerbRefreshErrorIsSerialised(t *testing.T) {
+	path := tempSocketPath(t)
+	srv := NewStatusServer(path, nil, silentLogger())
+	srv.AttachRefreshHandler(func(_ context.Context) error {
+		return errors.New("vault unreachable")
+	})
+
+	stop := startServer(t, srv)
+	body := dialAndDriveVerb(t, path, "refresh")
+	require.NoError(t, stop())
+
+	assert.Equal(t, "{\"ok\":false,\"error\":\"vault unreachable\"}\n", string(body))
+}
+
+// TestSocket_VerbRefreshErrorMultilineSerialisedAsOneLine — multi-line
+// error messages collapse newlines into spaces.
+func TestSocket_VerbRefreshErrorMultilineSerialisedAsOneLine(t *testing.T) {
+	path := tempSocketPath(t)
+	srv := NewStatusServer(path, nil, silentLogger())
+	srv.AttachRefreshHandler(func(_ context.Context) error {
+		return errors.New("line1\nline2")
+	})
+
+	stop := startServer(t, srv)
+	body := dialAndDriveVerb(t, path, "refresh")
+	require.NoError(t, stop())
+
+	assert.NotContains(t, string(body), "\nline2")
+	assert.Contains(t, string(body), "line1 line2")
+}
+
+// TestSocket_VerbRefreshHandlerUnwiredReturnsStableError — no handler
+// attached, refresh path returns a stable error response without
+// panicking.
+func TestSocket_VerbRefreshHandlerUnwiredReturnsStableError(t *testing.T) {
+	path := tempSocketPath(t)
+	srv := NewStatusServer(path, nil, silentLogger())
+
+	stop := startServer(t, srv)
+	body := dialAndDriveVerb(t, path, "refresh")
+	require.NoError(t, stop())
+
+	assert.Equal(t, "{\"ok\":false,\"error\":\"refresh handler not wired\"}\n", string(body))
+}
+
+// TestSocket_VerbUnrecognisedFallsBackToStatus — unknown verb still
+// produces a status doc (backward-compat with SDD-22 §2.5 advisory
+// payload).
+func TestSocket_VerbUnrecognisedFallsBackToStatus(t *testing.T) {
+	path := tempSocketPath(t)
+	srv := NewStatusServer(path, nil, silentLogger())
+	srv.AttachStatusInputs(&stubStatusInputs{name: "y"})
+
+	stop := startServer(t, srv)
+	body := dialAndDriveVerb(t, path, "garbage")
+	require.NoError(t, stop())
+
+	body = bytes.TrimSpace(body)
+	var doc map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(body, &doc))
+	assert.Equal(t, `"y"`, string(doc["supervisor"]))
+}
+
+// TestSocket_VerbStatusEmptyPayloadReturnsStatusDocument — empty
+// request (just "\n") returns the status doc.
+func TestSocket_VerbStatusEmptyPayloadReturnsStatusDocument(t *testing.T) {
+	path := tempSocketPath(t)
+	srv := NewStatusServer(path, nil, silentLogger())
+	srv.AttachStatusInputs(&stubStatusInputs{name: "z"})
+
+	stop := startServer(t, srv)
+	body := dialAndDriveVerb(t, path, "")
+	require.NoError(t, stop())
+
+	body = bytes.TrimSpace(body)
+	var doc map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(body, &doc))
+	assert.Equal(t, `"z"`, string(doc["supervisor"]))
+}
+
+// TestSocket_AttachRefreshHandlerCalledTwicePanics — single-shot
+// contract documented in socket-protocol.md §3.1.
+func TestSocket_AttachRefreshHandlerCalledTwicePanics(t *testing.T) {
+	srv := NewStatusServer("/dev/null/ignored", nil, silentLogger())
+	srv.AttachRefreshHandler(func(_ context.Context) error { return nil })
+	assert.Panics(t, func() {
+		srv.AttachRefreshHandler(func(_ context.Context) error { return nil })
+	})
+}
+
+// ============================================================
+// SDD-23 — path-derivation helpers (per-OS)
+// ============================================================
+
+// TestSocketPathForSupervisor_DerivesPlatformPath — assert per-name
+// path is produced under the platform runtime root.
+func TestSocketPathForSupervisor_DerivesPlatformPath(t *testing.T) {
+	for _, name := range []string{"alpha", "AlphaBeta_1", "x-y-z"} {
+		got := SocketPathForSupervisor(name)
+		assert.True(t, filepath.IsAbs(got), "path must be absolute, got %q", got)
+		assert.True(t, strings.HasSuffix(got, name+".sock"), "expected suffix %q in %q", name+".sock", got)
+	}
+}
+
+// TestSocketPathForSupervisor_InvalidNamePanics — slug validation per
+// socket-protocol.md §4.1.
+func TestSocketPathForSupervisor_InvalidNamePanics(t *testing.T) {
+	assert.Panics(t, func() {
+		_ = SocketPathForSupervisor("../etc")
+	})
+	assert.Panics(t, func() {
+		_ = SocketPathForSupervisor("name with spaces")
+	})
+	assert.Panics(t, func() {
+		_ = SocketPathForSupervisor("")
+	})
+}
+
+// TestEnumerateSupervisorSockets_ListsMatchingFiles — populate the
+// platform runtime dir with one matching + one non-matching file;
+// assert only the matcher is returned. Drives the helper through its
+// public API; the parent dir is the path returned by
+// SocketPathForSupervisor.
+func TestEnumerateSupervisorSockets_ListsMatchingFiles(t *testing.T) {
+	root := shortTempDir(t)
+	t.Setenv("HOME", root)
+	t.Setenv("XDG_RUNTIME_DIR", root)
+
+	wantPath := SocketPathForSupervisor("matched")
+	require.NoError(t, os.MkdirAll(filepath.Dir(wantPath), 0o700))
+	require.NoError(t, os.WriteFile(wantPath, []byte("x"), 0o600))
+	noiseDir := filepath.Dir(wantPath)
+	require.NoError(t, os.WriteFile(filepath.Join(noiseDir, "not-a-supervisor.sock"), []byte("x"), 0o600))
+
+	got, err := EnumerateSupervisorSockets()
+	require.NoError(t, err)
+	assert.Contains(t, got, wantPath)
+	for _, p := range got {
+		assert.True(t, strings.HasSuffix(p, ".sock"))
+		assert.NotEqual(t, "not-a-supervisor.sock", filepath.Base(p))
+	}
+}
+
+// TestEnumerateSupervisorSockets_EmptyDirReturnsEmptySlice — runtime
+// dir exists, but no matching files.
+func TestEnumerateSupervisorSockets_EmptyDirReturnsEmptySlice(t *testing.T) {
+	root := shortTempDir(t)
+	t.Setenv("HOME", root)
+	t.Setenv("XDG_RUNTIME_DIR", root)
+	// Make sure the runtime dir exists for both schemes.
+	require.NoError(t, os.MkdirAll(filepath.Dir(SocketPathForSupervisor("probe")), 0o700))
+
+	got, err := EnumerateSupervisorSockets()
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}
+
+// TestEnumerateSupervisorSockets_MissingDirReturnsEmptySlice — runtime
+// dir does not exist.
+func TestEnumerateSupervisorSockets_MissingDirReturnsEmptySlice(t *testing.T) {
+	root := filepath.Join(shortTempDir(t), "does-not-exist")
+	t.Setenv("HOME", root)
+	t.Setenv("XDG_RUNTIME_DIR", root)
+	got, err := EnumerateSupervisorSockets()
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}
+
+// ============================================================
 // Fuzz target — Constitution VIII §Mandatory fuzz targets, item 6
 // ============================================================
 

@@ -10,6 +10,8 @@ import (
 	"github.com/mrz1836/hush/internal/config"
 	"github.com/mrz1836/hush/internal/keychain"
 	"github.com/mrz1836/hush/internal/server"
+	"github.com/mrz1836/hush/internal/supervise"
+	supcfg "github.com/mrz1836/hush/internal/supervise/config"
 	"github.com/mrz1836/hush/internal/token"
 	"github.com/mrz1836/hush/internal/transport/sign"
 	"github.com/mrz1836/hush/internal/vault"
@@ -130,6 +132,30 @@ var errMaxUsesTooLow = errors.New("hush: request: --max-uses must be ≥ number 
 // can't survive into --format eval output. Mapped to [ExitInputErr].
 var errInvalidScopeName = errors.New("hush: request: --scope must match ^[A-Za-z_][A-Za-z0-9_]*$")
 
+// errInvalidGraceWindow surfaces a --grace-window flag value that is
+// negative, zero (when explicitly set), or > 4h. Mapped to
+// [ExitInputErr] by [mapErr] (FR-023-12).
+var errInvalidGraceWindow = errors.New("invalid --grace-window")
+
+// errSocketAmbiguous surfaces the auto-detect-zero or auto-detect-
+// multiple branches of supervisor socket discovery (FR-023-15 (4)).
+// Mapped to [ExitInputErr] by [mapErr].
+var errSocketAmbiguous = errors.New("supervisor socket ambiguous")
+
+// errSocketUnreachable surfaces dial / read / write / parse failures
+// against the supervisor's status socket (FR-023-18, FR-023-23).
+// Mapped to [ExitErr] by [mapErr].
+var errSocketUnreachable = errors.New("supervisor socket unreachable")
+
+// errSupervisorRefused surfaces a `client refresh` ack carrying
+// {"ok":false,"error":<msg>} (FR-023-22). Mapped to [ExitErr].
+var errSupervisorRefused = errors.New("supervisor refused")
+
+// errDuplicateSupervisor surfaces the FR-023-6 case where another
+// supervisor is already running for the supplied configuration.
+// Wraps supervise.ErrPidLocked. Mapped to [ExitErr] by [mapErr].
+var errDuplicateSupervisor = errors.New("another supervisor is already running for this configuration")
+
 // errChildExitCode wraps the integer exit status of a child process
 // launched by `hush request --exec`. mapErr unwraps it via errors.As
 // and returns the child's code verbatim, preserving FR-010's exit-code
@@ -150,7 +176,7 @@ func (e *errChildExitCode) Error() string {
 // that code is reserved for future supervisor work and never raised
 // in this chunk.
 //
-//nolint:cyclop // sequential errors.Is dispatch over locked sentinel sets
+//nolint:cyclop,gocyclo // sequential errors.Is dispatch over locked sentinel sets
 func mapErr(err error) int {
 	if err == nil {
 		return ExitOK
@@ -196,8 +222,42 @@ func mapErr(err error) int {
 		errors.Is(err, config.ErrArgonThreadsTooLow),
 		errors.Is(err, config.ErrArgonThreadsTooHigh),
 		errors.Is(err, config.ErrSupervisorTTLOutOfRange),
-		errors.Is(err, config.ErrClaimApprovalTimeoutOutOfRange):
+		errors.Is(err, config.ErrClaimApprovalTimeoutOutOfRange),
+		errors.Is(err, errInvalidGraceWindow),
+		errors.Is(err, errSocketAmbiguous),
+		errors.Is(err, supcfg.ErrTOMLDecode),
+		errors.Is(err, supcfg.ErrUnknownField),
+		errors.Is(err, supcfg.ErrMissingRequiredField),
+		errors.Is(err, supcfg.ErrInvalidDuration),
+		errors.Is(err, supcfg.ErrUnknownValidator),
+		errors.Is(err, supcfg.ErrGraceWindowTooLong),
+		errors.Is(err, supcfg.ErrGraceTTLWithoutCache),
+		errors.Is(err, supcfg.ErrRefreshWindowFormat),
+		errors.Is(err, supcfg.ErrRefreshWindowOrder),
+		errors.Is(err, supcfg.ErrCommandEmpty),
+		errors.Is(err, supcfg.ErrCommandPathRelative),
+		errors.Is(err, supcfg.ErrScopeEmpty),
+		errors.Is(err, supcfg.ErrSessionTypeInvalid),
+		errors.Is(err, supcfg.ErrRequestedTTLOutOfRange),
+		errors.Is(err, supcfg.ErrServerURLInvalid),
+		errors.Is(err, supcfg.ErrLogLevelInvalid),
+		errors.Is(err, supcfg.ErrWatchdogRateInvalid):
 		return ExitInputErr
+	}
+
+	// SDD-23 supervise + client error classes — operational failures
+	// (socket unreachable, supervisor refused refresh, duplicate
+	// supervisor wrap of supervise.ErrPidLocked) collapse to ExitErr.
+	// Checked BEFORE the not-found / perm classes because the
+	// underlying dial / read errors wrap fs.ErrNotExist when the
+	// supervisor's socket file is missing, but spec FR-023-18 /
+	// FR-023-23 requires ExitErr for unreachable socket.
+	switch {
+	case errors.Is(err, errSocketUnreachable),
+		errors.Is(err, errSupervisorRefused),
+		errors.Is(err, errDuplicateSupervisor),
+		errors.Is(err, supervise.ErrPidLocked):
+		return ExitErr
 	}
 
 	// Auth failures — signature or passphrase rejected.
