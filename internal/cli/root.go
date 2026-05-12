@@ -26,7 +26,7 @@ func Execute(ctx context.Context) int {
 	stdout := streamFor(os.Stdout, false)
 	stderr := streamFor(os.Stderr, false)
 
-	root := newRootCmd(&outputContext{stdout: stdout, stderr: stderr})
+	root := newRootCmd(&outputContext{stdout: stdout, stderr: stderr}) //nolint:contextcheck // ctx is attached via SetContext below; subcommands read it via cmd.Context().
 	root.SetContext(ctx)
 
 	err := root.ExecuteContext(ctx)
@@ -55,6 +55,8 @@ func newRootCmd(initialOut *outputContext) *cobra.Command {
 	root.AddCommand(newInitCmd())
 	root.AddCommand(newRequestCmd())
 	root.AddCommand(newSecretCmd())
+	root.AddCommand(newSuperviseCmd())
+	root.AddCommand(newClientCmd())
 
 	return root
 }
