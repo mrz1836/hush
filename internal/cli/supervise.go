@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net/http"
 	"os/signal"
 	"sync"
 	"sync/atomic"
@@ -16,10 +15,27 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/mrz1836/hush/internal/logging"
 	"github.com/mrz1836/hush/internal/supervise"
 	"github.com/mrz1836/hush/internal/supervise/config"
 	"github.com/mrz1836/hush/internal/transport/sign"
 )
+
+// parseLogLevel maps cfg.LogLevel (validated against logLevelAllowList in
+// SDD-18) to slog.Level. Unknown values default to LevelInfo — config
+// validation already rejected them before reaching this code path.
+func parseLogLevel(s string) slog.Level {
+	switch s {
+	case "debug":
+		return slog.LevelDebug
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
+}
 
 // superviseFlags holds the parsed flag values for `hush supervise`.
 // runSupervise applies the effective-projection rules per
@@ -260,57 +276,31 @@ func runSupervise(cmd *cobra.Command, configPath string, flags superviseFlags) e
 		return err
 	}
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	store := supervise.NewStore(rootCtx, realClock{})
-	grace := supervise.NewGrace(effectiveGraceTTL, effectiveCacheEnabled)
+	logger := logging.New(logging.Options{
+		Level:  parseLogLevel(cfg.LogLevel),
+		Format: logging.FormatAuto,
+		Out:    stderr,
+	})
 
-	inputs := &orchestratorInputs{name: cfg.Name}
-	inputs.discordConnected.Store(true)
+	// Project flag overrides onto the in-memory config so Lifecycle sees
+	// the effective values (--grace-window / --no-cache override TOML).
+	cfg.CacheGraceTTL = effectiveGraceTTL
+	cfg.CacheSecretsForRestart = effectiveCacheEnabled
 
-	statusServer := supervise.NewStatusServer(cfg.StatusSocket, store, logger)
-	statusServer.AttachStatusInputs(inputs)
-
-	coalescer := &refreshCoalescer{}
-
-	httpClient := &http.Client{Timeout: 30 * time.Second}
-	refiller := supervise.NewRefiller(httpClient, store, logger)
-
-	refresher := supervise.NewRefresher(cfg.RefreshWindow, cfg.RequestedTTL, func(ctx context.Context) error {
-		return coalescer.Handle(ctx)
-	}, logger)
-
-	statusServer.AttachRefreshHandler(coalescer.Handle)
-
-	coalescer.perform = func(ctx context.Context) error {
-		return refiller.Refill(ctx, cfg.Scope)
+	lifecycleErr := runLifecycle(rootCtx, cfg, pidfile, logger)
+	if lifecycleErr != nil && !errors.Is(lifecycleErr, context.Canceled) {
+		logger.Error("supervise: lifecycle exited with error", "err", lifecycleErr)
 	}
 
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		defer func() {
-			if r := recover(); r != nil {
-				logger.Error("supervise: statusServer goroutine panic", "recover", r)
-			}
-		}()
-		_ = statusServer.Run(rootCtx)
-	}()
-	go func() {
-		defer wg.Done()
-		defer func() {
-			if r := recover(); r != nil {
-				logger.Error("supervise: refresher goroutine panic", "recover", r)
-			}
-		}()
-		_ = refresher.Run(rootCtx)
-	}()
-
-	_ = grace
-	<-rootCtx.Done()
-	wg.Wait()
 	if relErr := pidfile.Release(); relErr != nil {
-		logger.Warn("supervise: pidfile release", "err", relErr)
+		logger.Error("supervise: pidfile release", "err", relErr)
+		if lifecycleErr == nil {
+			return fmt.Errorf("hush: supervise: pidfile release: %w", relErr)
+		}
+	}
+
+	if lifecycleErr != nil && !errors.Is(lifecycleErr, context.Canceled) {
+		return lifecycleErr
 	}
 	return nil
 }
