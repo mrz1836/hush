@@ -71,7 +71,7 @@
 | SDD-22 | PID file + flock + Unix status socket | `internal/supervise` | done | AC-10 |
 | SDD-23 | `hush supervise` + `hush client status` + `hush client refresh` | `internal/cli` | done | AC-10 |
 | SDD-24 | Supervisor orchestration glue (activated 2026-05-12 by SDD-25 — see `docs/sdd/SDD-24.md`) | `internal/supervise/` (`lifecycle.go` + 4 siblings — Plan Option C) | done | AC-10 |
-| SDD-25 | Lifecycle integration harness (15 scenarios — explicit AC-10 owner) | `tests/integration/` | unblocked (SDD-24 done; resume from T001) | AC-9, AC-10 |
+| SDD-25 | Lifecycle integration harness (15 scenarios — explicit AC-10 owner) | `tests/integration/` | in-progress (chunk 1: harness scaffolding + Scenario 14 green under `-race`, 5/5 flake-free; remaining 16 scenarios fail loudly per FR-001 until upstream wiring lands in subsequent chunks) | AC-9, AC-10 |
 
 ## Phase 6 — Validators + alerts
 
