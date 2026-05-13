@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -958,4 +960,30 @@ func splitNonEmpty(s string) []string {
 		out = append(out, string(p))
 	}
 	return out
+}
+
+// TestIsClosedConnErr asserts the closed-vs-other classification used by
+// (*StatusServer).writeOrLog to decide Debug-vs-Warn for write failures.
+func TestIsClosedConnErr(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil_is_not_closed", nil, false},
+		{"net_ErrClosed", net.ErrClosed, true},
+		{"io_EOF", io.EOF, true},
+		{"io_ErrClosedPipe", io.ErrClosedPipe, true},
+		{"syscall_EPIPE", syscall.EPIPE, true},
+		{"syscall_ECONNRESET", syscall.ECONNRESET, true},
+		{"unrelated_error", errors.New("disk full"), false},
+		{"wrapped_EPIPE", fmt.Errorf("write tcp: %w", syscall.EPIPE), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, isClosedConnErr(tc.err))
+		})
+	}
 }

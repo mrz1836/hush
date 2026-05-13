@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net"
@@ -15,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -252,11 +254,41 @@ func (s *StatusServer) handle(ctx context.Context, conn net.Conn) {
 		return
 	}
 	body = append(body, '\n')
+	s.writeOrLog(conn, body, "supervise: status write")
+}
+
+// writeOrLog writes body to conn and classifies any resulting error.
+// Closed-connection errors (client hung up) log at Debug; other errors
+// (kernel-level or partial-write surprises) log at Warn. This gives
+// operators a real signal for socket problems without noise from clients
+// disconnecting mid-response.
+func (s *StatusServer) writeOrLog(conn net.Conn, body []byte, op string) {
 	if _, werr := conn.Write(body); werr != nil {
-		if !errors.Is(werr, net.ErrClosed) {
-			s.logger.Debug("supervise: status write error", "err", werr)
+		if isClosedConnErr(werr) {
+			s.logger.Debug(op+" closed", "err", werr)
+			return
 		}
+		s.logger.Warn(op+" failed", "err", werr)
 	}
+}
+
+// isClosedConnErr reports whether err is a benign closed-connection
+// error from the peer hanging up — the cases we want to log at Debug.
+// EPIPE / ECONNRESET / io.EOF / net.ErrClosed all cover "peer hung up
+// before we finished writing"; anything else is worth surfacing at Warn.
+func isClosedConnErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	switch {
+	case errors.Is(err, net.ErrClosed),
+		errors.Is(err, io.EOF),
+		errors.Is(err, io.ErrClosedPipe),
+		errors.Is(err, syscall.EPIPE),
+		errors.Is(err, syscall.ECONNRESET):
+		return true
+	}
+	return false
 }
 
 // writeRefreshAck dispatches the refresh verb to the attached handler
@@ -271,13 +303,13 @@ func (s *StatusServer) writeRefreshAck(ctx context.Context, conn net.Conn) {
 	s.mu.Unlock()
 
 	if handler == nil {
-		_, _ = conn.Write([]byte(`{"ok":false,"error":"refresh handler not wired"}` + "\n"))
+		s.writeOrLog(conn, []byte(`{"ok":false,"error":"refresh handler not wired"}`+"\n"), "supervise: refresh ack")
 		return
 	}
 
 	handlerErr := handler(ctx)
 	if handlerErr == nil {
-		_, _ = conn.Write([]byte(`{"ok":true}` + "\n"))
+		s.writeOrLog(conn, []byte(`{"ok":true}`+"\n"), "supervise: refresh ack")
 		return
 	}
 	msg := strings.ReplaceAll(handlerErr.Error(), "\n", " ")
@@ -289,11 +321,11 @@ func (s *StatusServer) writeRefreshAck(ctx context.Context, conn net.Conn) {
 		// Fall back to a hand-built one-liner — never panic, never
 		// drop the ack silently.
 		fallback := `{"ok":false,"error":"refresh ack serialization failed"}` + "\n"
-		_, _ = conn.Write([]byte(fallback))
+		s.writeOrLog(conn, []byte(fallback), "supervise: refresh ack fallback")
 		return
 	}
 	body = append(body, '\n')
-	_, _ = conn.Write(body)
+	s.writeOrLog(conn, body, "supervise: refresh ack")
 }
 
 // snapshotForResponse takes ONE Store.Snapshot() per request (FR-022-16).
