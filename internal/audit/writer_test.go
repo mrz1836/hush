@@ -447,6 +447,45 @@ func TestAuditWriter_DoubleRunReturnsError(t *testing.T) {
 	}
 }
 
+// TestAuditWriter_ConcurrentRunSecondReturnsChainLocked asserts the
+// single-Writer-per-path contract: a second process (or a second Writer
+// in the same process) opening the same chain file gets ErrChainLocked
+// from flock instead of silently corrupting the hash chain.
+func TestAuditWriter_ConcurrentRunSecondReturnsChainLocked(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "audit.jsonl")
+	key := newTestSigningKey(t)
+
+	w1, err := NewWriter(context.Background(), path, key, nil, newTestLogger())
+	if err != nil {
+		t.Fatalf("NewWriter 1: %v", err)
+	}
+	cancel1, wait1 := runWriter(t, w1)
+	defer func() {
+		cancel1()
+		_ = wait1()
+	}()
+
+	// First writer must reach the inner loop before we try to lock again.
+	// Append a single event and wait for the rendezvous ack to confirm
+	// the lock is held.
+	if appErr := w1.Append(context.Background(), "test", map[string]any{"k": "v"}); appErr != nil {
+		t.Fatalf("Append: %v", appErr)
+	}
+
+	w2, err := NewWriter(context.Background(), path, key, nil, newTestLogger())
+	if err != nil {
+		t.Fatalf("NewWriter 2: %v", err)
+	}
+	ctx, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+	err = w2.Run(ctx)
+	if !errors.Is(err, ErrChainLocked) {
+		t.Fatalf("second writer Run err = %v; want ErrChainLocked", err)
+	}
+}
+
 func TestAuditWriter_FilePermsAre0600(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

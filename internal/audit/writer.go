@@ -7,12 +7,15 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"sync/atomic"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // secureRandReader returns the io.Reader used by ECDSA signing.  Wrapped
@@ -173,6 +176,19 @@ func (w *writerImpl) Run(ctx context.Context) error {
 	f, err := os.OpenFile(w.path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
 	if err != nil {
 		return fmt.Errorf("audit: open chain file: %w", err)
+	}
+	// Exclusive non-blocking advisory lock on the chain file. Two Writers
+	// at the same path would silently corrupt the hash chain (both read
+	// the same prevHash at construction and then append in parallel);
+	// the flock makes the second Run fail loudly with ErrChainLocked.
+	// Released automatically when f.Close() runs in the shutdown sequence
+	// (lines 222–225 below).
+	if lockErr := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); lockErr != nil {
+		_ = f.Close()
+		if errors.Is(lockErr, unix.EWOULDBLOCK) {
+			return fmt.Errorf("audit: %w (path=%s)", ErrChainLocked, w.path)
+		}
+		return fmt.Errorf("audit: flock chain file: %w", lockErr)
 	}
 	w.file = f
 	w.bw = bufio.NewWriter(f)

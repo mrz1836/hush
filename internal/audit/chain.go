@@ -125,6 +125,12 @@ var (
 
 	// ErrAlreadyRun indicates Run was called twice on the same Writer.
 	ErrAlreadyRun = errors.New("hush/audit: Run already called")
+
+	// ErrChainLocked indicates the chain file already has an exclusive
+	// advisory lock held by another Writer process. Used to protect
+	// against concurrent writers corrupting the hash chain (single-Writer
+	// contract documented in doc.go).
+	ErrChainLocked = errors.New("hush/audit: chain file locked by another writer")
 )
 
 // ChainError carries the Seq of the first inconsistent event surfaced by
