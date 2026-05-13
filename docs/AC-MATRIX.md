@@ -230,9 +230,9 @@ AC-10 owner — the lifecycle integration harness).
 | 9a | Overnight expiry — strict mode | `Test_Scenario_09_OvernightExpiry_Strict` | pending |
 | 9b | Overnight expiry — grace-cache mode | `Test_Scenario_09_OvernightExpiry_Grace` | pending |
 | 10 | Discord unavailable during new claim | `Test_Scenario_10_DiscordUnavailable` | pending |
-| 11a | Tailscale boot retry succeeds | `Test_Scenario_11_TailscaleReady` | pending |
-| 11b | Tailscale boot retry exhausts budget | `Test_Scenario_11_BootTimeout` | pending |
-| 12 | Agent status check before long task | `Test_Scenario_12_AgentStatusCheck` | pending |
+| 11a | Tailscale boot retry succeeds | `Test_Scenario_11_TailscaleReady` | **green** (SDD-25 chunk 2) |
+| 11b | Tailscale boot retry exhausts budget | `Test_Scenario_11_BootTimeout` | **green** (SDD-25 chunk 2) |
+| 12 | Agent status check before long task | `Test_Scenario_12_AgentStatusCheck` | **green** (SDD-25 chunk 2) |
 | 13 | Secret rotated on vault host during active daemon session | `Test_Scenario_13_MidSessionRotation` | pending |
 | 14 | Duplicate supervisor start attempt | `Test_Scenario_14_DuplicateStart` | **green** (SDD-25 chunk 1) |
 | 15 | Log-pattern watchdog sees auth failure string | `Test_Scenario_15_LogPatternMatch` | pending |

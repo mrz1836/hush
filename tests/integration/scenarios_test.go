@@ -93,20 +93,9 @@ func Test_Scenario_10_DiscordUnavailable(t *testing.T) {
 	scenarioPendingHarness(t, 11, "DiscordUnavailable")
 }
 
-// Test_Scenario_11_TailscaleReady is the boot-retry-then-success flow.
-func Test_Scenario_11_TailscaleReady(t *testing.T) {
-	scenarioPendingHarness(t, 12, "TailscaleReady")
-}
-
-// Test_Scenario_11_BootTimeout is the boot-retry-exhausted flow.
-func Test_Scenario_11_BootTimeout(t *testing.T) {
-	scenarioPendingHarness(t, 13, "BootTimeout")
-}
-
-// Test_Scenario_12_AgentStatusCheck is the agent-status readiness check.
-func Test_Scenario_12_AgentStatusCheck(t *testing.T) {
-	scenarioPendingHarness(t, 14, "AgentStatusCheck")
-}
+// Test_Scenario_11_TailscaleReady is wired in scenario_11_tailscale_ready_test.go.
+// Test_Scenario_11_BootTimeout    is wired in scenario_11_boot_timeout_test.go.
+// Test_Scenario_12_AgentStatusCheck is wired in scenario_12_test.go.
 
 // Test_Scenario_13_MidSessionRotation is the rotate-and-refresh flow.
 func Test_Scenario_13_MidSessionRotation(t *testing.T) {
