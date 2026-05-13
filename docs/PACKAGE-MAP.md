@@ -1954,6 +1954,69 @@ file's line-33 header.
 
 ---
 
+## `tests/integration/` — Exported API — locked at SDD-25
+
+**Purpose.** Lifecycle integration test suite owning AC-10 (15 named
+scenarios from `docs/LIFECYCLE-SCENARIOS.md`, with Scenarios 9 and 11
+each split into two test functions → 17 total `Test_Scenario_NN_<slug>`
+symbols locked in spec FR-002). The suite composes the real
+`internal/supervise.Lifecycle` (SDD-24) plus the real `internal/server`,
+`internal/audit`, `internal/token`, `internal/vault`,
+`internal/transport/ecies`, `internal/transport/sign`,
+`internal/keys`, and `internal/cli` packages end-to-end; **only four
+boundaries are mocked** — Discord (`testutil.DiscordStub`), the five
+provider validator HTTP upstreams (loopback `httptest.Server`s per
+provider), the wall clock (`harness.FakeClock`), and the Tailscale
+reachability probe (`Deps.TailscaleProbe` stub).
+
+**Build tag.** Every file under `tests/integration/` carries
+`//go:build integration`. Default `go test ./...` compiles zero files
+in this tree. Suite invocation: `magex test:race -tags=integration
+./tests/integration/...`.
+
+**File inventory.** Locked at 6 files in `tests/integration/harness/`
+plus `tests/integration/lifecycle_test.go` (TestMain +
+integration-child-mode dispatcher + RoundTripper allow-list) and
+`tests/integration/scenarios_test.go` (17 locked test symbols). The
+harness package contains:
+
+- `harness/log_capture.go` — `slog` sink + cross-stream
+  `AssertSentinelAbsent`
+- `harness/vault.go` — `*TestVault` wraps `testutil.NewTestVault`
+  with `RegisterClient` / `Rotate` / `AuditPath` accessors
+- `harness/discord.go` — `*TestDiscord` wraps `testutil.DiscordStub`
+  with `SetConnected` / alert recorder / `AsSuperviseAlerts` adapter
+- `harness/child.go` — `*TestChild` re-invokes the test binary via
+  `os.Executable()` in scripted-child mode (`--integration-child-mode
+  --exit-code=N --lifetime=D --emit-stderr-pattern=P`)
+- `harness/server.go` — placeholder for the in-process
+  `internal/server` composition + per-provider `httptest.Server`
+  validator mocks (full wiring lands in subsequent SDD-25 chunks)
+- `harness/supervisor.go` — placeholder for the
+  `*supervise.Lifecycle` composition + `FakeClock` + status-socket
+  reader + audit subsequence helper
+
+**Harness types are intentionally NOT signature-frozen** per the
+SDD-25 chunk-doc entry contract — they evolve as new scenarios surface
+needs. The behavioural contract (Builder properties, four-contract
+scenario assertion shape, six-stream `AssertSentinelAbsent` coverage)
+is locked in `specs/025-lifecycle-harness/contracts/harness-api.md` and
+`specs/025-lifecycle-harness/contracts/scenario-assertions.md`.
+
+**Import discipline.** A `depguard` rule in `.golangci.json`
+(`no-integration-harness-in-production`) forbids any non-test file
+outside `tests/integration/` from importing
+`github.com/mrz1836/hush/tests/integration/harness`.
+
+**Chunk-1 delivery (this PR)**: harness scaffolding + Scenario 14
+(`Test_Scenario_14_DuplicateStart`) green under `-race` with 5/5
+flake-free runs. The remaining 16 scenarios surface as `t.Fatalf`
+"harness wiring not yet complete" failures on every invocation per spec
+FR-001 (no `t.Skip` permitted) — those failures are the load-bearing
+operator signal that AC-10 is still partially unmet.
+
+---
+
 ## `internal/logging/`
 
 Purpose:

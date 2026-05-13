@@ -1,4 +1,4 @@
-# Specification Quality Checklist: Lifecycle Integration Harness (15 Scenarios — AC-10 Owner)
+# Specification Quality Checklist: Lifecycle Integration Harness (SDD-25)
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
 **Created**: 2026-05-12
@@ -31,9 +31,8 @@
 
 ## Notes
 
-- This spec deliberately encodes acceptance-level (WHAT) requirements only. Concrete harness layout, mock library choices, and clock-abstraction wiring are deferred to the plan phase by design (SDD-25.md Prompt 3).
-- The build-tag mechanism (`integration`) is named because it is part of the WHAT — it controls visibility of the suite to the default test invocation — not because it prescribes a HOW.
-- The `Test_Scenario_NN_<slug>` name shape is encoded as a normative requirement (FR-025-4) because the AC-MATRIX rows already cite these names; reviewers verify the names against AC-MATRIX before approving merge.
-- Scenario 9 is the only scenario shipping in two variants. The spec records this exactly once (FR-025-5 + table footnote) so the 15-of-15 contract reads correctly.
-- The sentinel-marker convention is sourced from `internal/testutil` (SDD-04) per Assumptions; the spec does not redefine the marker.
-- A single validation iteration passed all items; no rework was required.
+- Items marked incomplete require spec updates before `/speckit-clarify` or `/speckit-plan`.
+- **Content Quality — known tension**: this spec necessarily names Go-specific structural facts (build-tag `//go:build integration`, `t.Parallel`, `magex test:race -tags=integration`, the `Test_Scenario_NN_<slug>` naming pattern, the on-disk audit JSONL file). These are part of the **observable contract** of the deliverable (the gate command operators will run; the file artefacts the AC-MATRIX will reference; the test-name pattern future chunks must match) rather than implementation details that the plan phase is free to change. The SDD-25 chunk contract in [`docs/sdd/SDD-25.md`](../../../docs/sdd/SDD-25.md) explicitly locks these contractual surfaces; this spec mirrors that lock. Library choices, harness package layout, and helper function signatures remain plan-phase concerns and are NOT specified here.
+- **Sentinel constant + the `AssertSentinelAbsent` helper** are referenced by name because they come from the upstream chunk (SDD-04, `internal/testutil`) per the chunk contract; the helper's signature is plan-phase, the existence and intent are spec-phase.
+- **Alert-class enum** is referenced as "the locked 10-value `AlertClass` enum" — defined upstream in SDD-24 (already merged) and described in `CLAUDE.md`'s active-plan note. The spec refers to the enum as the set of operator-observable classes, not as code.
+- **Validation history**: validated 2026-05-12 — all checklist items pass on first iteration; no [NEEDS CLARIFICATION] markers present.

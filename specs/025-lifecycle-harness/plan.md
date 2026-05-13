@@ -1,45 +1,107 @@
-# Implementation Plan: Lifecycle Integration Harness (SDD-25)
+# Implementation Plan: SDD-25 Lifecycle Integration Harness
 
 **Branch**: `025-lifecycle-harness` | **Date**: 2026-05-12 | **Spec**: [spec.md](spec.md)
-**Input**: Feature specification from `specs/025-lifecycle-harness/spec.md`
+**Input**: Feature specification at `/Users/mrz/projects/hush/specs/025-lifecycle-harness/spec.md`
+**Chunk doc**: [`docs/sdd/SDD-25.md`](../../docs/sdd/SDD-25.md) — locked
 
 ## Summary
 
-SDD-25 delivers the integration test suite that owns AC-10 (15 lifecycle scenarios) and lifts AC-9 (test-infra completeness). The suite lives under `tests/integration/`, gated by `//go:build integration`, and exercises every real `internal/*` package end-to-end with only the external boundaries mocked (Discord via `testutil.DiscordStub`, validator upstreams via `httptest.Server`, NTP via the existing `ClockSyncProbe` seam, wall clock via injected `func() time.Time`). Each of the 15 scenarios is a single `Test_Scenario_NN_<slug>` function asserting four invariants in order: final state, audit-event subsequence, status-socket JSON shape (supervisor scenarios only), and sentinel-marker absence across every captured byte stream. The suite is the AC-10 owner of record — every other chunk's tests are unit- or fuzz-level; this is the single place where the system is proven to work as a whole.
+Build the integration test suite that proves Acceptance Criterion **AC-10** ("Supervisor lifecycle — 15 named scenarios") for hush v0.1.0. Sixteen documented operational scenarios from [`docs/LIFECYCLE-SCENARIOS.md`](../../docs/LIFECYCLE-SCENARIOS.md) become **17 named Go test functions** (`Test_Scenario_NN_<slug>`) under `tests/integration/`, build-tagged `//go:build integration`. Each function drives the **real** `internal/supervise.Lifecycle` (the SDD-24 orchestrator) plus real `internal/server`, `internal/audit`, `internal/token`, `internal/vault`, `internal/transport/{ecies,sign}`, `internal/keys`, and `internal/cli` packages in-process. Discord, the five provider validator endpoints, the wall clock, and the Tailscale-reachability probe are the only four boundaries replaced with programmable in-process stubs (via `internal/testutil` + `net/http/httptest` + the existing `Deps.Clock`/`Deps.TailscaleProbe`/`Deps.NowFn` injection seams that SDD-24 already exposes).
+
+Every scenario asserts **four contracts** (per `contracts/scenario-assertions.md`):
+1. Final supervisor / interactive state matches `docs/LIFECYCLE-SCENARIOS.md`.
+2. Audit JSONL contains the documented events in the documented relative order (intervening events tolerated; hash-chain continuity verified via `audit.Verify`).
+3. (Supervisor scenarios only) Status-socket JSON conforms to SPEC.md §FR-12 and the documented per-scenario projection.
+4. `AssertSentinelAbsent` succeeds over six captured byte streams (operational `slog`, audit JSONL, status-socket response, Discord alert payloads, child stdout/stderr, scenario error strings).
+
+Suite gates: **17/17 green, < 120s wall-clock, 5-consecutive-runs flake-free under `-race`**.
+
+The harness is internally composed of six files (`vault.go`, `server.go`, `discord.go`, `supervisor.go`, `child.go`, `log_capture.go`) per the SDD-25 chunk-doc locked inventory. The 17 scenario implementations live together in `scenarios_test.go`; suite-wide setup (`TestMain` if needed, the canonical sentinel, the integration-child-mode entry point recognised by `os.Executable()` re-invocation) lives in `lifecycle_test.go`. All files build only with `-tags=integration`.
+
+This chunk is the **explicit AC-10 owner-of-record**. The implement-phase commit updates [`docs/AC-MATRIX.md`](../../docs/AC-MATRIX.md) AC-10 (test path) and AC-9 (test-infra completeness) rows with the 17 test function names, appends a new entry to [`docs/PACKAGE-MAP.md`](../../docs/PACKAGE-MAP.md) for `tests/integration/`, and marks SDD-25 status `done` in [`docs/SDD-PLAYBOOK.md`](../../docs/SDD-PLAYBOOK.md).
 
 ## Technical Context
 
-**Language/Version**: Go 1.26.1 (the `go.mod` floor; CGO_ENABLED=0)
-**Primary Dependencies**: stdlib (`net/http/httptest`, `log/slog`, `testing`, `context`, `sync`, `runtime`, `time`), `github.com/stretchr/testify` (already in `go.mod`). **No new direct `go.mod` dependency.** Reuses `internal/testutil` (SDD-04), every locked `internal/*` package surface (SDD-01 through SDD-23), and the existing adapter pattern from `internal/server/claim_handler_integration_test.go::stubAsApprover`.
-**Storage**: Per-scenario `t.TempDir()` for vault file, audit log, status socket, pidfile, and state directory. **Never** touches `~/.hush/` (FR-025-22). All disk artifacts are removed by `t.Cleanup`.
-**Testing**: `go test -race -tags=integration ./tests/integration/...`. Suite-level serial execution (no `t.Parallel` at the top level); scenarios may spawn internal goroutines only where they own them with explicit termination per Constitution IX.
-**Target Platform**: macOS arm64 and Linux amd64 (TESTING-STRATEGY.md §6 floor; SC-025-1).
-**Project Type**: Go integration test tree (`tests/integration/`) sibling to `internal/` and `cmd/`. New top-level directory; not part of the production binary.
-**Performance Goals**: Whole suite < 120 s wall-clock per run (SC-025-3); zero flakes across 5 consecutive runs (SC-025-2); zero race-detector findings (SC-025-4).
-**Constraints**: No external network egress (SC-025-8 — passes on firewall-blocked host). No `time.Sleep` to drive any documented transition (FR-025-16). No new exported symbol added to any `internal/*` package (PACKAGE-MAP locks for SDD-01…SDD-23). No production-behavior stubs — only the four mocked boundaries listed in FR-025-12.
-**Scale/Scope**: 15 scenario functions + 16th variant function (Scenario 9 grace) + 2-subtest function (Scenario 10 Interactive/Supervisor) = 17 top-level `Test_Scenario_*` symbols total. Six harness files (~250-400 LOC each, ~1.5-2 KLOC harness total) + two test files (`lifecycle_test.go` ~150 LOC, `scenarios_test.go` ~1.0-1.4 KLOC).
+**Language/Version**: Go 1.24 (toolchain pinned in `go.mod`).
+**Primary Dependencies**: stdlib only — `testing`, `net/http/httptest`, `net`, `log/slog`, `crypto/ecdsa`, `runtime`, `sync`, `time`, `os`, `os/exec`. Plus in-module packages: `internal/testutil`, `internal/supervise`, `internal/server`, `internal/audit`, `internal/token`, `internal/vault`, `internal/vault/securebytes`, `internal/transport/sign`, `internal/transport/ecies`, `internal/keys`, `internal/supervise/config`, `internal/cli` (for any CLI seams the scenarios exercise).
+**No new direct `go.mod` deps**: Constitution XI forbids it without justification; none required.
+**Storage**: Per-scenario `t.TempDir()` ephemeral state (vault file, audit JSONL, pidfile, status socket); none shared across scenarios.
+**Testing**: `go test -race -tags=integration ./tests/integration/...` (driven via `magex test:race -tags=integration`).
+**Target Platform**: macOS arm64 + Linux amd64 (the v0.1.0 OS matrix); status-socket-path resolution bypassed via explicit absolute paths in `cfg.StatusSocket` so neither OS-default code path is exercised by scenarios.
+**Project Type**: Single project (Go module). New top-level directory `tests/integration/` with one sub-package `tests/integration/harness/`.
+**Performance Goals**: Suite < 120 s wall-clock on a developer-class machine (M-series Mac / Linux amd64 ≥ 8 cores). Budget breakdown in research.md §R10.
+**Constraints**:
+- Zero outbound network egress to any non-loopback host (spec FR-012 + SC-004).
+- Zero `t.Parallel` at scenario level (spec FR-022).
+- Zero `t.Skip` (spec FR-001).
+- Zero `time.Sleep` to drive a documented transition (use `runtime.Gosched()` bounded poll + injectable clock).
+- Zero secret-bytes coercion outside the two existing Constitution-X-permitted sites already audited in SDD-24.
+- Zero new exported methods on locked SDD-19..24 types (research.md §R7 resolves the clock seam without touching locks).
+**Scale/Scope**: 17 test functions × ~50–80 LOC each ≈ 1300 scenario LOC; 6 harness files × ~120 LOC each ≈ 720 harness LOC; suite-wide setup ≈ 200 LOC. Total ≈ 2200 LOC of build-tagged test code.
 
 ## Constitution Check
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-The constitution’s eleven principles are evaluated against this chunk’s deliverable. **Result: PASS, zero violations, zero entries in Complexity Tracking.**
+Constitutional principles in scope (from spec.md Dependencies): **VIII** (Testing Discipline — TDD-mandatory; the gate enforced by AC-9/AC-10), **V** (Staleness is Visible — every documented alert must be operator-observable and the suite proves it), **IX** (Idiomatic Go Discipline — no goroutine leaks, no global mutable state, every goroutine owner+ctx+termination+recover), **X** (Observability & Redaction — sentinel-absent assertion is the integration-level proof of redaction).
 
-| Principle | Status | Disposition |
-|-----------|--------|-------------|
-| **I. Zero Files at Rest on Agent Machines** | ✅ pass | Harness state lives in `t.TempDir()`; never touches `~/.hush/`. Sentinels are injected as plaintext secrets ONLY into the test vault’s in-memory representation; `AssertSentinelAbsent` proves the byte never reaches disk outside the vault’s AES-GCM ciphertext. |
-| **II. Approval is Human, Approval is Phone** | ✅ pass | `testutil.DiscordStub` substitutes for the human; FR-025-12 forbids any alternative auto-approve path. Scenario 10 explicitly asserts the 503/fail-closed contract. |
-| **III. Defense in Depth Through Crypto Layering** | ✅ pass | Every layer is exercised end-to-end by the real packages — Argon2id → BIP32 → ES256K JWT → ECIES envelope → signed `/claim` → audit chain. The harness adds no new crypto surface and replaces no layer with a stub. |
-| **IV. Supervisor for Daemons, Wrap-Shell for Humans** | ✅ pass | Scenarios 2-15 drive real `internal/supervise.Store`+`Child`+`Refiller`+`Refresher`+`Grace`+`StatusServer`+`PidFile`. Scenario 1 is the only interactive-shell flow; the rest are supervisor flows. |
-| **V. Staleness is Visible, Failure is Loud** | ✅ pass | Every scenario whose documented outcome is an alert asserts the alert-payload shape against the mocked Discord. Status-socket assertions on supervisor scenarios prove the operator-visible freshness API works. Audit subsequence assertions prove every documented event appears in the documented order. |
-| **VI. Tailscale-Only, Never Public** | ✅ pass | The real `internal/server` is wired in-process via `httptest.Server` over a local listener; the `InterfaceLister` and `Listener` seams on `server.Deps` already accept test injections (the existing `internal/server/integration_test.go` proves this). No production-bind seam is loosened. |
-| **VII. CLI Design Standards** | ✅ pass | The harness is a Go test tree, not a binary. The two CLI scenarios that drive `hush supervise`/`client` execute the cobra command tree in-process (the existing `internal/cli/supervise_integration_test.go` is the template). No new global flag, exit code, or noun-verb surface is added. |
-| **VIII. Testing Discipline** | ✅ pass — **load-bearing** | This chunk **is** the AC-10 evidence. Every scenario has an audit-ordering assertion (FR-025-23), a final-state assertion (FR-025-6), a status-socket shape assertion (FR-025-8, supervisor scenarios), and a sentinel-absence assertion (FR-025-9). Suite ships with the race detector enabled (FR-025-18, SC-025-4). |
-| **IX. Idiomatic Go Discipline** | ✅ pass — **load-bearing** | No `init()`, no package-level mutable globals in the harness. Every goroutine the harness spawns has an owner + ctx + termination condition + top-frame `recover()`. The goroutine-leak detector in `harness/supervisor.go` snapshots `runtime.NumGoroutine()` pre/post each scenario and fails on leaks (FR-025-20, SC-025-5). |
-| **X. Observability & Redaction** | ✅ pass — **load-bearing** | The `harness/log_capture.go` `AssertSentinelAbsent` helper runs over every captured byte stream the scenario produces (operational `slog` records, audit JSONL after redaction, status-socket bytes, Discord-stub alert payloads, captured stdout/stderr, returned error message strings). Every secret in every scenario is constructed via `testutil.SentinelSecret(n)`. |
-| **XI. Native-First, Minimal Dependencies, Ephemeral Vault** | ✅ pass | Zero new direct `go.mod` dependencies. The suite consumes the existing `stretchr/testify` (in module since SDD-01) for assertions and the stdlib for everything else. No new crypto library, no new external service binding. |
+Each principle is evaluated against this plan's design (the six-file harness + 17 scenarios + four-contract assertion shape).
 
-**Re-check after Phase 1 design**: revisited at the end of this document — still PASS, zero violations.
+### Principle II (Approval is Human, Approval is Phone)
+
+- This is a test-only deliverable; no production approval path changes.
+- The Discord stub (`testutil.DiscordStub`) is a programmable substitute, NOT an auto-approve. Each scenario explicitly scripts approve/deny decisions; the no-script tail behaviour (`ApproveAll`) only fires when the scenario explicitly opts in.
+- **No production code path that "could auto-approve" is added.** The server's real `Approver` interface is fed through an adapter that translates `server.ApprovalRequest` ↔ `testutil.ApprovalRequest`; the adapter contains zero policy logic.
+- **PASS.**
+
+### Principle V (Staleness is Visible, Failure is Loud)
+
+- Spec FR-023 mandates every alert-emitting scenario asserts the corresponding Discord alert payload reached the stub with the documented `AlertClass`.
+- Spec FR-024 mandates the `[STALE] …` alerts are visually distinct in the captured Discord message stream.
+- The data-model.md §2 table makes each scenario's expected alert visible; the harness's `AssertAuditSubsequence` covers the corresponding `supervisor_stale_alert` audit emission.
+- Scenario 15 (log-pattern watchdog) explicitly asserts that an alert fires AND the state machine does NOT transition — the alert-only contract.
+- **PASS.**
+
+### Principle VIII (Testing Discipline)
+
+- AC-10 maps directly to this chunk; spec FR-001 forbids skipping any scenario.
+- Per-scenario assertions cover state, audit-order, status-socket shape, and sentinel-absence — the four contracts encode the AC's full surface.
+- Test names follow the locked pattern from `.github/tech-conventions/testing-standards.md` (PascalCase, `Test_<Function>_<Scenario>` shape).
+- Race detector mandatory (spec FR-011); 5-flake gate per FR-010.
+- Coverage gate: SDD-25's PRIMARY contribution to `internal/supervise` coverage is the end-to-end exercise of `Lifecycle.Run` through every documented path. The chunk doc's `Coverage target: 15/15 scenarios green` is the test-count gate; spec SC-008 reports the line-coverage gate (≥ 95% on `internal/supervise` combining unit + integration coverage).
+- No `t.Skip` permitted (spec FR-001); the harness exposes no skip helper (anti-API in `contracts/harness-api.md`).
+- **PASS.**
+
+### Principle IX (Idiomatic Go Discipline)
+
+- Every harness builder registers `t.Cleanup` for teardown; every goroutine the harness OR the real `internal/*` packages spawn has an owner, a ctx, an explicit termination, and a top-frame `recover` (carried in by SDD-24 + asserted by `TestSupervisor.AssertNoGoroutineLeak`).
+- No `init()` in any harness file (contract A in `contracts/harness-api.md`); the integration-child-mode dispatch in `lifecycle_test.go` uses `TestMain` (allowed by the `testing` package's contract) — not a Go `init()`.
+- No package-level mutable state in the harness; the canonical sentinel constant is the only package-level identifier, declared `const`.
+- `context.Context` is the first parameter of every harness method that does I/O.
+- Consumer-side single-method interfaces: `Validator`, `Alerts`, `Watchdog` already exist in `internal/supervise/lifecycle_interfaces.go` (locked by SDD-24); the harness injects test impls of these without adding new interfaces.
+- No `//go:build integration` files inside any production package (research.md §R7 resolves this without breaching the SDD-21 lock).
+- One use of `reflect` is contemplated in research.md §R7 for ticker injection on `*Refresher`; final resolution avoids `reflect` by driving the refill callback directly. Plan therefore claims **zero `reflect` usage**.
+- **PASS.**
+
+### Principle X (Observability & Redaction)
+
+- The four-contract per-scenario assertion shape ends with Contract D — `AssertSentinelAbsent` over six captured streams (data-model.md §4.6 list).
+- The fixture vault uses `testutil.SentinelSecret(N)` plaintext bytes; the assertion fails on any leaked byte at the offset.
+- The audit log is read by `os.ReadFile` and scanned for sentinels BEFORE any JSON-aware processing — a raw-byte sweep that catches even malformed leaks.
+- The harness's `LogCapture` replaces `slog.Default()` for the duration of each scenario via `slog.SetDefault` inside `t.Cleanup` (the existing harness sets `slog.SetDefault` at construction and restores on cleanup — already a known-good pattern in the repo).
+- No new `string(*SecureBytes)` site is introduced by this chunk. The two existing Constitution-X-permitted sites (JWT bearer header at `Snapshot.Token.Use` and child-env build at fork boundary) remain the only sites and are exercised by every scenario.
+- **PASS.**
+
+### Principle XI (Native-First, Minimal Dependencies, Ephemeral Vault)
+
+- Zero new direct `go.mod` dependencies. The harness uses stdlib + already-in-module helpers exclusively.
+- Per-scenario ephemeral vault directories under `t.TempDir()` — automatic OS-managed cleanup mirrors the "vault is ephemeral" production policy.
+- No backup of any fixture vault; each test produces its own from in-memory secrets via `testutil.NewTestVault`.
+- **PASS.**
+
+### Initial gate verdict
+
+**PASS** — no violations to record in Complexity Tracking. Plan proceeds.
 
 ## Project Structure
 
@@ -47,116 +109,132 @@ The constitution’s eleven principles are evaluated against this chunk’s deli
 
 ```text
 specs/025-lifecycle-harness/
-├── plan.md              # This file
-├── research.md          # Phase 0 — design decisions + rejected alternatives
-├── data-model.md        # Phase 1 — harness types + scenario entity model
-├── quickstart.md        # Phase 1 — how to run + how to add a scenario
+├── plan.md                          # This file (/speckit-plan command output)
+├── research.md                      # Phase 0 — decisions + rejected alternatives
+├── data-model.md                    # Phase 1 — Scenario entity catalogue + harness types
+├── quickstart.md                    # Phase 1 — developer entry points (run, debug, extend)
 ├── contracts/
-│   ├── harness-api.md           # Phase 1 — exported harness builder API (signatures evolve; doc the contract)
-│   └── scenario-assertions.md   # Phase 1 — the 4 mandatory assertion contracts every scenario MUST satisfy
-└── tasks.md             # Phase 2 — produced by /speckit-tasks, NOT this command
+│   ├── harness-api.md               # Phase 1 — locked behavioural contract (signatures illustrative)
+│   └── scenario-assertions.md       # Phase 1 — locked four-contract assertion shape
+├── checklists/                      # carried over from /speckit-clarify (if produced)
+├── spec.md                          # /speckit-specify + /speckit-clarify output (locked)
+└── tasks.md                         # /speckit-tasks output — NOT updated by /speckit-plan
 ```
 
 ### Source Code (repository root)
 
 ```text
-tests/
-└── integration/                       # NEW — only place AC-10 lives
-    ├── harness/                       # NEW Go package: tests/integration/harness
-    │   ├── vault.go                   # TestVault helper: temp-dir vault via testutil.NewTestVault
-    │   │                              # + state-dir setup + clients.json fixture
-    │   ├── server.go                  # TestServer: real internal/server in-process (httptest.Server-backed),
-    │   │                              # validator-upstream httptest mocks (Anthropic/OpenAI/GitHub/Google AI),
-    │   │                              # stubAsApprover adapter (DiscordStub → server.Approver),
-    │   │                              # ClockSyncProbe + InterfaceLister + Listener seam injections
-    │   ├── discord.go                 # TestDiscord wrapping testutil.DiscordStub:
-    │   │                              # programmable approval / connectivity / rate-limit sequences,
-    │   │                              # alert-payload recorder (interface-typed; production discord.Alerts
-    │   │                              # will satisfy it when SDD-28 lands)
-    │   ├── supervisor.go              # TestSupervisor: composes real internal/supervise primitives
-    │   │                              # (Store, NewRefiller, NewRefresher, NewGrace, NewStatusServer,
-    │   │                              # AcquirePidFile, NewChild), drives transitions, controllable clock
-    │   │                              # (func() time.Time), goroutine-leak detector via runtime.NumGoroutine
-    │   │                              # pre/post snapshot, audit subsequence assertion helper,
-    │   │                              # status-socket-client helper (dial+read+unmarshal FR-12 JSON)
-    │   ├── child.go                   # TestChild: programmable child process via a small
-    │   │                              # //go:build integration test-helper binary (cmd/integration-child)
-    │   │                              # OR via os.Executable() re-invocation pattern. Exit-code, lifetime,
-    │   │                              # stdout/stderr-pattern emission controllable per scenario.
-    │   ├── log_capture.go             # slog handler chain capturing every record to a sync.Buffer;
-    │   │                              # AssertSentinelAbsent(t, streams...) covers operational log +
-    │   │                              # audit JSONL + status-socket bytes + Discord-stub alert payloads +
-    │   │                              # captured stdout/stderr + error message strings
-    │   └── doc.go                     # Package doc; build-tag explanation
-    ├── lifecycle_test.go              # Suite-wide TestMain (no t.Parallel at top); each
-    │                                  # Test_Scenario_NN_<slug> is declared here as the
-    │                                  # canonical entry point delegating to one builder in scenarios_test.go
-    └── scenarios_test.go              # The 15 scenarios' bodies. Implementations per FR-025-3..FR-025-10.
-                                       # File MAY split into scenarios_a_test.go, _b_test.go if a single
-                                       # 1.4-KLOC file becomes unreadable; the build-tag and package stay
-                                       # identical. (Default: single file; split only on demonstrated need.)
+hush/
+├── internal/                        # production packages — UNMODIFIED by this chunk
+│   ├── audit/
+│   ├── cli/
+│   ├── config/
+│   ├── discord/
+│   ├── keychain/
+│   ├── keys/
+│   ├── logging/
+│   ├── server/
+│   ├── supervise/                   # SDD-24 orchestrator lives here — driven, not modified
+│   │   ├── lifecycle.go
+│   │   ├── lifecycle_*.go
+│   │   ├── config/
+│   │   └── …
+│   ├── testutil/                    # SDD-04 helpers — consumed via existing exported API
+│   ├── token/
+│   ├── transport/{ecies,sign}/
+│   └── vault/{securebytes/}
+└── tests/                           # NEW top-level test tree (created by this chunk)
+    └── integration/
+        ├── harness/                 # private sub-package, build-tagged //go:build integration
+        │   ├── vault.go             # TestVault — fixture vault + clients.json registry
+        │   ├── server.go            # TestServer — real internal/server in-process
+        │   ├── discord.go           # TestDiscord — testutil.DiscordStub + adapter
+        │   ├── supervisor.go        # TestSupervisor — composes Lifecycle Deps + drives Run
+        │   ├── child.go             # TestChild — os.Executable() re-invocation
+        │   └── log_capture.go       # LogCapture + AssertSentinelAbsent
+        ├── lifecycle_test.go        # suite-wide setup; TestMain (if needed) for integration-child-mode dispatch
+        └── scenarios_test.go        # the 17 Test_Scenario_NN_<slug> functions
 ```
 
-**Structure Decision**: New top-level `tests/integration/` tree per the chunk contract. The harness lives in a sub-package (`tests/integration/harness`) so test files can `import "github.com/mrz1836/hush/tests/integration/harness"` and the harness’s exported types are addressable. All test files (`*_test.go`) AND every harness file are gated by `//go:build integration`; without the tag, `go test ./...` compiles zero files in this tree (SC-025-11). Package declaration: harness files declare `package harness`; the two test files declare `package integration_test` to avoid leaking test-only symbols.
+Every file under `tests/integration/` (including the `harness/` sub-package) carries `//go:build integration` as the first non-comment line. Default `go test ./...` compiles zero files in this tree (spec FR-008).
 
-The chunk contract enumerates the harness files; we follow it verbatim. **Clock seam, validator upstream HTTP mocks, audit subsequence helper, status-socket client, and goroutine-leak detector are threaded into the six listed harness files** rather than spawning new files. Placement rationale is in [research.md](research.md#harness-file-allocation). The optional `cmd/integration-child` helper-binary lives at `tests/integration/harness/cmdchild/main.go` if the os.Executable() approach proves insufficient for some scenario — preference is the os.Executable() approach, decided in research.md.
+**Structure Decision**: Single Go project. The new `tests/integration/` tree is one Go test package plus one private sub-package (`harness/`). Test files in `tests/integration/` live in `package integration_test` (the conventional external-test-package pattern, so the harness import is `harness "github.com/mrz1836/hush/tests/integration/harness"` and scenario tests never see harness internals); the harness sub-package is `package harness`. Build tags isolate everything from default builds. No production code is modified by this chunk.
+
+## Phase 0 — Outline & Research
+
+The Phase 0 output is [`research.md`](research.md). It records seven design decisions (harness file allocation, Refresher clock-injection strategy, audit-event subsequence assertion algorithm, goroutine-leak detection, validator-upstream HTTP mocks, programmable child-process construction, status-socket client) plus a cross-cutting principle audit. Every decision has a stated rationale and a rejected alternative. Zero `NEEDS CLARIFICATION` markers remain (all four candidates were resolved during `/speckit-clarify` and recorded in `spec.md §Clarifications`).
+
+**Output**: `research.md` (already on disk from clarify-phase; unchanged by /speckit-plan).
+
+## Phase 1 — Design & Contracts
+
+**Prerequisites**: `research.md` complete (verified above).
+
+### 1. Entities → `data-model.md`
+
+The Phase 1 entity model is the *test-fixture* entity model. [`data-model.md`](data-model.md) captures:
+
+- **§1 Scenario** — the canonical entity, with `Number`, `Slug`, `Source`, `Type`, `DocumentedFinalState`, `DocumentedAuditEvents`, `DocumentedStatusProjection`, `SentinelInjectionPoint`, `MockedBoundaries` fields. Validation rules tie each field back to a spec FR.
+- **§2 The 17 Scenario test functions** — the normative catalogue. Each row supplies (test name verbatim from spec FR-002, type, final state, ordered audit events, status-socket-required flag). **This table is the FR-005 deferral resolution**: it is the canonical per-scenario audit-event ordering table that spec FR-005 said plan-phase would produce.
+- **§3 Scenario 1 compound final-state** — the four-tuple from LIFECYCLE-SCENARIOS §1 (health flags, child exit code, token-store state, approval DM count).
+- **§4 Harness types** — `TestVault`, `TestServer`, `TestDiscord`, `TestSupervisor`, `TestChild`, `LogCapture` — with method tables. Signatures are illustrative (per the SDD-25 PACKAGE-MAP entry contract); the behavioural contract is locked.
+- **§5 Suite topology** — entity cardinality per scenario.
+
+### 2. Contracts → `contracts/`
+
+Two contract documents are locked in Phase 1:
+
+- [`contracts/harness-api.md`](contracts/harness-api.md) — the **builder contract** every harness helper satisfies (cleanup-registered, isolated, fail-loud, no-external-network) and the **anti-API** list of helpers that MUST NOT exist (no `harness.Reset()`, no global state, no `harness.Sleep`, no `harness.SkipScenario`, no `harness.SuppressSentinelLeak`).
+- [`contracts/scenario-assertions.md`](contracts/scenario-assertions.md) — the **four mandatory assertion contracts** every `Test_Scenario_NN_<slug>` function must satisfy (final state, audit subsequence, status-socket shape, sentinel-absence) and the **anti-shapes** that violate them.
+
+The status-socket wire shape is NOT re-locked here — it is owned by SDD-22 and present in `internal/supervise/socket.go::statusJSON`. The harness's `AssertStatusShape` consumes the wire bytes and unmarshals into a *mirror* DTO local to the harness so the assertion is decoupled from any future SDD-22 wire changes.
+
+### 3. `quickstart.md`
+
+[`quickstart.md`](quickstart.md) is the developer's entry document: how to run the suite, run a single scenario, verify default-build invisibility, add a regression to an existing scenario, add a new harness builder, debug a failure, and avoid the common gotchas (`t.Parallel`, real upstream URLs, `time.Sleep` for documented transitions, "almost-passing" scenarios).
+
+### 4. Agent context update
+
+The active-feature pointer in [`CLAUDE.md`](../../CLAUDE.md) between `<!-- SPECKIT START -->` and `<!-- SPECKIT END -->` is updated to point at this plan, replacing the prior SDD-24 marker. The replacement is in this plan's commit (not a separate /speckit-plan side effect).
+
+## Phase 2 — Tasks
+
+Out of scope for `/speckit-plan`. `tasks.md` already exists from a prior `/speckit-tasks` run; future re-runs of `/speckit-tasks` will be informed by this plan's data-model.md §2 catalogue (the locked 17-row table) and the four-contract shape in `contracts/scenario-assertions.md`.
 
 ## Complexity Tracking
 
-> **Empty by design.** No Constitution Check violations triggered, so no entries.
+> **No Constitution Check violations.** This table is intentionally empty.
 
 | Violation | Why Needed | Simpler Alternative Rejected Because |
-|-----------|------------|-------------------------------------|
-| (none)    | (none)     | (none)                              |
+|-----------|------------|--------------------------------------|
+| *(none)* | — | — |
 
----
+The chunk introduces zero new exported symbols on locked production packages, zero new `go.mod` dependencies, zero new init() functions, zero new package-level mutable state, zero new `string(*SecureBytes)` sites. Every gate passes by construction.
 
-## Phase 0: Outline & Research → [research.md](research.md)
+## Re-evaluated Constitution Check (post-Phase 1 design)
 
-**Unknowns extracted from Technical Context**: zero `NEEDS CLARIFICATION` markers — the chunk contract + spec already lock every choice. The research document captures the design decisions the plan implies (file allocation, clock-injection strategy for the Refresher, audit-subsequence algorithm, goroutine-leak detection approach, validator-mock pattern, child-process construction approach, and status-socket-client approach), each with rationale and the alternative rejected.
+The five principles in scope (II, V, VIII, IX, X, XI) were each re-evaluated against the Phase 1 artefacts:
 
-## Phase 1: Design & Contracts
+- **II**: data-model.md §4.3 (`TestDiscord`) confirms approve/deny decisions are scripted per-scenario; no auto-approve path is introduced.
+- **V**: data-model.md §2 confirms every alert-emitting scenario has a matching `supervisor_stale_alert` audit row; `contracts/scenario-assertions.md` Contract B enforces it.
+- **VIII**: data-model.md §2's 17 rows match spec FR-002 verbatim; `contracts/scenario-assertions.md` enforces no `t.Skip`, no soft assertions.
+- **IX**: data-model.md §4.4 confirms `TestSupervisor.AssertNoGoroutineLeak` is registered via `t.Cleanup`; no harness goroutine outlives the test.
+- **X**: data-model.md §4.6 enumerates the six captured streams; `contracts/scenario-assertions.md` Contract D requires `AssertSentinelAbsent` over all six.
+- **XI**: harness uses stdlib + already-in-module packages only; verified by source-file imports listed in §Technical Context.
 
-**Prerequisites**: research.md complete (see above).
+**Verdict**: **PASS post-design**. Plan is ready for `/speckit-tasks`.
 
-1. **Entities** → [data-model.md](data-model.md). The "data model" here is the harness type model + the canonical Scenario entity (the named test, its documented events, its documented final state, its documented audit ordering, its documented status-socket projection, and its sentinel).
+## Cross-references
 
-2. **Interface contracts** → [contracts/](contracts/):
-   - [contracts/harness-api.md](contracts/harness-api.md) — exported builder signatures consumers depend on (`harness.NewSupervisor(t, …)`, `harness.NewDiscord(t)`, `harness.NewServer(t, …)`, `harness.NewChild(t, …)`, `harness.NewVault(t, …)`, `harness.AssertSentinelAbsent(t, …)`, `harness.AssertAuditSubsequence(t, recorded, documented)`, `harness.StatusSocketGet(t, path)`). Signatures evolve as new scenarios surface needs; this document captures the contract, not the literal Go signatures, per SDD-25’s PACKAGE-MAP entry.
-   - [contracts/scenario-assertions.md](contracts/scenario-assertions.md) — the four mandatory assertion contracts every `Test_Scenario_NN_<slug>` function MUST satisfy (FR-025-6, FR-025-7, FR-025-8, FR-025-9). Includes the canonical assertion helper names + the exact byte-stream coverage list for sentinel-absence (FR-025-26).
-
-3. **Agent context update** — the `<!-- SPECKIT START -->`…`<!-- SPECKIT END -->` block in `/Users/mrz/projects/hush/CLAUDE.md` is updated to point at this plan.
-
----
-
-## Re-check Constitution Check (post-design)
-
-Re-evaluated against the file layout, harness file allocation, clock-injection strategy, and assertion contracts decided above:
-
-| Principle | Status |
-|-----------|--------|
-| I  | ✅ unchanged — temp-dir state only |
-| II | ✅ unchanged — DiscordStub is the only approval seam |
-| III | ✅ unchanged — every layer exercised end-to-end |
-| IV | ✅ unchanged — real supervise primitives drive supervisor scenarios |
-| V  | ✅ unchanged — every alert/audit/status assertion is mandatory |
-| VI | ✅ unchanged — existing test seams reused; no production bind loosened |
-| VII | ✅ unchanged — no CLI surface added |
-| VIII | ✅ unchanged — TDD enforced; suite is the AC-10 contract |
-| IX | ✅ unchanged — goroutine-leak detector + explicit goroutine lifecycle on harness |
-| X  | ✅ unchanged — `AssertSentinelAbsent` covers all captured streams |
-| XI | ✅ unchanged — zero new go.mod deps |
-
-**Result: PASS, no Complexity Tracking entries required.**
-
----
-
-## Stop & Report
-
-- **Branch**: `025-lifecycle-harness`
-- **IMPL_PLAN**: `/Users/mrz/projects/hush/specs/025-lifecycle-harness/plan.md`
-- **Phase 0 artifact**: `specs/025-lifecycle-harness/research.md`
-- **Phase 1 artifacts**: `specs/025-lifecycle-harness/data-model.md`, `specs/025-lifecycle-harness/contracts/harness-api.md`, `specs/025-lifecycle-harness/contracts/scenario-assertions.md`, `specs/025-lifecycle-harness/quickstart.md`
-- **Agent context**: `CLAUDE.md` SPECKIT marker updated to this plan.
-
-Phase 2 (`tasks.md`) is produced by `/speckit-tasks` in a fresh session, per SDD-25 Prompt 4.
+| Topic | Document |
+|-------|----------|
+| Spec | [spec.md](spec.md) |
+| Research | [research.md](research.md) |
+| Data model | [data-model.md](data-model.md) |
+| Harness API contract | [contracts/harness-api.md](contracts/harness-api.md) |
+| Assertion contract | [contracts/scenario-assertions.md](contracts/scenario-assertions.md) |
+| Quickstart | [quickstart.md](quickstart.md) |
+| Source-of-truth scenarios | [`docs/LIFECYCLE-SCENARIOS.md`](../../docs/LIFECYCLE-SCENARIOS.md) |
+| AC-10 row to update at implement-phase | [`docs/AC-MATRIX.md`](../../docs/AC-MATRIX.md) |
+| SDD chunk contract | [`docs/sdd/SDD-25.md`](../../docs/sdd/SDD-25.md) |
+| Constitution | [`.specify/memory/constitution.md`](../../.specify/memory/constitution.md) |

@@ -174,7 +174,7 @@ crash.
 |--------------|-----------|--------|
 | SDD-04 (testutil — supports all coverage) | `internal/testutil/*_test.go` | pending |
 | SDD-31 (release gates) | `.github/workflows/release-gates.yml` (green run + codecov badge); CI cron with 6 fuzz targets ≥ 60s clean | pending |
-| **SDD-25** (provides the integration coverage that lifts AC-10 paths) | `tests/integration/scenarios_test.go` (15/15 green with `-race`) | pending |
+| **SDD-25** (provides the integration coverage that lifts AC-10 paths) | `tests/integration/scenarios_test.go` (17/17 green with `-race`); harness skeleton + Scenario 14 (`Test_Scenario_14_DuplicateStart`) green in chunk 1 — remaining 16 scenarios surface as `t.Fatalf` until upstream wiring lands | pending |
 
 **Required fuzz targets (Constitution VIII §2):**
 
@@ -215,23 +215,39 @@ scenarios documented in `docs/LIFECYCLE-SCENARIOS.md`.
 **Owning chunk for the integration harness:** **SDD-25** (explicit
 AC-10 owner — the lifecycle integration harness).
 
-| # | Scenario | Test name | Status |
+**Locked symbol-name list** (per spec FR-002 — 17 functions; 15 scenarios with Scenario 9 split into Strict/Grace and Scenario 11 split into Ready/BootTimeout):
+
+| # | Scenario | Test name (`tests/integration/scenarios_test.go::…`) | Status |
 |---|----------|-----------|--------|
-| 1 | First interactive shell request | `Test_Scenario_01_FirstInteractive` | pending |
-| 2 | First daemon bootstrap | `Test_Scenario_02_DaemonBootstrap` | pending |
-| 3 | Clean child exit → silent refill | `Test_Scenario_03_CleanExitSilentRefill` | pending |
-| 4 | Child crash within valid session TTL | `Test_Scenario_04_ChildCrashSilentRefill` | pending |
-| 5 | Child exit 78 stale-credential contract | `Test_Scenario_05_Exit78StaleCreds` | pending |
-| 6 | Validator catches bad secret before child start | `Test_Scenario_06_ValidatorBlocksChild` | pending |
-| 7 | Vault server restart (401 unknown-jti) | `Test_Scenario_07_VaultRestart` | pending |
+| 1 | First interactive shell request | `Test_Scenario_01_InteractiveShellRequest` | pending |
+| 2 | First daemon bootstrap | `Test_Scenario_02_FirstDaemonBootstrap` | pending |
+| 3 | Clean child exit → silent refill | `Test_Scenario_03_CleanChildExitRefill` | pending |
+| 4 | Child crash within valid session TTL | `Test_Scenario_04_ChildCrashRefill` | pending |
+| 5 | Child exit 78 stale-credential contract | `Test_Scenario_05_ChildExit78Stale` | pending |
+| 6 | Validator catches bad secret before child start | `Test_Scenario_06_ValidatorFailure` | pending |
+| 7 | Vault server restart (401 unknown-jti) | `Test_Scenario_07_VaultRestartInvalidatesSession` | pending |
 | 8 | Daytime refresh-window prompt | `Test_Scenario_08_DaytimeRefresh` | pending |
-| 9 | Overnight expiry with and without grace cache | `Test_Scenario_09_OvernightExpiry_{Strict,Grace}` | pending |
+| 9a | Overnight expiry — strict mode | `Test_Scenario_09_OvernightExpiry_Strict` | pending |
+| 9b | Overnight expiry — grace-cache mode | `Test_Scenario_09_OvernightExpiry_Grace` | pending |
 | 10 | Discord unavailable during new claim | `Test_Scenario_10_DiscordUnavailable` | pending |
-| 11 | Tailscale boot retry / startup ordering recovery | `Test_Scenario_11_TailscaleBootRetry` | pending |
-| 12 | Agent status check before long task | `Test_Scenario_12_StatusGate` | pending |
-| 13 | Secret rotated on vault host during active daemon session | `Test_Scenario_13_RotationMidSession` | pending |
-| 14 | Duplicate supervisor start attempt | `Test_Scenario_14_DuplicateSupervisor` | pending |
-| 15 | Log-pattern watchdog sees auth failure string | `Test_Scenario_15_LogPatternAlert` | pending |
+| 11a | Tailscale boot retry succeeds | `Test_Scenario_11_TailscaleReady` | pending |
+| 11b | Tailscale boot retry exhausts budget | `Test_Scenario_11_BootTimeout` | pending |
+| 12 | Agent status check before long task | `Test_Scenario_12_AgentStatusCheck` | pending |
+| 13 | Secret rotated on vault host during active daemon session | `Test_Scenario_13_MidSessionRotation` | pending |
+| 14 | Duplicate supervisor start attempt | `Test_Scenario_14_DuplicateStart` | **green** (SDD-25 chunk 1) |
+| 15 | Log-pattern watchdog sees auth failure string | `Test_Scenario_15_LogPatternMatch` | pending |
+
+**SDD-25 chunk-1 delivery (this PR)**: harness scaffolding shipped —
+`tests/integration/lifecycle_test.go` (`TestMain` + child-mode dispatcher +
+loopback `RoundTripper` allow-list), `tests/integration/scenarios_test.go`
+(17 locked `Test_Scenario_*` symbols), `tests/integration/harness/` (6-file
+inventory: `log_capture.go`, `vault.go`, `discord.go`, `child.go`,
+`server.go`, `supervisor.go`), and **Scenario 14 green under `-race` with
+5/5 flake-free runs**. The remaining 16 scenarios surface as `t.Fatalf`
+"harness wiring not yet complete" failures on every invocation per spec
+FR-001 (no `t.Skip` permitted) — those failures are the load-bearing
+operator signal that AC-10 is still partially unmet. AC-10 status reaches
+`green` only when all 17 pass on a fully-shipped upstream.
 
 **Supporting chunks** (provide the building blocks for these scenarios):
 
