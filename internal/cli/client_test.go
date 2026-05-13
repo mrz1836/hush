@@ -17,17 +17,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mrz1836/hush/internal/supervise"
+	"github.com/mrz1836/hush/internal/testutil"
 )
 
 // shortTempBaseClient returns a temp dir short enough for macOS Unix
 // sockets. Duplicates shortTempBase to keep the test file independent.
 func shortTempBaseClient(t *testing.T) string {
 	t.Helper()
-	d, err := os.MkdirTemp("/tmp", "h23c-")
-	require.NoError(t, err)
-	require.NoError(t, os.Chmod(d, 0o700))
-	t.Cleanup(func() { _ = os.RemoveAll(d) })
-	return d
+	return testutil.ShortTempDir(t, "h23c-")
 }
 
 // fakeStatusServer accepts one connection, reads the verb line, and

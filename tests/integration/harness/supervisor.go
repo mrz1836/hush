@@ -25,6 +25,7 @@ import (
 	"github.com/mrz1836/hush/internal/audit"
 	"github.com/mrz1836/hush/internal/supervise"
 	superviseconfig "github.com/mrz1836/hush/internal/supervise/config"
+	"github.com/mrz1836/hush/internal/testutil"
 )
 
 // jsonUnmarshal is a tiny wrapper so callers can swap to a faster decoder
@@ -494,14 +495,7 @@ func buildSupervisorConfig(t *testing.T, opts SupervisorOpts) *superviseconfig.S
 	t.Helper()
 	dir := opts.Vault.Dir()
 	pidPath := filepath.Join(dir, fmt.Sprintf("%s.pid", opts.Name))
-	socketDir, err := os.MkdirTemp("/tmp", "hsock-")
-	if err != nil {
-		t.Fatalf("harness.buildSupervisorConfig: mkdir socket dir: %v", err)
-	}
-	if err := os.Chmod(socketDir, 0o700); err != nil {
-		t.Fatalf("harness.buildSupervisorConfig: chmod socket dir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+	socketDir := testutil.ShortTempDir(t, "hsock-")
 	socketPath := filepath.Join(socketDir, "s.sock")
 	auditPath := filepath.Join(dir, fmt.Sprintf("%s-audit.jsonl", opts.Name))
 
