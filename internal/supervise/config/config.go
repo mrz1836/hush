@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
@@ -31,6 +32,7 @@ type Supervisor struct {
 	CacheGraceTTL          time.Duration
 	StatusSocket           string
 	PIDFile                string
+	AuditLog               string
 	LogLevel               string
 	Scope                  []string
 
@@ -88,6 +90,7 @@ type supervisorDecoded struct {
 	CacheGraceTTL          *string  `toml:"cache_grace_ttl"`
 	StatusSocket           string   `toml:"status_socket"`
 	PIDFile                string   `toml:"pid_file"`
+	AuditLog               string   `toml:"audit_log"`
 	LogLevel               string   `toml:"log_level"`
 	Scope                  []string `toml:"scope"`
 
@@ -226,8 +229,14 @@ func materialize(d supervisorDecoded) (*Supervisor, error) {
 	if s.RefreshNudgeBefore, err = parseDuration(d.RefreshNudgeBefore, DefaultRefreshNudgeBefore, "refresh_nudge_before"); err != nil {
 		return nil, err
 	}
+	if s.RefreshNudgeBefore > MaxRefreshNudgeBefore {
+		return nil, fmt.Errorf("%w: refresh_nudge_before=%s, cap=%s", ErrRefreshNudgeBeforeTooLong, s.RefreshNudgeBefore, MaxRefreshNudgeBefore)
+	}
 	if s.BootRetryTimeout, err = parseDuration(d.BootRetryTimeout, DefaultBootRetryTimeout, "boot_retry_timeout"); err != nil {
 		return nil, err
+	}
+	if s.BootRetryTimeout > MaxBootRetryTimeout {
+		return nil, fmt.Errorf("%w: boot_retry_timeout=%s, cap=%s", ErrBootRetryTimeoutTooLong, s.BootRetryTimeout, MaxBootRetryTimeout)
 	}
 
 	cacheEnabled := DefaultCacheSecretsForRestart
@@ -265,6 +274,19 @@ func materialize(d supervisorDecoded) (*Supervisor, error) {
 		return nil, fmt.Errorf("hush/supervise/config: pid_file expand: %w", err)
 	}
 	s.PIDFile = pidFile
+
+	// audit_log defaults to <dirname(pid_file)>/<name>-audit.jsonl when
+	// absent. Operators may override with an explicit path; both code paths
+	// go through absPath for tilde-expand + lexical-clean enforcement.
+	if d.AuditLog == "" {
+		s.AuditLog = filepath.Join(filepath.Dir(pidFile), s.Name+"-audit.jsonl")
+	} else {
+		auditLog, alErr := absPath(d.AuditLog)
+		if alErr != nil {
+			return nil, fmt.Errorf("hush/supervise/config: audit_log expand: %w", alErr)
+		}
+		s.AuditLog = auditLog
+	}
 
 	logLevel := d.LogLevel
 	if logLevel == "" {

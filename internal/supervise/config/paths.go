@@ -40,10 +40,17 @@ func expandHome(p string) (string, error) {
 
 // absPath expands a leading "~" and then canonicalises the path via
 // filepath.Abs (resolves relative paths against the working directory).
+// The lexical form (post-tilde-expansion, pre-Abs) is rejected as
+// non-clean if filepath.Clean would have changed it — this catches
+// "..", duplicate slashes, and trailing "/.". Defense-in-depth against
+// operator typos and confused-deputy paths.
 func absPath(p string) (string, error) {
 	expanded, err := expandHome(p)
 	if err != nil {
 		return "", err
+	}
+	if cleaned := filepath.Clean(expanded); cleaned != expanded {
+		return "", fmt.Errorf("%w: %q (cleaned form would be %q)", ErrPathNotClean, expanded, cleaned)
 	}
 	abs, err := filepath.Abs(expanded)
 	if err != nil {

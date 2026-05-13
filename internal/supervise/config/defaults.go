@@ -28,8 +28,10 @@ var (
 //
 //nolint:gochecknoglobals // sentinel-class: set-once at package load, never mutated
 var (
-	MaxGraceWindow  = 4 * time.Hour  // Constitution IV: TTL discipline + Layer-6 audit boundary
-	MaxRequestedTTL = 24 * time.Hour // v0.1.0 ceiling per docs/CONFIG-SCHEMA.md max_supervisor_ttl
+	MaxGraceWindow        = 4 * time.Hour  // Constitution IV: TTL discipline + Layer-6 audit boundary
+	MaxRequestedTTL       = 24 * time.Hour // v0.1.0 ceiling per docs/CONFIG-SCHEMA.md max_supervisor_ttl
+	MaxBootRetryTimeout   = 1 * time.Hour  // operator typo guard: 100h would silently disable boot timeout
+	MaxRefreshNudgeBefore = 6 * time.Hour  // bounded to a fraction of MaxRequestedTTL
 )
 
 // validatorAllowList is the fixed set of validator type names accepted in the

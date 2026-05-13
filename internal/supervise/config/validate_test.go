@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -666,6 +667,68 @@ func TestValidateServerURL_ParseError(t *testing.T) {
 	err := validateServerURL("http://bad host\x7f/")
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrServerURLInvalid))
+}
+
+// TestLoad_StatusSocketRejectsNonCleanPath asserts that absPath refuses
+// paths whose lexical form contains ".." components or other non-canonical
+// elements (FR-014 defense-in-depth — operator typo guard).
+func TestLoad_StatusSocketRejectsNonCleanPath(t *testing.T) {
+	t.Parallel()
+	body := strings.Replace(minimalBody(t),
+		`status_socket = "/tmp/hush/supervise-example-daemon.sock"`,
+		`status_socket = "/tmp/hush/../etc/passwd"`, 1)
+	_, err := loadBody(t, body)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrPathNotClean), "want ErrPathNotClean, got %v", err)
+}
+
+// TestLoad_PIDFileRejectsNonCleanPath same as above for pid_file.
+func TestLoad_PIDFileRejectsNonCleanPath(t *testing.T) {
+	t.Parallel()
+	body := strings.Replace(minimalBody(t),
+		`pid_file = "/tmp/hush/supervise-example-daemon.pid"`,
+		`pid_file = "/var/run/hush/../../etc/passwd.pid"`, 1)
+	_, err := loadBody(t, body)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrPathNotClean), "want ErrPathNotClean, got %v", err)
+}
+
+// TestLoad_BootRetryTimeoutCap asserts that boot_retry_timeout > 1h is
+// rejected (operator typo guard: 100h would silently disable boot timeout).
+func TestLoad_BootRetryTimeoutCap(t *testing.T) {
+	t.Parallel()
+	body := "boot_retry_timeout = \"100h\"\n" + minimalBody(t)
+	_, err := loadBody(t, body)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrBootRetryTimeoutTooLong), "want ErrBootRetryTimeoutTooLong, got %v", err)
+}
+
+// TestLoad_BootRetryTimeoutAtCap asserts the boundary: exactly 1h is accepted.
+func TestLoad_BootRetryTimeoutAtCap(t *testing.T) {
+	t.Parallel()
+	body := "boot_retry_timeout = \"1h\"\n" + minimalBody(t)
+	s, err := loadBody(t, body)
+	require.NoError(t, err)
+	assert.Equal(t, time.Hour, s.BootRetryTimeout)
+}
+
+// TestLoad_RefreshNudgeBeforeCap asserts that refresh_nudge_before > 6h is
+// rejected.
+func TestLoad_RefreshNudgeBeforeCap(t *testing.T) {
+	t.Parallel()
+	body := "refresh_nudge_before = \"7h\"\n" + minimalBody(t)
+	_, err := loadBody(t, body)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrRefreshNudgeBeforeTooLong), "want ErrRefreshNudgeBeforeTooLong, got %v", err)
+}
+
+// TestAbsPath_CleanPathAccepted asserts the happy path: already-clean paths
+// pass through unchanged.
+func TestAbsPath_CleanPathAccepted(t *testing.T) {
+	t.Parallel()
+	out, err := absPath("/tmp/hush/x.sock")
+	require.NoError(t, err)
+	assert.Equal(t, "/tmp/hush/x.sock", out)
 }
 
 // writeConfigForValidate creates a minimal valid config file for Validate

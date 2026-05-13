@@ -30,12 +30,15 @@ var (
 	ErrCommandPathRelative = errors.New("hush/supervise/config: child.command first element must be an absolute path")
 
 	// Misc value-range errors.
-	ErrScopeEmpty             = errors.New("hush/supervise/config: scope must be a non-empty array")
-	ErrSessionTypeInvalid     = errors.New(`hush/supervise/config: session_type must be "supervisor"`)
-	ErrRequestedTTLOutOfRange = errors.New("hush/supervise/config: requested_ttl exceeds 24h ceiling")
-	ErrServerURLInvalid       = errors.New("hush/supervise/config: server_url must parse with http/https scheme and non-empty host")
-	ErrLogLevelInvalid        = errors.New("hush/supervise/config: log_level must be one of debug, info, warn, error")
-	ErrWatchdogRateInvalid    = errors.New("hush/supervise/config: watchdog.max_alerts_per_hour must be > 0")
+	ErrScopeEmpty                = errors.New("hush/supervise/config: scope must be a non-empty array")
+	ErrSessionTypeInvalid        = errors.New(`hush/supervise/config: session_type must be "supervisor"`)
+	ErrRequestedTTLOutOfRange    = errors.New("hush/supervise/config: requested_ttl exceeds 24h ceiling")
+	ErrServerURLInvalid          = errors.New("hush/supervise/config: server_url must parse with http/https scheme and non-empty host")
+	ErrLogLevelInvalid           = errors.New("hush/supervise/config: log_level must be one of debug, info, warn, error")
+	ErrWatchdogRateInvalid       = errors.New("hush/supervise/config: watchdog.max_alerts_per_hour must be > 0")
+	ErrPathNotClean              = errors.New("hush/supervise/config: path must be lexically clean (no .., duplicate slashes, or trailing /.)")
+	ErrBootRetryTimeoutTooLong   = errors.New("hush/supervise/config: boot_retry_timeout exceeds 1h cap")
+	ErrRefreshNudgeBeforeTooLong = errors.New("hush/supervise/config: refresh_nudge_before exceeds 6h cap")
 
 	// errNilSupervisor is returned by Supervisor.Validate when called on a
 	// nil receiver. Wraps ErrMissingRequiredField so the existing
