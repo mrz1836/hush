@@ -179,7 +179,7 @@ artifacts off disk.
 | ✅ SDD-21 | Refill + refresh + grace cache | `internal/supervise` | SDD-09, SDD-13, SDD-19 | [docs/sdd/SDD-21.md](sdd/SDD-21.md) |
 | ✅ SDD-22 | PID file + flock + Unix status socket | `internal/supervise` | SDD-19 | [docs/sdd/SDD-22.md](sdd/SDD-22.md) |
 | ✅ SDD-23 | `hush supervise` + `hush client status` + `hush client refresh` | `internal/cli` | SDD-14, SDD-18, SDD-19, SDD-20, SDD-21, SDD-22 | [docs/sdd/SDD-23.md](sdd/SDD-23.md) |
-| SDD-25 | Lifecycle integration harness (15 scenarios — explicit AC-10 owner) | `tests/integration/` | ALL of SDD-01..SDD-23 | [docs/sdd/SDD-25.md](sdd/SDD-25.md) |
+| ✅ SDD-25 | Lifecycle integration harness (15 scenarios — explicit AC-10 owner) | `tests/integration/` | ALL of SDD-01..SDD-23 | [docs/sdd/SDD-25.md](sdd/SDD-25.md) |
 | ✅ SDD-24 | Reserved orchestration glue (default skipped) | — | (only activated if SDD-25 surfaces a gap) | [docs/sdd/SDD-24.md](sdd/SDD-24.md) |
 
 ### Phase 6 — Validators + alerts

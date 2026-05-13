@@ -1,4 +1,4 @@
-# Feature Specification: Lifecycle Integration Harness (15 Scenarios — AC-10 Owner)
+# Feature Specification: Lifecycle Integration Harness (SDD-25)
 
 **Feature Branch**: `025-lifecycle-harness`
 **Created**: 2026-05-12
@@ -7,198 +7,210 @@
 
 ## Overview
 
-This chunk delivers the integration test suite that proves Acceptance Criterion AC-10. Fifteen named lifecycle scenarios from `docs/LIFECYCLE-SCENARIOS.md` are exercised end-to-end against the real `internal/*` packages (vault, server, supervisor, child, status socket, audit chain), with **only the external boundaries mocked** (Discord, Anthropic/OpenAI/GitHub/Google AI validator endpoints, NTP probe). Every other chunk's tests are unit- or fuzz-level; this suite is the AC-10 owner of record — the single place where the system is proven to work as a whole. The suite also lifts AC-9 (test infra completeness) by demonstrating that the in-tree integration tooling can express every lifecycle outcome the project promises.
+SDD-25 is the integration test suite that proves Acceptance Criterion AC-10 ("Supervisor lifecycle — 15 named scenarios") from [`docs/SPEC.md`](../../docs/SPEC.md). It runs the **real** supervisor, server, audit, token, vault, and Discord-bot packages in-process and drives them through the fifteen named operational paths documented in [`docs/LIFECYCLE-SCENARIOS.md`](../../docs/LIFECYCLE-SCENARIOS.md). Every other chunk in v0.1.0 owns unit and fuzz tests; **this is the only chunk that proves the system works as a whole.**
+
+The suite mocks exactly four external boundaries — Discord, the five provider validator endpoints (Anthropic, Anthropic-OAuth, OpenAI, Google AI, GitHub), the wall clock, and (for boot-retry scenarios) the Tailscale-reachability probe. Nothing else is mocked: real `internal/supervise`, `internal/server`, `internal/audit`, `internal/token`, `internal/vault`, `internal/transport/ecies`, `internal/transport/sign`, and `internal/keys` packages execute end-to-end.
+
+The deliverable is the explicit owner-of-record for AC-10 in [`docs/AC-MATRIX.md`](../../docs/AC-MATRIX.md). Until the suite is green, the v0.1.0 release gate is closed.
 
 ## Clarifications
 
 ### Session 2026-05-12
 
-- Q: How strict is the per-scenario audit-ordering assertion (FR-025-7)? → A: Relative ordering — the documented events appear in the documented order, but additional unmentioned audit events between them are permitted and do not fail the assertion.
-- Q: For Scenario 10 (Discord unavailable), which `/claim` origin does the test cover (the scenario doc permits "client or supervisor")? → A: Both — `Test_Scenario_10_DiscordUnavailable` ships as one parent function with two subtests (`Interactive` and `Supervisor`), each asserting 503 + no auto-approve + caller surfaces the failure.
-- Q: What is the policy when a scenario depends on production code owned by a chunk outside SDD-25's blocker list (SDD-26 validators, SDD-27 watchdog, SDD-28 alert classes)? → A: Implement all 15 scenarios against real production code; scenarios whose provider chunks are unshipped fail until those chunks land. No stubbing, no harness stand-ins for production behavior. SDD-25's AC-10 row reaches `green` only when all 15 scenarios pass against fully-shipped providers. The SDD-25 chunk contract's blocker list is treated as the floor for harness construction, not the ceiling for green-status.
-- Q: How does `Test_Scenario_01_FirstInteractive` (the only scenario with no supervisor) satisfy FR-025-6's "final state" assertion, given that LIFECYCLE-SCENARIOS.md §1's expected outcomes are properties rather than a named state? → A: Compound final-state — the test asserts (a) the vault server is healthy after the flow (`vault_loaded=true`, `discord_connected=true` via `/health`), (b) the wrapped child shell exited cleanly with the documented exit code, (c) the issued JWT's state in the server's token store reflects use-count consumption or expiry, and (d) each of the three §1 expected outcomes (no disk persistence, no log leakage, approval-DM-count exactly one) has a corresponding assertion.
+- Q: When a scenario documents a full flow including operator recovery (e.g., Scenario 5: stale alert → `awaiting-approval` → operator approves → supervisor refetches → child restarts), where does the test boundary fall? → A: Test asserts the operator-blocked terminal state and alert emission; recovery to `running` is out of scope for these scenarios. Scenario 13 (`hush client refresh`) owns the full refresh-then-resume path.
+- Q: Should Scenario 11 ("Tailscale not ready at boot") be split into two test functions like Scenario 9? → A: Yes — split into `Test_Scenario_11_TailscaleReady` (success branch, final state `running`) and `Test_Scenario_11_BootTimeout` (timeout branch, final state `stopped` + `AlertClassBootTimeout`). Total scenario test functions = 17 (15 + Scenario 9 split + Scenario 11 split).
+- Q: Where should the canonical list of 17 `Test_Scenario_NN_<slug>` names live so plan/tasks/implement phases all reference one authoritative source? → A: Pin all 17 names in this spec under FR-002. Plan/tasks reference the spec; AC-MATRIX update at implement-phase transcribes (not invents) the names.
+- Q: The LIFECYCLE-SCENARIOS "Required alert classes" section lists "Discord disconnected" and "Discord reconnected" but no documented scenario exercises a connection-state transition. Where do those alert classes get coverage? → A: Out of scope for SDD-25. The disconnect/reconnect signals originate in the Discord bot's connection-monitor loop (SDD-11) and have their own unit-test coverage there; CLAUDE.md confirms `ActionDiscordDisconnected`/`ActionDiscordReconnected` are emitted by code paths other than the supervisor orchestrator. Documented in Out of Scope.
+- Q: Where does the concrete `scenario → ordered audit events` table live (FR-005 says "documented order" but neither LIFECYCLE-SCENARIOS nor SPEC §FR-14 contains a per-scenario events list)? → A: Defer to plan-phase. plan.md produces a 17-row scenario-to-ordered-events table derived from the §FR-14 vocabulary and the scenario flows; spec FR-005 stays as-is (vocabulary source + ordering-strict semantics).
 
 ## User Scenarios & Testing *(mandatory)*
 
-### User Story 1 - Release manager: prove the system works end-to-end (Priority: P1)
+### User Story 1 — Prove all 15 documented lifecycle paths end-to-end (Priority: P1)
 
-The hush release manager cannot tag v0.1.0 until AC-10 is green. AC-10 demands that all 15 supervisor/server lifecycle scenarios documented in `docs/LIFECYCLE-SCENARIOS.md` run successfully — proving silent refill, exit-78 staleness, Discord-unavailable fail-closed, vault restart recovery, rotation propagation, duplicate-supervisor refusal, and the rest. This story delivers the suite that gates the release.
+The project owner ("the operator") and any future maintainer must be able to run a single command and learn whether the supervisor lifecycle behaves as the design documents claim. The 15 scenarios in [`docs/LIFECYCLE-SCENARIOS.md`](../../docs/LIFECYCLE-SCENARIOS.md) collectively cover first-boot, silent refill on clean exit and crash, exit-78 stale-credentials contract, validator-blocked startup, vault session invalidation, daytime refresh, overnight expiry (with and without grace cache), Discord unavailability, Tailscale boot retry, agent status gating, mid-session rotation, duplicate-start refusal, and log-pattern watchdog alerts. Each scenario is a separate, named test function so a failure points unambiguously at one documented behaviour.
 
-**Why this priority**: This is the v0.1.0 release gate. Without it, the project ships with eleven security-critical guarantees (G1–G5 plus the seven crypto layers) that have never been demonstrated as a whole, only as parts. Constitution VIII makes the suite non-negotiable: "Every acceptance criterion in `docs/SPEC.md` must map to a concrete, runnable test."
+**Why this priority**: This is the AC-10 release-gate deliverable. Without it, v0.1.0 cannot ship. Every other chunk produces unit/fuzz tests that cover individual packages; only this suite proves the end-to-end behaviour the design documents promise.
 
-**Independent Test**: Run `magex test:race -tags=integration` from a clean checkout against the real `internal/*` packages with mocked external services. All 15 scenario tests pass; the exit code is zero; no real Discord/Anthropic/OpenAI/GitHub/Google AI host is contacted; the suite returns in under two minutes on a developer laptop.
+**Independent Test**: Run `magex test:race -tags=integration ./tests/integration/...`. All 17 named test functions pass (15 scenarios with Scenarios 9 and 11 split into Strict/Grace and TailscaleReady/BootTimeout respectively). Each test's failure message points at exactly one scenario in `docs/LIFECYCLE-SCENARIOS.md`.
 
 **Acceptance Scenarios**:
 
-1. **Given** a clean checkout on macOS or Linux with the integration build tag enabled, **When** the release manager runs the integration suite, **Then** all 15 scenarios from `docs/LIFECYCLE-SCENARIOS.md` execute as named `Test_Scenario_NN_<slug>` functions and every test reports PASS.
-2. **Given** the suite is running, **When** any scenario completes, **Then** that scenario has asserted: (a) the supervisor/server reached the documented final state, (b) the audit log contains the documented events in the documented order, (c) for any scenario that runs a supervisor, the status socket JSON matches the documented shape, and (d) no sentinel marker string appears anywhere in captured logs/output.
-3. **Given** the suite has executed, **When** the release manager inspects the AC-10 row of `docs/AC-MATRIX.md`, **Then** every scenario row lists the matching `Test_Scenario_NN_<slug>` test path and the row status is green.
+1. **Given** a clean test environment with a fixture vault containing sentinel-tagged secrets, **When** `magex test:race -tags=integration ./tests/integration/...` is run, **Then** all 17 named test functions pass: `Test_Scenario_01_<slug>` … `Test_Scenario_15_<slug>` for the 13 single-scenario tests, plus `Test_Scenario_09_OvernightExpiry_Strict` and `Test_Scenario_09_OvernightExpiry_Grace` (Scenario 9 split), plus `Test_Scenario_11_TailscaleReady` and `Test_Scenario_11_BootTimeout` (Scenario 11 split). All 17 must pass for the suite to be considered green.
+2. **Given** a supervisor scenario (Scenarios 2–15 except 1), **When** the scenario completes, **Then** the supervisor's local status socket returns JSON conforming to the shape documented in [`docs/SPEC.md`](../../docs/SPEC.md) §FR-12 with the specific field values that scenario expects (e.g., `state=="running"` for Scenario 2, `state=="awaiting-approval"` for Scenario 5).
+3. **Given** any scenario, **When** the scenario completes, **Then** the on-disk audit log (the hash-chained JSONL the audit chain writes) contains the documented audit events for that scenario in the documented order, with no extra events from a different scenario's flow.
+4. **Given** a scenario that exercises a supervisor lifecycle (Scenarios 2–15 except 1), **When** the supervisor's terminal state is read after the scenario's driver completes, **Then** the supervisor's state-machine state matches the final state documented in `docs/LIFECYCLE-SCENARIOS.md` for that scenario (e.g., Scenario 3 ends at `running`; Scenario 5 ends at `awaiting-approval`).
 
 ---
 
-### User Story 2 - Maintainer: trust the suite as a release gate (Priority: P2)
+### User Story 2 — No sentinel secret ever appears in captured output (Priority: P1)
 
-A maintainer running the suite during day-to-day development needs deterministic, reproducible runs. A "mostly-passes" integration suite is worse than no suite at all — it trains the team to retry-until-green and erodes the gate. This story delivers the timing, isolation, and flake guarantees that let a maintainer treat a green run as evidence rather than noise.
+Every scenario runs with a fixture vault whose secrets contain a known sentinel byte sequence (e.g. `SECRET_SHOULD_NEVER_APPEAR_<scope>`). The suite captures every byte written to any logger, every audit-log record, every status-socket response, and every error returned from any boundary during the scenario. None of those captured streams may contain the sentinel. This is the primary defence-in-depth assertion that proves Constitution Principle X ("Observability & Redaction") holds end-to-end.
 
-**Why this priority**: Constitution VIII (Testing Discipline) and Principle IX (idiomatic Go: explicit lifecycle, no fire-and-forget goroutines) require the suite be observably deterministic. A flaky suite cannot serve as the release gate it is required to be.
+**Why this priority**: A secrets broker that leaks secrets into logs is worse than no broker. Unit-level redaction tests prove the leaf path; this integration-level assertion proves no compose-time logging path resurrects a plaintext byte.
 
-**Independent Test**: Run the suite five consecutive times on the same machine without changing any input. All five runs pass; total wall-clock time for one full run is under 120 seconds; no scenario leaves a goroutine, file descriptor, listening socket, child process, or temporary file behind after its test function returns.
+**Independent Test**: Run any one scenario in isolation with a sentinel-tagged fixture vault. Inspect every captured byte stream (operational log, audit JSONL, status socket response, error strings) for the sentinel substring. The suite's `AssertSentinelAbsent` helper fails the test if any stream contains the sentinel.
 
 **Acceptance Scenarios**:
 
-1. **Given** the suite is run five consecutive times on a single developer laptop, **When** each run completes, **Then** zero scenarios fail across the five runs and the total wall-clock time per run remains under 120 seconds.
-2. **Given** a scenario depends on the wall clock (refresh window, TTL expiry, grace cache TTL), **When** the test executes, **Then** time is advanced through a controllable abstraction so the scenario reaches its outcome without real time elapsing and without race-detector findings.
-3. **Given** a scenario completes (pass or fail), **When** the test harness tears down, **Then** every supervisor process spawned, every Unix socket bound, every PID file created, every temporary directory used, and every goroutine started by the harness is cleaned up before the test function returns.
-4. **Given** the suite is executed with `go test -race -tags=integration`, **When** it runs, **Then** no race-detector findings are reported.
+1. **Given** a fixture vault whose secrets each begin with a unique sentinel prefix, **When** any of the 15 scenarios runs, **Then** the test asserts via `AssertSentinelAbsent` over the operational log capture, the audit log file content, the status socket response body (when applicable), and the captured stderr of any spawned child process; the assertion passes for all 15.
+2. **Given** a scenario that exercises an error path (e.g. Scenario 6 validator failure, Scenario 10 Discord 503), **When** the error propagates to the operator-facing surface, **Then** the error message and any associated alert payload contain only scope names, JTIs, and error classes — never the secret value or any substring of it.
 
 ---
 
-### User Story 3 - Security reviewer: prove no secret leaks during the system's worst moments (Priority: P3)
+### User Story 3 — Release-gate fitness: fast, hermetic, deterministic (Priority: P1)
 
-The fifteen scenarios cover the moments most likely to leak a secret: error paths, child crashes, validator failures, vault restarts, Discord-unavailable, log-pattern matches. A security reviewer needs explicit evidence that during each of these failure paths, no plaintext secret value reaches a log line, an error message, an audit record, a status socket response, or any other captured byte stream.
+For the suite to function as a release gate, it must be (a) **fast** — under 120 s wall-clock on a developer laptop so it can run on every commit without becoming friction; (b) **hermetic** — zero outbound network calls, so it runs identically on a developer laptop, in CI, and on a flight with no wifi; and (c) **deterministic** — five consecutive invocations produce five consecutive passes with no flake. All three properties are non-negotiable, because a flaky or slow or network-dependent gate gets disabled and stops protecting the product.
 
-**Why this priority**: Constitution Principle X (Observability & Redaction) demands type-driven redaction; Constitution Principle VIII makes redaction assertions a required test type. The `docs/TESTING-STRATEGY.md` §5 sentinel pattern is the project's canonical proof technique. This story embeds that pattern into every scenario.
+**Why this priority**: A release gate that flakes once a week trains the operator to re-run it without reading the failure. A release gate that takes ten minutes is not run on every commit. A release gate that hits Discord or a provider endpoint fails in CI behind a proxy. Each property compounds the others.
 
-**Independent Test**: Inject a sentinel value (the marker string from `internal/testutil`) as the plaintext value of one or more secrets in each scenario. After the scenario completes, assert that the sentinel does not appear in any captured operational log, audit record, status socket response, error message, stdout, or stderr from the harness, the supervisor, the server, the validators, or the child process.
+**Independent Test**: From a freshly checked-out branch on a stock developer-class machine, run `for i in 1 2 3 4 5; do time magex test:race -tags=integration ./tests/integration/... || break; done`. The loop must complete five times with zero failures and every individual run must take under 120 s wall-clock.
 
 **Acceptance Scenarios**:
 
-1. **Given** any scenario in the suite, **When** the scenario completes, **Then** an automated assertion (`AssertSentinelAbsent` or equivalent) confirms the sentinel marker string is absent from every captured byte stream the scenario produced.
-2. **Given** a scenario where a validator returns 401, **When** the supervisor emits its `[STALE] Validator Failure` alert, **Then** the captured alert payload identifies the scope name only — never the secret value.
-3. **Given** a scenario where the child exits with code 78, **When** the supervisor emits the `[STALE] Child Exit 78` audit record and Discord alert, **Then** neither the audit record nor the alert payload contains any plaintext secret bytes.
+1. **Given** a developer-class machine (M-series Mac or modern Linux x86_64 with ≥8 cores) with the project's standard `magex` tooling installed, **When** the integration suite is run, **Then** wall-clock time is under 120 s.
+2. **Given** the same machine with all outbound network blocked except loopback and the project's Tailscale interface, **When** the suite runs, **Then** every scenario passes and the test process makes no outbound DNS resolution or HTTP request to any host other than the suite's own httptest-bound loopback servers.
+3. **Given** the suite has just passed once, **When** it is re-run four more consecutive times back-to-back without modifying source, **Then** all four re-runs pass with zero failures and zero `t.Skip` invocations.
+4. **Given** the suite is run under the race detector (`-race`), **When** any scenario completes, **Then** no data race is reported by the Go runtime in any goroutine the harness or the real `internal/*` packages spawn during the scenario.
 
 ---
 
 ### Edge Cases
 
-- **A scenario asserts an audit event that the implementation does not yet emit.** The scenario MUST fail loudly, not skip. The harness MUST NOT allow `t.Skip` as a way to soften a missing-event assertion; the audit log is a normative contract (FR-14).
-- **A scenario depends on a clock-driven transition (refresh window, TTL expiry, grace cache).** The scenario MUST drive time deterministically through an injected abstraction; the suite MUST NOT call `time.Sleep` to wait for real time to advance.
-- **A scenario requires a supervisor to outlive a child process.** The harness MUST allow the supervisor to remain running while the child exits and restarts, and MUST clean up both supervisor and child by the time the test function returns.
-- **A scenario requires Discord to be unavailable mid-flight (Scenario 10).** The mock Discord implementation MUST distinguish between (a) never started, (b) connected, (c) disconnected mid-session, and (d) reconnected after disconnect, and each state MUST produce the response the production server's `claim` handler expects.
-- **A scenario covers a documented variant (Scenario 9 has strict and grace modes).** Both variants MUST be implemented as separate test functions (`Test_Scenario_09_OvernightExpiry_Strict`, `Test_Scenario_09_OvernightExpiry_Grace`); neither variant may be omitted.
-- **A scenario depends on a per-OS path (`~/Library/Caches/hush/` on macOS, `$XDG_RUNTIME_DIR/` on Linux).** The scenario MUST run on both supported OS targets without modification; per-OS path handling is the supervisor's responsibility, not the test's.
-- **A scenario uncovers a real gap in the underlying `internal/*` packages that no harness work can paper over.** The scenario MUST fail and surface the gap rather than be reshaped to pass; the suite is the AC-10 contract and the production code is the artifact under test.
-- **A scenario's test function returns before all spawned goroutines exit.** The harness MUST detect and fail the run; a "passing" test that leaves goroutines behind violates Principle IX and is treated as a failure.
-- **The suite is run without the `integration` build tag.** Zero integration test files MUST compile or execute; the suite MUST be invisible to default `go test ./...`.
+- **Scenario 9 split**: The "overnight expiry" scenario documents two distinct paths (strict mode vs. grace-cache mode). They produce different final states (`awaiting-approval` vs. `running` from cache) and different audit-event sequences. The suite must implement them as two separate test functions, both required to pass.
+- **OS-specific status socket path**: The supervisor's status-socket path differs by OS (macOS: `~/Library/Caches/hush/supervise-<daemon>.sock`; Linux: `$XDG_RUNTIME_DIR/hush-supervise-<daemon>.sock`). Each scenario that asserts status-socket shape must work on both supported OSes; on whichever OS the suite is invoked, the harness must resolve the correct path without hard-coded assumptions.
+- **Clock injection for time-sensitive scenarios**: Scenarios 8 (daytime refresh window) and 9 (overnight expiry) only make sense against a virtual clock; running them against `time.Now()` would either take 20+ hours or be impossible to test deterministically. The harness must inject a controllable clock into the supervisor under test.
+- **Audit log read-back determinism**: The hash-chained audit log appends asynchronously. Each scenario's audit assertions must wait for a documented quiescence point (the supervisor reaching its expected terminal state for that scenario) before reading the log, to avoid a race between "test asserts" and "supervisor finishes writing".
+- **Sentinel collision**: A vault may legitimately contain a secret whose value happens to start with the same prefix as the test-suite sentinel constant. Tests must use a sentinel constant chosen to be infeasibly improbable in any real or fixture secret (e.g. a high-entropy unique-per-scope string). The sentinel constant must be defined exactly once across the suite.
+- **Goroutine leakage between scenarios**: Each scenario spins up a real supervisor with its own status-socket goroutine, refresh-window goroutine, child-wait goroutine, etc. The harness must tear each one down before the next scenario starts so goroutines from Scenario N don't pollute Scenario N+1's race-detector output or port/path namespace.
+- **Process-spawning scenarios on a shared CI machine**: Scenarios 2–15 fork real child processes (test stub binaries). Two parallel scenario tests must not collide on a shared resource (status-socket path, pidfile path, audit log path, fixture vault). The suite must isolate each scenario into its own ephemeral state directory.
+- **Discord-stub semantics for negative paths**: Scenarios 10 (Discord unavailable) and 5/6/15 (stale alerts) must be able to programmatically force the Discord stub into "unavailable", "deny", "no response within timeout", and "delivery succeeds" states. The Discord stub's surface must support all four.
+- **Existing pidfile from a previous flaked run**: If a prior run left a stale pidfile on disk, the duplicate-start scenario (14) must still pass — the test's fixture-state setup must produce a clean state regardless of leftover files in the ephemeral test directory.
 
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
 
-#### Suite scope and structure
+**Scenario coverage (the deliverable):**
 
-- **FR-025-1**: The integration suite MUST live in a dedicated test tree separate from production code and from the unit tests that already cover the constituent packages.
-- **FR-025-2**: Every test file in the suite MUST be gated by a build tag (`integration`) so that the default `go test ./...` invocation never compiles or executes any scenario.
-- **FR-025-3**: The suite MUST implement all 15 scenarios from `docs/LIFECYCLE-SCENARIOS.md`. No scenario may be skipped, stubbed, or replaced by a TODO. Scenarios that depend on production code owned by chunks outside SDD-25's blocker list (SDD-26 validators, SDD-27 watchdog, SDD-28 alert classes) MUST be implemented against the real production packages from those chunks; the harness MUST NOT supply stand-in implementations of production behavior. A scenario that fails because its provider chunk is not yet shipped is a valid, expected failure that surfaces the sequencing gap — the AC-10 row reaches `green` only when all 15 scenarios pass against fully-shipped providers.
-- **FR-025-4**: Each scenario MUST be implemented as exactly one Go test function with a deterministic, conventional name of the form `Test_Scenario_NN_<slug>` where `NN` is a two-digit number `01..15` and `<slug>` is a short PascalCase summary derived from the scenario title. Subtests are permitted within a scenario function (FR-025-5a) and do not count as additional top-level scenarios.
-- **FR-025-5**: Scenario 9 ("overnight expiry, with and without grace cache") is the only scenario that ships in two **top-level** variants. Both variants — strict mode and grace mode — MUST be implemented as separate top-level test functions and counted toward the 15-of-15 release bar as a single scenario row.
-- **FR-025-5a**: Scenario 10 ("Discord unavailable during new claim") is the only scenario whose single test function MUST contain two named subtests covering the two `/claim` origins permitted by `docs/LIFECYCLE-SCENARIOS.md` §10: `Interactive` and `Supervisor`. Each subtest asserts the same outcome contract (503 from the server, no auto-approve fallback, caller surfaces the failure clearly) against its respective origin's code path. Both subtests MUST pass for the scenario row to be green.
+- **FR-001**: The suite MUST implement all 15 scenarios from `docs/LIFECYCLE-SCENARIOS.md`. No scenario may be skipped, stubbed, or marked `t.Skip`.
+- **FR-002**: Each scenario MUST be a single test function named with the deterministic shape `Test_Scenario_NN_<slug>`, where `NN` is the two-digit scenario number from `docs/LIFECYCLE-SCENARIOS.md` and `<slug>` is a short PascalCase descriptor. **The canonical list of 17 names is locked here**; plan-phase, tasks-phase, and the implement-phase AC-MATRIX update MUST use these exact identifiers:
+  1. `Test_Scenario_01_InteractiveShellRequest`
+  2. `Test_Scenario_02_FirstDaemonBootstrap`
+  3. `Test_Scenario_03_CleanChildExitRefill`
+  4. `Test_Scenario_04_ChildCrashRefill`
+  5. `Test_Scenario_05_ChildExit78Stale`
+  6. `Test_Scenario_06_ValidatorFailure`
+  7. `Test_Scenario_07_VaultRestartInvalidatesSession`
+  8. `Test_Scenario_08_DaytimeRefresh`
+  9. `Test_Scenario_09_OvernightExpiry_Strict`
+  10. `Test_Scenario_09_OvernightExpiry_Grace`
+  11. `Test_Scenario_10_DiscordUnavailable`
+  12. `Test_Scenario_11_TailscaleReady`
+  13. `Test_Scenario_11_BootTimeout`
+  14. `Test_Scenario_12_AgentStatusCheck`
+  15. `Test_Scenario_13_MidSessionRotation`
+  16. `Test_Scenario_14_DuplicateStart`
+  17. `Test_Scenario_15_LogPatternMatch`
+- **FR-003**: Scenario 9 ("Overnight expiry") MUST be implemented as two separate test functions — `Test_Scenario_09_OvernightExpiry_Strict` and `Test_Scenario_09_OvernightExpiry_Grace` — because the strict and grace paths produce different final states and different audit sequences. Scenario 11 ("Tailscale not ready at boot") MUST be split for the same reason — `Test_Scenario_11_TailscaleReady` (success branch, final state `running`) and `Test_Scenario_11_BootTimeout` (timeout branch, final state `stopped` + `AlertClassBootTimeout`). **Total scenario test functions in the suite = 17** (13 single-scenario tests + Scenario 9 split into 2 + Scenario 11 split into 2).
 
-#### Per-scenario assertions
+**Per-scenario assertion shape (the four required assertions):**
 
-- **FR-025-6**: Every scenario test function MUST assert that the supervisor (or, for interactive-only scenarios, the server) ended in the final state documented by `docs/LIFECYCLE-SCENARIOS.md` for that scenario. For Scenarios 2–15, "final state" is the named supervisor state from the state model (`fetching`, `running`, `awaiting-approval`, `grace-restart`, `stopped`) plus any documented scope-health / discord-connected / child-PID facts that the scenario implies. For Scenario 1 (interactive, no supervisor), "final state" is a compound assertion combining (a) the vault server reports `vault_loaded=true` and `discord_connected=true` via `/health` after the flow, (b) the wrapped child shell exited with the exit code the scenario expected, (c) the issued JWT's state in the server's token store reflects use-count consumption or expiry as appropriate to the scenario, and (d) each of the three §1 expected outcomes (no disk persistence of secrets, no plaintext-value logging — covered by FR-025-9, approval DM count exactly one) is asserted individually.
-- **FR-025-7**: Every scenario test function MUST assert that the audit log produced during the scenario contains the events documented for that scenario in the documented relative order. The assertion is a subsequence check: every documented event MUST appear, and the order of those documented events relative to one another MUST match the documentation; additional unmentioned audit events between them are permitted and do not fail the assertion. A missing documented event, or two documented events appearing in reversed order, is a scenario failure. The set of recognized event types is the list in SPEC §FR-14.
-- **FR-025-8**: Every scenario that runs a supervisor MUST assert that the supervisor's local status socket returns a JSON response whose shape matches FR-12 of the SPEC, and whose field values reflect the supervisor's documented final state for that scenario (state name, scope health, expiry timestamps, discord-connected flag, child PID/uptime).
-- **FR-025-9**: Every scenario MUST assert, via a single common helper, that no sentinel marker string appears anywhere in the captured operational log, audit log, status socket response, error messages, stdout, or stderr produced during the scenario.
-- **FR-025-10**: The four assertion types in FR-025-6, FR-025-7, FR-025-8, and FR-025-9 MUST all be made before the test function returns; a scenario that omits any of the four assertions is non-compliant even if it otherwise passes.
+- **FR-004**: Every scenario MUST assert that the **final state** of the supervisor (or, for Scenario 1, the final state of the interactive request flow) matches the outcome documented in `docs/LIFECYCLE-SCENARIOS.md` for that scenario. Concretely: the supervisor's state-machine value matches (`running`, `awaiting-approval`, `stopped`, or grace-mode-restart-running as applicable). **Test boundary**: scenarios whose documented flow includes operator-recovery (5, 6, 7, 9-strict, 15) end at the operator-blocked terminal state (`awaiting-approval` or `stopped`) and assert the alert emission; they do NOT drive through to post-recovery `running`. The full refresh-then-resume recovery path is owned by Scenario 13 (`hush client refresh`).
+- **FR-005**: Every scenario MUST assert that the **on-disk audit log** (the hash-chained JSONL file written by `internal/audit`) contains the audit events listed for that scenario in the documented order, drawn from the vocabulary in [`docs/SPEC.md`](../../docs/SPEC.md) §FR-14. The assertion MUST verify both the events and their ordering, not just set-equality. The concrete per-scenario events table (17 rows × N events each) is produced in plan-phase (`plan.md`) by deriving from the §FR-14 vocabulary and the scenario flows; spec-phase locks only the vocabulary source and the ordering-strict semantics.
+- **FR-006**: Every supervisor scenario (Scenarios 2–15) MUST assert that the **status socket JSON** returned by `GET /status` over the local Unix socket conforms to the shape documented in [`docs/SPEC.md`](../../docs/SPEC.md) §FR-12 AND that the specific field values for that scenario are present (e.g., `state`, `child_pid`, `scope_healthy`/`scope_stale`, `discord_connected`, `session_expires_at`, `refresh_window_next`, `last_auth_failure`). Scenario 1 (interactive) is exempt because no supervisor exists.
+- **FR-007**: Every scenario MUST assert via the suite's `AssertSentinelAbsent` helper that **no sentinel byte sequence** appears in any captured log stream produced during the scenario. The streams that MUST be captured and asserted against include, at minimum: the operational slog output of the in-process supervisor and server; the contents of the audit JSONL file; the body of every status-socket response read; the stderr and stdout of every spawned child process; and the string form of every error returned to the test from any boundary.
 
-#### External boundaries are mocked, internals are real
+**Suite-wide quality properties:**
 
-- **FR-025-11**: The suite MUST exercise the real production packages for vault decode, key derivation, JWT issuance and validation, ECIES encryption, request signing, audit chain construction, supervisor state machine, child process management, status socket, refresh scheduler, and grace cache. The suite is not a mock of the system; it is the system under test.
-- **FR-025-12**: The suite MUST mock exactly the boundaries that cross a host: the Discord bot (request DM, await decision, deliver decision, disconnect/reconnect simulation), the credential validators' upstream provider endpoints (Anthropic, OpenAI, GitHub, Google AI, Anthropic-OAuth), and the NTP/clock-sync probe. Every other component is real.
-- **FR-025-13**: The suite MUST NOT make any TCP, UDP, or HTTPS connection to a host outside the test process. Any attempt to reach a real external host (Anthropic, OpenAI, GitHub, Google AI, Discord, NTP server) MUST be a test failure, not silently bypassed.
-- **FR-025-14**: The Discord mock MUST be able to be programmed per-scenario with: an approval decision sequence (approve, deny, timeout), a connectivity sequence (available, unavailable, reconnected), and a rate-limit sequence (under limit, at limit), all driven explicitly by the scenario test function rather than implicitly by elapsed time.
-- **FR-025-15**: The validator HTTP mocks MUST be able to be programmed per-scenario to return 200 OK, 401 Unauthorized, 403 Forbidden, network failure, or timeout, with the choice driven by the scenario test function and isolated per scenario.
+- **FR-008**: The suite MUST be build-tagged so it only compiles under `-tags=integration`. Standard `go test ./...` invocations without the tag MUST NOT compile any harness or scenario file.
+- **FR-009**: The full suite MUST complete in **under 120 seconds wall-clock** on a developer-class machine (M-series Mac or modern Linux x86_64 with ≥8 cores).
+- **FR-010**: The full suite MUST pass **5 consecutive invocations** under `-race` with **zero failures and zero flakes**. A "flake" includes timeouts, intermittent race-detector reports, intermittent goroutine-leak failures, and any non-deterministic outcome.
+- **FR-011**: The suite MUST be runnable cleanly under the Go race detector (`magex test:race -tags=integration`). No scenario may pass without `-race`; the gate is `-race`-on.
 
-#### Time and determinism
+**Network and external-service hermeticism:**
 
-- **FR-025-16**: The suite MUST drive any wall-clock-dependent transition (refresh window firing, TTL expiry, grace cache expiry, refresh nudge, replay-window expiry, boot retry backoff) through a controllable time source. The suite MUST NOT call `time.Sleep` on real time to wait for any documented transition to fire.
-- **FR-025-17**: The suite MUST be deterministic: five consecutive runs on the same host with the same inputs MUST produce identical pass/fail outcomes for every scenario. A scenario that passes on one run and fails on another, with no input change, is a flake and a release-gate failure.
-- **FR-025-18**: The suite MUST run with the Go race detector enabled (`go test -race -tags=integration`) and MUST produce zero race-detector findings.
+- **FR-012**: The suite MUST NOT make any outbound network call to any host other than loopback and the Tailscale-interface stub the harness controls. Concretely, no DNS resolution and no HTTP/TCP/UDP connection to any of: Discord (discord.com, gateway.discord.gg), Anthropic (api.anthropic.com), OpenAI (api.openai.com), Google AI (generativelanguage.googleapis.com), GitHub (api.github.com), or any other production endpoint. CI environments without internet access MUST run the suite identically.
+- **FR-013**: The Discord boundary MUST be replaced with a programmable stub supplied by `internal/testutil` (SDD-04). Each scenario MUST be able to program the stub with a per-scenario sequence of decisions including, at minimum: approve, deny, timeout, unavailable (boot-down), and disconnect-during-pending.
+- **FR-014**: The five provider validator HTTP endpoints (Anthropic, Anthropic-OAuth, OpenAI, Google AI, GitHub) MUST be replaced with loopback-bound HTTP fixtures programmable per scenario to return 200, 401, or simulated network failure. The supervisor's validators MUST be pointed at these fixtures during the scenario.
+- **FR-015**: The Tailscale-reachability probe (used in boot-retry, Scenario 11) MUST be replaceable with a programmable in-process stub so the boot-retry path can be exercised without actually waiting for Tailscale.
 
-#### Lifecycle hygiene
+**Real-package surface (what is NOT mocked):**
 
-- **FR-025-19**: Every scenario MUST clean up all resources it allocated (supervisor processes, child processes, listening sockets, PID files, temporary directories, audit log files, captured log buffers, goroutines spawned by the harness) before its test function returns.
-- **FR-025-20**: The harness MUST detect goroutine leaks at the end of each scenario and fail the scenario if any harness-spawned goroutine has not exited.
-- **FR-025-21**: Scenarios that mutate shared global state MUST run serially at the suite level. Within a scenario, parallelism is permitted only where it does not share mutable state with other scenarios.
-- **FR-025-22**: The suite MUST tolerate being invoked from a clean checkout without pre-existing `~/.hush/` state on the developer machine. Every scenario MUST create its own isolated state directory and MUST NOT touch the operator's real `~/.hush/`.
+- **FR-016**: The suite MUST exercise the **real** packages: `internal/supervise` (including the SDD-24 orchestrator `Lifecycle`), `internal/server`, `internal/audit`, `internal/token`, `internal/vault`, `internal/transport/ecies`, `internal/transport/sign`, `internal/keys`, and `internal/cli` for the request/supervise/client-status/client-refresh entry points used by scenarios. The suite MUST NOT substitute fakes for these packages.
+- **FR-017**: The fixture vault used by each scenario MUST be produced by the real `internal/vault` codec from a sentinel-tagged plaintext payload, so a leak of any secret byte through any path is detectable by `AssertSentinelAbsent`.
+- **FR-018**: The JWT issued during each scenario MUST be a real ES256K-signed token produced by `internal/token`, not a stub claim object, so signature-verification paths in the server are exercised.
 
-#### Audit ordering
+**Determinism and isolation:**
 
-- **FR-025-23**: For every scenario, the suite MUST assert the sequence of audit events the scenario produces — not merely the set of events. An audit record that arrives out of order is treated as a defect, not a tolerated reordering.
-- **FR-025-24**: For every scenario, the suite MUST assert that the audit chain's hash-link continuity is unbroken (each record's `prev_hash` equals the prior record's `hash`, signatures verify with the audit key) at the end of the scenario.
+- **FR-019**: The wall clock observed by the supervisor under test MUST be injectable per scenario so refresh-window (Scenario 8), TTL expiry (Scenario 9), and boot-retry backoff (Scenario 11) can be exercised without real elapsed time. The injected clock MUST be controllable by the test (advance-by, set-to).
+- **FR-020**: Each scenario MUST run in its own ephemeral state directory (vault path, audit log path, pidfile path, status-socket path) so two scenarios run sequentially in the same suite do not collide on filesystem state, and a stale file from a prior aborted run does not contaminate a fresh run.
+- **FR-021**: The suite MUST clean up every goroutine, every child process, every file handle, and every Unix socket it created before the test function returns, regardless of pass or fail. A failed scenario MUST NOT leak state into a later scenario.
+- **FR-022**: The suite MUST NOT use `t.Parallel` at the scenario level (scenarios share suite-wide setup boundaries and global state in some real packages). Individual scenarios MAY parallelize internal sub-checks only where no shared mutable state is touched.
 
-#### Sentinel-leak proof
+**Operator-observable signals each scenario must produce:**
 
-- **FR-025-25**: The suite MUST use a single, common sentinel string (provided by `internal/testutil`) as the plaintext value of at least one secret in every scenario.
-- **FR-025-26**: The sentinel-absence assertion MUST cover every byte stream the scenario produces: operational log, audit log (after redaction), status socket JSON response, Discord alert payloads sent to the mock, error message strings returned from the harness, captured stdout, captured stderr.
-- **FR-025-27**: A scenario that triggers a Discord alert (validator failure, child exit 78, log-pattern match) MUST assert that the alert payload identifies the scope name only — never the plaintext secret value.
+- **FR-023**: Scenarios that exercise an alert path (Scenarios 5, 6, 9-strict-overnight, 10, `Test_Scenario_11_BootTimeout`, 15) MUST assert that the corresponding Discord alert payload was delivered to the Discord stub, and that the alert's class matches the documented class for that scenario from the locked 10-value `AlertClass` enum (see active feature plan note in `CLAUDE.md`).
+- **FR-024**: Scenarios that exercise a `[STALE]` alert (Scenarios 5, 6, 15) MUST assert the alert is visually distinct from a routine approval prompt in the captured Discord-stub message stream, per the requirement in `docs/LIFECYCLE-SCENARIOS.md` "Required alert classes" section.
+- **FR-025**: Scenarios that exercise the refresh-window prompt (Scenario 8) MUST assert that no child restart occurs purely as a result of the refresh succeeding — only the supervisor's refill capability is renewed.
+- **FR-026**: Scenarios that exercise the watchdog (Scenario 15) MUST assert that the log-pattern match produces an alert but does NOT change the supervisor's state-machine state, per Constitution Principle V and the locked scope of SDD-24.
 
-#### AC-MATRIX update
+**AC-MATRIX bookkeeping:**
 
-- **FR-025-28**: When the suite is delivered, `docs/AC-MATRIX.md` AC-10 row MUST list the exact `Test_Scenario_NN_<slug>` test path for every one of the 15 scenarios and the row status MUST be `green`.
-- **FR-025-29**: When the suite is delivered, `docs/AC-MATRIX.md` AC-9 row MUST cite the integration suite as part of the test-infra completeness evidence.
-
-#### The 15 scenarios
-
-The following table is normative: every row is a required scenario, in implementation order. The scenario number, slug, and source diagram in `docs/LIFECYCLE-SCENARIOS.md` are the contract.
-
-| #  | Slug                              | Source                          | Type        | Status socket assertion required |
-|----|-----------------------------------|---------------------------------|-------------|----------------------------------|
-| 01 | FirstInteractive                  | LIFECYCLE-SCENARIOS.md §1       | Interactive | No (no supervisor in scenario)   |
-| 02 | DaemonBootstrap                   | LIFECYCLE-SCENARIOS.md §2       | Supervisor  | Yes                              |
-| 03 | CleanExitSilentRefill             | LIFECYCLE-SCENARIOS.md §3       | Supervisor  | Yes                              |
-| 04 | ChildCrashSilentRefill            | LIFECYCLE-SCENARIOS.md §4       | Supervisor  | Yes                              |
-| 05 | Exit78StaleCreds                  | LIFECYCLE-SCENARIOS.md §5       | Supervisor  | Yes                              |
-| 06 | ValidatorBlocksChild              | LIFECYCLE-SCENARIOS.md §6       | Supervisor  | Yes                              |
-| 07 | VaultRestart                      | LIFECYCLE-SCENARIOS.md §7       | Supervisor  | Yes                              |
-| 08 | DaytimeRefresh                    | LIFECYCLE-SCENARIOS.md §8       | Supervisor  | Yes                              |
-| 09a | OvernightExpiry_Strict           | LIFECYCLE-SCENARIOS.md §9       | Supervisor  | Yes                              |
-| 09b | OvernightExpiry_Grace            | LIFECYCLE-SCENARIOS.md §9       | Supervisor  | Yes                              |
-| 10 | DiscordUnavailable                | LIFECYCLE-SCENARIOS.md §10      | Mixed       | Yes — in the `Supervisor` subtest only (FR-025-5a); the `Interactive` subtest has no supervisor and therefore no status socket |
-| 11 | TailscaleBootRetry                | LIFECYCLE-SCENARIOS.md §11      | Supervisor  | Yes (after recovery)             |
-| 12 | StatusGate                        | LIFECYCLE-SCENARIOS.md §12      | Supervisor  | Yes (this scenario IS the status socket assertion) |
-| 13 | RotationMidSession                | LIFECYCLE-SCENARIOS.md §13      | Supervisor  | Yes                              |
-| 14 | DuplicateSupervisor               | LIFECYCLE-SCENARIOS.md §14      | Supervisor  | Yes (first supervisor only)      |
-| 15 | LogPatternAlert                   | LIFECYCLE-SCENARIOS.md §15      | Supervisor  | Yes                              |
-
-Scenario 9 ships as two test functions (one for strict mode, one for grace mode) and counts as one row in AC-10's 15-scenario contract — both variants must pass for the row to be green.
+- **FR-027**: When the suite is green, the AC-10 row in `docs/AC-MATRIX.md` MUST list the exact 17 test function names (13 single-scenario tests + Scenario 9 split + Scenario 11 split) under the "Test path" column for the SDD-25 owner row.
+- **FR-028**: The AC-9 row in `docs/AC-MATRIX.md` MUST be updated to acknowledge that the SDD-25 suite is the test-infra completeness deliverable that lifts the AC-10 paths into the coverage budget.
 
 ### Key Entities
 
-- **Scenario**: a named, documented end-to-end story from `docs/LIFECYCLE-SCENARIOS.md`. Identified by a number (01–15), a slug, a documented set of events, a documented final state, and a documented set of audit events with their order.
-- **Mocked external boundary**: a stand-in for a process or service that lives outside the hush trust boundary (Discord, validator upstreams, NTP). Programmable per-scenario; assertable per-scenario; never reaches a real network.
-- **Real internal package**: a production `internal/*` package whose code is the artifact under test. The suite exercises these in-process without modification.
-- **Sentinel marker string**: a unique recognizable byte sequence used as the plaintext value of secrets during a scenario. Detection of the marker in any captured byte stream is a scenario failure.
-- **Captured byte stream**: any operational log, audit log entry, status socket response, mock-Discord alert payload, error message string, stdout output, or stderr output produced during a scenario's execution. The sentinel-absence assertion covers every such stream.
-- **Test function name `Test_Scenario_NN_<slug>`**: the conventional and contractual name shape for the 15 scenarios. The shape is asserted by reviewers against the AC-10 row of `docs/AC-MATRIX.md`.
+- **Scenario**: A single Go test function in the integration suite, named `Test_Scenario_NN_<slug>`, that drives one end-to-end lifecycle path from `docs/LIFECYCLE-SCENARIOS.md`. Carries: per-scenario Discord-stub script; per-scenario clock; per-scenario validator-endpoint fixture responses; per-scenario child-process exit script; per-scenario expected final state, expected audit event ordering, and (for supervisor scenarios) expected status-socket field values.
+- **Captured log stream**: A per-scenario buffer (or set of buffers) accumulating every byte written to slog, every byte written to the audit JSONL, every response body served by the status socket, and every byte written to stdout/stderr by any spawned child process during the scenario.
+- **Sentinel**: A unique per-scope, high-entropy byte sequence injected into the fixture vault before the scenario starts; serves as the canary whose absence in every captured stream proves the redaction path is intact. Defined once for the suite.
+- **Discord stub**: A programmable in-process replacement for the Discord bot, supplied by `internal/testutil` (SDD-04). Accepts a per-scenario decision script and records every approval request it receives.
+- **Validator endpoint fixture**: A loopback-bound HTTP server (one per provider) programmable per scenario to return 200/401/network-failure for the cheapest read-only endpoint of each provider, so the supervisor's validators exercise their real code path without hitting production.
+- **Injectable clock**: A function-typed value injected into the supervisor under test; the harness can advance it forward by an interval or set it to a fixed instant, deterministically exercising refresh-window, TTL-expiry, and boot-retry backoff timing.
+- **Ephemeral state directory**: A per-scenario temporary directory containing the fixture vault file, the audit log file, the pidfile, and the status-socket path. Removed after the scenario completes.
+- **Test child binary**: A small stub executable spawned in place of a real daemon for scenarios 2–15. Its behaviour (exit code, exit timing, stdout/stderr content, signal-handling behaviour) is parameterised per scenario so the scenario can simulate clean exit, crash, exit-78, hang-until-SIGTERM, or auth-failure-line-emission as needed.
 
 ## Success Criteria *(mandatory)*
 
 ### Measurable Outcomes
 
-- **SC-025-1**: 15 of 15 scenarios pass on a single execution of `magex test:race -tags=integration` from a clean checkout on macOS arm64 and Linux amd64.
-- **SC-025-2**: 5 consecutive executions of the suite on the same host with no input changes produce 5 PASS results — zero flakes, zero retries.
-- **SC-025-3**: A single execution of the suite completes in under 120 seconds of wall-clock time on a developer laptop.
-- **SC-025-4**: Zero race-detector findings are reported by `go test -race -tags=integration` across the suite.
-- **SC-025-5**: Zero scenarios produce a goroutine leak at the time the test function returns.
-- **SC-025-6**: Zero scenarios leave a supervisor process, child process, Unix socket, PID file, or temporary state directory on disk after the scenario tears down.
-- **SC-025-7**: Zero captured byte streams across all 15 scenarios contain the sentinel marker string at any point after the scenario completes.
-- **SC-025-8**: Zero scenarios make a TCP/UDP/HTTPS connection to a host outside the test process; the suite passes on a host whose network egress is firewall-blocked except to localhost.
-- **SC-025-9**: Every scenario's audit ordering assertion verifies the documented event sequence; every audit-chain hash-link continuity check passes.
-- **SC-025-10**: After delivery, the AC-10 row of `docs/AC-MATRIX.md` lists each of the 15 scenario test paths and the row status is `green`; the AC-9 row references the integration suite as part of its evidence.
-- **SC-025-11**: After delivery, running the default `go test ./...` (without the `integration` build tag) compiles zero integration test files and exercises zero scenarios — proving the build-tag isolation works.
-- **SC-025-12**: A subsequent reviewer reading `docs/AC-MATRIX.md` and `docs/LIFECYCLE-SCENARIOS.md` can trace every documented scenario to its corresponding `Test_Scenario_NN_<slug>` test function in under five minutes.
+- **SC-001**: All 17 scenario test functions (13 single-scenario tests + the Scenario 9 strict/grace split + the Scenario 11 ready/boot-timeout split) pass under `magex test:race -tags=integration`.
+- **SC-002**: The full suite's wall-clock time is **under 120 seconds** on a developer-class machine (M-series Mac or modern Linux x86_64 with ≥8 cores).
+- **SC-003**: **Five consecutive** invocations of `magex test:race -tags=integration` complete with zero failures and zero retries.
+- **SC-004**: A network capture taken during a suite run shows **zero** DNS resolutions or TCP/UDP connections to any host outside loopback and the harness's own loopback-bound httptest listeners; specifically, zero packets to discord.com, gateway.discord.gg, api.anthropic.com, api.openai.com, generativelanguage.googleapis.com, or api.github.com.
+- **SC-005**: For every one of the 17 scenario test functions, `AssertSentinelAbsent` passes against every captured log stream — meaning a grep for the suite sentinel across every captured slog buffer, the audit JSONL file, every status-socket response body, and every child stdout/stderr buffer returns zero matches.
+- **SC-006**: The AC-10 row in `docs/AC-MATRIX.md` lists each of the 17 test function names under "Test path" and reports status `green`.
+- **SC-007**: The AC-9 row in `docs/AC-MATRIX.md` acknowledges this suite as the test-infra completeness deliverable that produces the AC-10 coverage paths.
+- **SC-008**: Coverage of `internal/supervise` measured with `magex test:race -tags=integration` plus the existing unit tests is at least **95%** line coverage, matching the AC-9 target for that package in [`docs/AC-MATRIX.md`](../../docs/AC-MATRIX.md).
+- **SC-009**: A failed scenario produces a failure message that names exactly one of the 16 documented scenarios — i.e., a green-or-red signal per scenario, never an opaque "supervisor crashed" without scenario attribution.
+- **SC-010**: Running the suite a sixteenth, seventeenth, eighteenth time (after the five-run flake check) continues to produce zero failures — the suite's stability is not a function of run ordinal.
 
 ## Assumptions
 
-- The 22 `internal/*` packages listed across SDD-01 through SDD-23 ship in the state recorded in `docs/AC-MATRIX.md` as of the start of this chunk. This suite consumes them as-is and does not modify their production code. If a scenario uncovers a behavior gap in those packages, the gap surfaces as a scenario failure and the underlying chunk owner is responsible for the fix; this chunk does not patch production code.
-- Scenarios 5 (Discord `[STALE] Child Exit 78` alert), 6 (validator catches bad secret), 8 (`[DAEMON] Refresh` prompt), and 15 (log-pattern watchdog `[STALE] Log Pattern Match` alert) reference production behavior owned by chunks outside SDD-25's blocker list — specifically SDD-26 (credential validators), SDD-27 (watchdog), and SDD-28 (the eight alert classes). Per FR-025-3, the harness implements those scenarios against the real production packages once they ship; the harness does not stub the validator HTTP-result interpretation, the watchdog pattern-match emission, or the alert-class rendering. Those scenarios are expected to fail while their provider chunks are `pending` and to pass once the providers reach `green` in `docs/AC-MATRIX.md`. The AC-10 row reaches `green` only when all 15 scenarios pass against fully-shipped providers.
-- The list of mockable external boundaries is exactly: Discord (bot DMs and connectivity), the five built-in credential validators' upstream HTTP endpoints (Anthropic, Anthropic-OAuth, OpenAI, Google AI, GitHub), and the NTP/clock-sync probe. No other internal component is permitted to be replaced by a test double.
-- The supported developer platforms for the suite are macOS arm64 and Linux amd64 (the v0.1.0 OS coverage matrix from `docs/TESTING-STRATEGY.md` §6). The 120-second wall-clock budget is measured on a representative developer laptop from those platforms.
-- The sentinel marker string convention from `internal/testutil` (SDD-04) is the authoritative source of the marker value. This chunk reuses it rather than minting a new marker.
-- The audit event vocabulary from SPEC §FR-14 is the authoritative source of event type names. Scenario assertions cite events from this list. If a scenario documents an audit event whose name is not in FR-14, this chunk is responsible for surfacing the discrepancy rather than inventing a new name.
-- The status socket JSON schema is locked by SDD-22 and SDD-23. This chunk asserts against that schema verbatim; this chunk does not extend, rename, or omit-empty any field.
-- The clock abstraction necessary for deterministic refresh-window/TTL/grace-cache scenarios is provided by (or trivially derivable from) `internal/supervise`'s existing scheduling seams. If a scheduling seam is not deterministically driveable from a test, that limitation is a gap to surface — not a reason to relax FR-025-16.
-- "Developer laptop" for SC-025-3 means a machine class with 8+ performance cores and SSD storage at the time of v0.1.0 (the operator's class of machine). The 120-second budget is not held against constrained CI runners; CI may grant more headroom but should remain under five minutes.
-- The before_specify git hook has already created branch `025-lifecycle-harness`. The spec directory is `specs/025-lifecycle-harness/`. The plan, tasks, and implementation phases will populate this directory.
+- **SDD-04 testutil is the upstream dependency for harness primitives.** The chunk contract requires `internal/testutil`'s `NewTestVault`, `NewTestKeys`, `SentinelSecret`, `AssertSentinelAbsent`, and `DiscordStub` (per [`docs/sdd/SDD-25.md`](../../docs/sdd/SDD-25.md)). At spec time SDD-04 is listed `pending` in the AC-MATRIX; this spec assumes SDD-04 will be implemented (or its required helpers stubbed inline) before the implement phase of SDD-25 runs. The plan phase MUST surface SDD-04 status as a precondition.
+- **The 15 scenarios are stable.** `docs/LIFECYCLE-SCENARIOS.md` is the source of truth and is not expected to change during SDD-25's execution. If a real bug in the design is discovered while implementing a scenario, the scenarios doc is updated first and the test follows — the test does not silently diverge.
+- **The SDD-24 orchestrator (`internal/supervise.Lifecycle`) is the system under test.** SDD-24 is already merged (commit `f36ab26`); the harness composes the SDD-24 orchestrator and the SDD-19..22 primitives without modification.
+- **Developer-class machine baseline.** "Under 120 s" is measured on an M-series Mac or a modern Linux x86_64 with at least 8 cores and SSD storage. CI runner hardware that is significantly slower may take longer but MUST still pass within the wall-clock budget the CI workflow allocates; the 120 s target is the developer-laptop expectation, not a hard CI ceiling.
+- **OS support matrix matches v0.1.0.** The suite is required to pass on the two supported OSes (macOS arm64 and Linux amd64). Platform-specific status-socket and runtime paths resolve at scenario setup time via the same code paths the production supervisor uses.
+- **No process-wide state leakage between Go tests.** Real `internal/*` packages must be re-instantiable per scenario (no `init()` side effects, no package-level mutable state) — that is already a Constitution Principle IX requirement, so the harness assumes it holds. If a real package proves to have a hidden global, that is a real-code bug to be fixed in that package, not worked around in the harness.
+- **The "developer laptop" runs `magex`.** Suite invocation is via the project's standard `magex test:race -tags=integration` entry point; raw `go test` invocations are not the contracted interface (though they SHOULD work as an unofficial path).
+- **Audit log assertions are ordering-strict, not whitelist-strict.** A scenario asserts the events it documents appear in order. The suite tolerates additional housekeeping audit events only if the per-scenario ephemeral state directory cleanly isolates the audit-log file, which FR-020 requires.
+- **The "child process" in scenarios is a small test stub.** Scenarios that fork a child do not link or invoke any real daemon binary; they use a parameterised test stub whose behaviour is controlled by the scenario's input.
+- **The chunk contract (`docs/sdd/SDD-25.md`) is the authoritative scope ceiling.** Anything the chunk contract explicitly excludes (e.g., `t.Parallel` at the scenario level, hitting external networks, skipping scenarios) is excluded by this spec regardless of any softer phrasing here.
+
+## Dependencies
+
+- **Upstream SDD chunks (all required-done before implement phase)**: SDD-01 (keys), SDD-02 (SecureBytes), SDD-03 (vault), SDD-04 (testutil — currently `pending`; must reach at least the harness helpers used here), SDD-05 (logging), SDD-06 (config), SDD-07 (token/JWT), SDD-08 (sign), SDD-09 (ECIES), SDD-10 (server skeleton), SDD-11 (Discord bot — providing the `Approver` interface the stub will implement), SDD-12 (claim handler), SDD-13 (other handlers + audit), SDD-14 (CLI root + serve/health/version/revoke), SDD-15 (init + keychain), SDD-16 (CLI request), SDD-17 (CLI secret), SDD-18 (supervise config), SDD-19 (supervisor state), SDD-20 (child fork/exec), SDD-21 (refill/refresh/grace), SDD-22 (pidfile + status socket), SDD-23 (CLI supervise + client), SDD-24 (orchestrator `Lifecycle` — already merged).
+- **Constitutional principles in scope**: VIII (Testing Discipline — TDD-mandatory for integration suite; the gate enforced by AC-9/AC-10), V (Staleness is Visible — every documented alert must be operator-observable and the suite proves it), IX (Idiomatic Go Discipline — no goroutine leaks, no global mutable state, every goroutine has owner/ctx/termination), X (Observability & Redaction — sentinel-absent assertion is the integration-level proof of redaction).
+- **Documentation kept in sync**: this chunk's implement phase updates [`docs/AC-MATRIX.md`](../../docs/AC-MATRIX.md) AC-9 + AC-10 rows, [`docs/PACKAGE-MAP.md`](../../docs/PACKAGE-MAP.md) (new `tests/integration/` entry), and [`docs/SDD-PLAYBOOK.md`](../../docs/SDD-PLAYBOOK.md) (SDD-25 status → `done`).
+
+## Out of Scope
+
+- **Unit tests for individual `internal/*` packages.** Those belong in the owning chunk and are already largely complete.
+- **Fuzz targets.** The six required fuzz targets are owned by their respective chunks (vault decode → SDD-03; JWT validate → SDD-07; ECIES decrypt → SDD-09; request signature → SDD-08; supervisor config TOML → SDD-18; status socket JSON if custom → SDD-22). This suite does not add fuzz targets.
+- **Cross-platform CI matrix setup.** The chunk produces scenarios that run on both supported OSes; the CI workflow that exercises them on both is owned by SDD-31 (release gates).
+- **Performance benchmarks.** The 120 s budget is a wall-clock gate, not a per-package microbenchmark. No `*_bench_test.go` files are produced by this chunk.
+- **Real Discord, real Tailscale, real provider validators.** All four are mocked. Validating against the real services is an operational concern documented in `docs/OPERATIONS.md`, not a test concern.
+- **Additional scenarios beyond the documented 15.** New scenarios may be added in future chunks (e.g., SDD-26 validators, SDD-27 watchdog, SDD-28 alerts) but are out of scope for SDD-25.
+- **Replacing existing per-package unit/integration tests.** The harness composes the real packages; their unit tests continue to exist and run under the standard test invocation.
+- **Discord connection-state transition alerts (`AlertClassDiscordDisconnected`, `AlertClassDiscordReconnected`).** Coverage for these two alert classes lives in SDD-11 (the Discord bot's connection-monitor loop) and its unit tests, not in SDD-25. CLAUDE.md confirms `ActionDiscordDisconnected` and `ActionDiscordReconnected` are emitted by code paths other than the supervisor orchestrator. No SDD-25 scenario exercises a disconnect/reconnect transition; the closest scenario (Scenario 10, Discord unavailable at `/claim` submission) maps to the distinct `AlertClassDiscordUnavailableOnClaim` class.

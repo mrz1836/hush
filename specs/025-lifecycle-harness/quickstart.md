@@ -10,7 +10,7 @@ magex test:race -tags=integration ./tests/integration/...
 go test -race -tags=integration ./tests/integration/...
 ```
 
-Suite target: **15/15 scenarios green; under 120 s wall-clock; zero race-detector findings**.
+Suite target: **17/17 scenario test functions green (15 scenarios + Scenario 9 split + Scenario 11 split, per spec FR-002); under 120 s wall-clock; zero race-detector findings**.
 
 ## Verify no flake (5-run gate)
 
@@ -28,7 +28,7 @@ Five consecutive PASS results gates the SDD-25 chunk completion.
 go test -race -tags=integration -run Test_Scenario_05 ./tests/integration/...
 ```
 
-## Default-build invisibility (SC-025-11)
+## Default-build invisibility (spec FR-008)
 
 ```bash
 # Should compile zero files in tests/integration:
@@ -40,7 +40,7 @@ If the suite leaks into a default build, the `//go:build integration` tag is mis
 
 ## Add a new scenario (process)
 
-> Adding a scenario beyond the 15 means the SPEC + LIFECYCLE-SCENARIOS docs MUST be updated first. Do NOT add a 16th `Test_Scenario_*` function as a side channel — the 15-scenario table is the contract.
+> Adding a scenario beyond the 15 (17 test functions) means the SPEC + LIFECYCLE-SCENARIOS docs + spec FR-002 list MUST be updated first. Do NOT add an 18th `Test_Scenario_*` function as a side channel — the 17-function list locked in spec FR-002 is the contract.
 
 If, instead, you need to add a regression test inside an existing scenario:
 
@@ -71,9 +71,9 @@ Use this only when a scenario surfaces a need the existing six builders cannot s
 
 ## Common gotchas
 
-- **Adding `t.Parallel()` at the scenario top** — forbidden by FR-025-21 (suite runs serially at the top). Internal `t.Parallel` is allowed only where the scenario owns disjoint mutable state.
-- **Hitting a real upstream URL** — the harness’s `http.Client` is wired with a `RoundTripper` that errors on any host outside the registered httptest endpoints. If a scenario fails with "host not allowed", the production code is making a request the harness hasn’t mocked — wire a mock in `TestServer.MockValidator`.
-- **`time.Sleep` for a "documented transition"** — forbidden by FR-025-16. Use the harness's `WaitState(ctx, deadline)` helper, which uses a bounded `runtime.Gosched` poll, or drive the transition directly (e.g. invoke `Refill` or `TriggerRefresh`).
+- **Adding `t.Parallel()` at the scenario top** — forbidden by spec FR-022 (suite runs serially at the top). Internal `t.Parallel` is allowed only where the scenario owns disjoint mutable state.
+- **Hitting a real upstream URL** — the harness's `http.Client` is wired with a `RoundTripper` that errors on any host outside the registered httptest endpoints. If a scenario fails with "host not allowed", the production code is making a request the harness hasn't mocked — wire a mock in `TestServer.MockValidator`.
+- **`time.Sleep` for a "documented transition"** — forbidden by plan §R-4. Use the harness's `WaitState(ctx, deadline)` helper, which uses a bounded `runtime.Gosched` poll, or drive the transition directly (e.g. invoke `TriggerRefresh` or advance the fake clock).
 - **A scenario that "almost passes"** — there is no almost. The four contracts are mandatory and binary. A scenario failing Contract D (sentinel-absence) means a real production code path is leaking a secret; the fix is in the production code, not the test.
 
 ## Reference
