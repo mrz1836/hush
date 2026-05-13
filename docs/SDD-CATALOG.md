@@ -186,7 +186,7 @@ artifacts off disk.
 
 | ID | Title | Package | Blocked by | Chunk file |
 |----|-------|---------|------------|------------|
-| ✅ SDD-27 | Log-pattern watchdog (alert-only) | `internal/supervise` | SDD-20 | [docs/sdd/SDD-27.md](sdd/SDD-27.md) |
+| ✅ SDD-27 | Log-pattern watchdog (alert-only) | `internal/supervise/watchdog` | SDD-20 | [docs/sdd/SDD-27.md](sdd/SDD-27.md) |
 | SDD-26 | 5 builtin validators (anthropic, anthropic-oauth, openai, google-ai, github) | `internal/supervise/validators` | SDD-21 | [docs/sdd/SDD-26.md](sdd/SDD-26.md) |
 | SDD-28 | 8 alert classes + tiered routing + DM rate limit | `internal/discord/alerts` | SDD-11, SDD-27 | [docs/sdd/SDD-28.md](sdd/SDD-28.md) |
 
