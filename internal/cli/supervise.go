@@ -8,8 +8,6 @@ import (
 	"io"
 	"log/slog"
 	"os/signal"
-	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -63,129 +61,6 @@ type realClock struct{}
 
 // Now returns the current wall-clock time.
 func (realClock) Now() time.Time { return time.Now() }
-
-// orchestratorInputs implements supervise.StatusInputs via eight
-// atomic pointer / bool fields. Safe for concurrent reads from any
-// StatusServer handler goroutine (Constitution IX).
-type orchestratorInputs struct {
-	name             string
-	childStartedAt   atomic.Pointer[time.Time]
-	lastAuthFail     atomic.Pointer[time.Time]
-	scopeHealthy     atomic.Pointer[[]string]
-	scopeStale       atomic.Pointer[[]string]
-	sessionExp       atomic.Pointer[time.Time]
-	refreshNext      atomic.Pointer[time.Time]
-	discordConnected atomic.Bool
-}
-
-// Name returns the supervisor's configured name.
-func (o *orchestratorInputs) Name() string { return o.name }
-
-// SessionExpiresAt returns the cached JWT session expiry instant.
-func (o *orchestratorInputs) SessionExpiresAt() time.Time {
-	if p := o.sessionExp.Load(); p != nil {
-		return *p
-	}
-	return time.Time{}
-}
-
-// RefreshWindowNext returns the next scheduled refresh-window instant.
-func (o *orchestratorInputs) RefreshWindowNext() time.Time {
-	if p := o.refreshNext.Load(); p != nil {
-		return *p
-	}
-	return time.Time{}
-}
-
-// ScopeHealthy returns the latest healthy-scope list.
-func (o *orchestratorInputs) ScopeHealthy() []string {
-	if p := o.scopeHealthy.Load(); p != nil {
-		return *p
-	}
-	return nil
-}
-
-// ScopeStale returns the latest stale-scope list.
-func (o *orchestratorInputs) ScopeStale() []string {
-	if p := o.scopeStale.Load(); p != nil {
-		return *p
-	}
-	return nil
-}
-
-// LastAuthFailure returns the timestamp of the last auth-failure
-// transition, or nil if no auth failure has been recorded.
-func (o *orchestratorInputs) LastAuthFailure() *time.Time {
-	return o.lastAuthFail.Load()
-}
-
-// ChildUptime returns the duration since the current child was
-// started, or 0 when no child is live.
-func (o *orchestratorInputs) ChildUptime() time.Duration {
-	p := o.childStartedAt.Load()
-	if p == nil || p.IsZero() {
-		return 0
-	}
-	return time.Since(*p)
-}
-
-// DiscordConnected returns whether the Discord transport is connected.
-func (o *orchestratorInputs) DiscordConnected() bool {
-	return o.discordConnected.Load()
-}
-
-// refreshFlight is one in-flight refresh attempt observed by every
-// concurrent caller of refreshCoalescer.Handle (FR-023-22a).
-type refreshFlight struct {
-	done chan struct{}
-	err  error
-}
-
-// errRefreshPerformNotWired is the static sentinel surfaced by
-// refreshCoalescer.Handle when no perform closure has been wired —
-// programmer error escape hatch (Constitution IX err113-compliant).
-var errRefreshPerformNotWired = errors.New("hush: supervise: refresh perform not wired")
-
-// refreshCoalescer is the single-flight gate for `hush client refresh`
-// callbacks. Concurrent invocations share the same terminal result.
-type refreshCoalescer struct {
-	mu       sync.Mutex
-	inflight *refreshFlight
-	perform  func(ctx context.Context) error
-}
-
-// Handle is the refreshHandler wired into the StatusServer. Returns
-// the terminal err observed by every caller of the in-flight refill.
-func (c *refreshCoalescer) Handle(ctx context.Context) error {
-	c.mu.Lock()
-	if c.inflight != nil {
-		flight := c.inflight
-		c.mu.Unlock()
-		select {
-		case <-flight.done:
-			return flight.err
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-	flight := &refreshFlight{done: make(chan struct{})}
-	c.inflight = flight
-	perform := c.perform
-	c.mu.Unlock()
-
-	var err error
-	if perform == nil {
-		err = errRefreshPerformNotWired
-	} else {
-		err = perform(ctx)
-	}
-	c.mu.Lock()
-	flight.err = err
-	close(flight.done)
-	c.inflight = nil
-	c.mu.Unlock()
-	return err
-}
 
 // newSuperviseCmd constructs the `hush supervise <config-path>`
 // subcommand. Side-effect-free constructor; the orchestrator wiring
@@ -315,10 +190,6 @@ func printSuperviseErr(stderr io.Writer, err error) {
 	msg := string(bytes.ReplaceAll([]byte(err.Error()), []byte("\n"), []byte(" ")))
 	_, _ = fmt.Fprintf(stderr, "hush: supervise: %s\n", msg)
 }
-
-// Compile-time guard: orchestratorInputs implements
-// supervise.StatusInputs.
-var _ supervise.StatusInputs = (*orchestratorInputs)(nil)
 
 // Compile-time guard: realClock implements supervise.Clock.
 var _ supervise.Clock = realClock{}

@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -359,29 +358,6 @@ func TestSupervise_SigtermReleasesPidfileAndSocket(t *testing.T) {
 	assert.True(t, os.IsNotExist(serr), "socket must be removed: %v", serr)
 }
 
-// TestSupervise_RefreshCoalescer_SingleFlight — concurrent Handle
-// invocations share the same terminal err (FR-023-22a).
-func TestSupervise_RefreshCoalescer_SingleFlight(t *testing.T) {
-	var calls atomic.Int64
-	c := &refreshCoalescer{
-		perform: func(ctx context.Context) error {
-			calls.Add(1)
-			time.Sleep(50 * time.Millisecond)
-			return errors.New("vault unreachable")
-		},
-	}
-	const n = 5
-	results := make(chan error, n)
-	for i := 0; i < n; i++ {
-		go func() { results <- c.Handle(context.Background()) }()
-	}
-	for i := 0; i < n; i++ {
-		err := <-results
-		assert.EqualError(t, err, "vault unreachable")
-	}
-	assert.Equal(t, int64(1), calls.Load(), "perform must run exactly once for coalesced burst")
-}
-
 // TestSupervise_PrintErrCollapsesNewlines — multi-line error messages
 // render as one line on stderr.
 func TestSupervise_PrintErrCollapsesNewlines(t *testing.T) {
@@ -395,51 +371,6 @@ func TestSupervise_PrintErrCollapsesNewlines(t *testing.T) {
 // _ = syscall.SIGTERM keeps the syscall import in scope for future
 // real-signal tests; the existing tests cancel ctx instead.
 var _ = syscall.SIGTERM
-
-// TestSupervise_OrchestratorInputs_AllAccessors — exercise every
-// orchestratorInputs accessor (Name, SessionExpiresAt, RefreshWindowNext,
-// ScopeHealthy, ScopeStale, LastAuthFailure, ChildUptime,
-// DiscordConnected) under both empty and populated states so the
-// status server's renderStatus path observes non-zero values from
-// each. Covers FR-12 surface (data-model.md §2.3).
-func TestSupervise_OrchestratorInputs_AllAccessors(t *testing.T) {
-	t.Run("empty defaults", func(t *testing.T) {
-		o := &orchestratorInputs{name: "n"}
-		assert.Equal(t, "n", o.Name())
-		assert.True(t, o.SessionExpiresAt().IsZero())
-		assert.True(t, o.RefreshWindowNext().IsZero())
-		assert.Nil(t, o.ScopeHealthy())
-		assert.Nil(t, o.ScopeStale())
-		assert.Nil(t, o.LastAuthFailure())
-		assert.Equal(t, time.Duration(0), o.ChildUptime())
-		assert.False(t, o.DiscordConnected())
-	})
-	t.Run("populated", func(t *testing.T) {
-		o := &orchestratorInputs{name: "p"}
-		sea := time.Date(2026, 4, 15, 12, 0, 0, 0, time.UTC)
-		rwn := time.Date(2026, 4, 15, 16, 0, 0, 0, time.UTC)
-		laf := time.Date(2026, 4, 14, 12, 0, 0, 0, time.UTC)
-		startedAt := time.Now().Add(-2 * time.Hour)
-		o.sessionExp.Store(&sea)
-		o.refreshNext.Store(&rwn)
-		healthy := []string{"A", "B"}
-		stale := []string{"C"}
-		o.scopeHealthy.Store(&healthy)
-		o.scopeStale.Store(&stale)
-		o.lastAuthFail.Store(&laf)
-		o.childStartedAt.Store(&startedAt)
-		o.discordConnected.Store(true)
-
-		assert.Equal(t, sea, o.SessionExpiresAt())
-		assert.Equal(t, rwn, o.RefreshWindowNext())
-		assert.Equal(t, []string{"A", "B"}, o.ScopeHealthy())
-		assert.Equal(t, []string{"C"}, o.ScopeStale())
-		require.NotNil(t, o.LastAuthFailure())
-		assert.Equal(t, laf, *o.LastAuthFailure())
-		assert.True(t, o.ChildUptime() >= 2*time.Hour)
-		assert.True(t, o.DiscordConnected())
-	})
-}
 
 // TestSupervise_RealClock — Clock impl.
 func TestSupervise_RealClock(t *testing.T) {
