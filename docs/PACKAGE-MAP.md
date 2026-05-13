@@ -1952,6 +1952,140 @@ Audit-vocabulary reconciliation: SDD-24 appends 12 constants to
 `ActionClientRefreshInvoked`). The block remains append-only per the
 file's line-33 header.
 
+### Exported API — locked at SDD-27
+
+Sub-package path: `github.com/mrz1836/hush/internal/supervise/watchdog`
+
+SDD-27 ships the log-pattern watchdog — alert-only by design. The
+concrete `watchdog.Watchdog` satisfies the `supervise.Watchdog`
+interface (locked at SDD-24) via the additive `OnStderrLine` adapter,
+so the SDD-23 CLI wiring passes a `*watchdog.Watchdog` directly into
+`Deps.Watchdog`. The watchdog has **zero authority** over the
+supervisor state machine (spec FR-003, Constitution V): a match emits
+a typed `Event` and nothing else. The package's source code does not
+name `Store`, `Refiller`, `Refresher`, `Grace`, or `Lifecycle`, and
+its import set is stdlib-only plus `internal/supervise` for the
+compile-time interface guard (verified by
+`TestWatchdog_ZeroNewDependencies`).
+
+```go
+// Pattern is an operator-named regex predicate paired with a per-pattern
+// alert refill interval. Caller pre-compiles Regex (FR-008); RateLimit
+// derives from config.Supervisor.Watchdog.MaxAlertsPerHour as
+// time.Duration((3600/MaxAlertsPerHour) * float64(time.Second)).
+type Pattern struct {
+    Name      string
+    Regex     *regexp.Regexp
+    RateLimit time.Duration
+}
+
+// Event is the typed alert emitted on every non-suppressed match.
+// Consumed by SDD-28's downstream alert router.
+type Event struct {
+    Pattern string
+    Line    string
+    Time    time.Time
+}
+
+// Watchdog is the single-instance, single-run pattern engine.
+type Watchdog struct { /* opaque */ }
+
+// NewWatchdog validates the pattern set (rejects empty names, nil regex,
+// non-positive RateLimit, nil alerts channel, nil logger, and duplicate
+// names per FR-007a). Empty patterns slice is permitted (FR-014).
+func NewWatchdog(patterns []Pattern, alerts chan<- Event, logger *slog.Logger) (*Watchdog, error)
+
+// Ingest defensively copies line and enqueues it for evaluation. Non-
+// blocking from the caller's perspective (FR-010a): a full queue drops
+// the line with episode-coalesced WARN bookkeeping (Clarification Q4).
+// Post-Run-return ingests are silent no-ops (FR-009).
+func (w *Watchdog) Ingest(line []byte)
+
+// Run drives the matcher loop. Single-shot per *Watchdog (R-012). On
+// ctx.Done(), pending lines are dropped (R-007), one INFO log records
+// the drop count, and Run returns the wrapped ctx.Err() within SC-004's
+// 250ms budget.
+func (w *Watchdog) Run(ctx context.Context) error
+
+// OnStderrLine satisfies the supervise.Watchdog interface (SDD-24) by
+// delegating to Ingest. ADDITIVE beyond the chunk-doc API; recorded in
+// plan.md Complexity Tracking entry #3.
+func (w *Watchdog) OnStderrLine(ctx context.Context, line []byte)
+
+// Sentinel errors — identifiable via errors.Is.
+var (
+    ErrAlreadyRan           = errors.New("watchdog: Run already invoked")
+    ErrEmptyPatternName     = errors.New("watchdog: pattern name is empty")
+    ErrDuplicatePatternName = errors.New("watchdog: duplicate pattern name")
+    ErrNilPatternRegex      = errors.New("watchdog: pattern Regex is nil")
+    ErrNonPositiveRateLimit = errors.New("watchdog: pattern RateLimit must be positive")
+    ErrNilAlertsChannel     = errors.New("watchdog: alerts channel is nil")
+    ErrNilLogger            = errors.New("watchdog: logger is nil")
+)
+```
+
+Files: `internal/supervise/watchdog/watchdog.go` (single source file —
+Pattern, Event, Watchdog, NewWatchdog, Ingest, Run, OnStderrLine, 7
+sentinels, internal `bucketState`/`dropEpisode`, `lineChannelCapacity =
+512`, compile-time `var _ supervise.Watchdog = (*Watchdog)(nil)`
+guard), `internal/supervise/watchdog/watchdog_test.go` (24 named tests,
+24-of-24 race-clean, ≥90% statement coverage).
+
+Behaviour contracts (locked at SDD-27):
+
+- `NewWatchdog`: pattern-set validation runs before any allocation;
+  duplicate-name rejection (FR-007a/Clarification Q5) is enforced at the
+  type boundary as defence in depth on top of SDD-18's config validator.
+  Bucket state initialised tokens=1 + lastRefill=`time.Now()` so the
+  first match per pattern always alerts (FR-004 "starts full").
+- `Ingest`: cancelled-atomic short-circuit + mutex-guarded enqueue +
+  defensive `[]byte` copy + non-blocking channel send. Successful
+  enqueue that follows a drop-episode flushes a single queue-full WARN
+  carrying `dropped_count` and `first_drop_at`; episode-end semantic per
+  Clarification Q4.
+- `Run`: single matcher goroutine = the goroutine running `Run`. Inner
+  loop selects `<-ctx.Done()` and `<-w.lines`; the matcher evaluates
+  each line against every pattern in order, applying lazy-refill token
+  buckets keyed by `Pattern.Name`. Rate-limit suppression emits one
+  WARN per suppressed match (FR-006). Alert-output saturation emits one
+  WARN per drop (R-010) and consumes the token to keep the rate-limit
+  path consistent. On cancel: enqueueMu held, cancelled atomic set,
+  open drop-episode flushed, pending lines drained and INFO-logged,
+  Run returns `fmt.Errorf("watchdog: run cancelled: %w", ctx.Err())`.
+- `OnStderrLine`: pure forwarder to `Ingest`; ctx is intentionally
+  discarded (Ingest's signature is chunk-doc locked).
+
+Constitution principles in scope: V (every drop emits WARN, zero silent
+suppression; alert-only proven by `TestWatchdog_NeverTransitionsState`
++ the no-`Store`/`Refiller`/`Refresher`/`Grace`/`Lifecycle` source-text
+invariant); VIII (24 named tests TDD-first, race-clean, 96.4%
+statement coverage — exceeds 90% chunk-doc target); IX (zero `init()`;
+zero mutable package-level state; seven sentinel-class
+`var Err... = errors.New(...)` globals — exempt per SDD-21 precedent;
+one unexported `const lineChannelCapacity = 512`; single matcher
+goroutine with explicit owner + ctx + termination + top-frame
+`defer recover`; ctx-first `Run(ctx)`); X (no `internal/vault/securebytes`
+import, no `*SecureBytes` field — verified by
+`TestWatchdog_NoSecureBytesStringConversion`; the single `string(...)`
+site is `string(line)` for non-secret `Event.Line` construction; all
+three WARN emission sites exclude matched-line content per
+Clarification Q2 — sentinel-byte assertions in
+`TestWatchdog_RateLimitBlocksExcess`,
+`TestWatchdog_QueueFullDropEpisodeOnceWARN`, and
+`TestWatchdog_AlertOutputSaturatedDropsWARN` prove it); XI (zero new
+direct `go.mod` dependencies — verified by
+`TestWatchdog_ZeroNewDependencies`).
+
+Anti-API (deliberately NOT exported): a `Clock` interface (test seam
+is the unexported `now func() time.Time` field per Constitution IX
+"interfaces at the consumer"); pattern compilation helpers (the caller
+pre-compiles via `regexp.Compile` per FR-008 + R-015); reconfiguration
+or pattern-set mutation entry points (FR-007 — a new pattern set
+requires a fresh `*Watchdog`); package-level mutable state of any
+kind; an `init()` function; closure of the alerts channel (R-011 —
+SDD-28 routes multi-producer alerts and would break if any single
+producer closed).
+
 ---
 
 ## `tests/integration/` — Exported API — locked at SDD-25
