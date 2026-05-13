@@ -144,6 +144,9 @@ func (l *Lifecycle) bootPreconditionsLoop(ctx context.Context) error {
 				Reason:     alertReasonFor(AlertClassBootTimeout),
 			})
 			l.emitBootTimeout(ctx, lastErrClass)
+			// Drive the documented state transition; the table maps
+			// EventBootRetryExhausted → StateStopped (state.go:98).
+			l.transition(ctx, EventBootRetryExhausted)
 			return fmt.Errorf("supervise: boot: %w", ErrBootTimeout)
 		}
 		timer := time.NewTimer(sleep)

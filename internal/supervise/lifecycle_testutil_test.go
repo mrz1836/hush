@@ -469,6 +469,11 @@ func newTestLifecycle(t *testing.T, cmd []string, opts ...func(*config.Superviso
 	}
 
 	lc := NewLifecycle(context.Background(), cfg, deps)
+	// Prevent the Refresher's initial tick from firing during boot when
+	// the wall clock happens to fall inside cfg.RefreshWindow on the
+	// developer machine. Tests that exercise the refresher push
+	// refreshTickCh manually, so priming lastFiredDay=today is inert.
+	lc.refresher.primeForTest(time.Now(), false)
 	return &testLifecycle{
 		lc:       lc,
 		vault:    vault,
