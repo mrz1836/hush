@@ -12,6 +12,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sync/atomic"
 	"time"
 
@@ -68,6 +69,7 @@ type writerImpl struct {
 
 	// state owned exclusively by the writer goroutine after Run begins.
 	file     *os.File
+	dirFile  *os.File
 	bw       *bufio.Writer
 	seq      uint64
 	prevHash []byte
@@ -190,7 +192,24 @@ func (w *writerImpl) Run(ctx context.Context) error {
 		}
 		return fmt.Errorf("audit: flock chain file: %w", lockErr)
 	}
+	// Open + fsync the parent directory so the chain file's directory
+	// entry is durable across power loss. O_APPEND|O_CREATE creates the
+	// file lazily, and a successful file.Sync() in persistLine only
+	// covers the inode + data, not the dentry that resolves the path to
+	// the inode. Without this, the first Append after a fresh chain can
+	// be rolled back by a kernel panic.
+	dirF, dirErr := os.Open(filepath.Dir(w.path))
+	if dirErr != nil {
+		_ = f.Close()
+		return fmt.Errorf("audit: open chain parent dir: %w", dirErr)
+	}
+	if syncErr := dirF.Sync(); syncErr != nil {
+		_ = dirF.Close()
+		_ = f.Close()
+		return fmt.Errorf("audit: sync chain parent dir: %w", syncErr)
+	}
 	w.file = f
+	w.dirFile = dirF
 	w.bw = bufio.NewWriter(f)
 
 	mirrorDone := make(chan struct{})
@@ -236,6 +255,9 @@ drainLoop:
 	_ = w.bw.Flush()
 	_ = w.file.Sync()
 	_ = w.file.Close()
+	if w.dirFile != nil {
+		_ = w.dirFile.Close()
+	}
 
 	if w.mirror != nil {
 		w.mirror.shutdown()

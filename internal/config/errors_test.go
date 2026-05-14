@@ -29,6 +29,7 @@ func TestSentinels_Catalog(t *testing.T) {
 		{"ErrAuditLogEscape", ErrAuditLogEscape},
 		{"ErrStateDirNotFound", ErrStateDirNotFound},
 		{"ErrStateDirUnsafe", ErrStateDirUnsafe},
+		{"ErrAuditLogParentUnsafe", ErrAuditLogParentUnsafe},
 		{"ErrArgonMemoryTooLow", ErrArgonMemoryTooLow},
 		{"ErrArgonTimeTooLow", ErrArgonTimeTooLow},
 		{"ErrArgonThreadsTooLow", ErrArgonThreadsTooLow},

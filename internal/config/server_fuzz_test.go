@@ -40,6 +40,7 @@ func FuzzServerTOML(f *testing.F) { //nolint:gocognit,gocyclo // fuzz target: se
 		ErrArgonMemoryTooHigh, ErrArgonTimeTooHigh, ErrArgonThreadsTooHigh,
 		ErrSupervisorTTLOutOfRange,
 		ErrConfigFileMode,
+		ErrAuditLogParentUnsafe,
 	}
 
 	isKnownError := func(err error) bool {

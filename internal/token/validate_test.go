@@ -154,6 +154,31 @@ func hs256SecretFromPub(pub *ecdsa.PublicKey) []byte {
 	return append(pub.X.Bytes(), pub.Y.Bytes()...)
 }
 
+func TestValidate_RejectsWrongIssuer(t *testing.T) {
+	// A JWT correctly signed by our key but with iss != "hush" must be
+	// refused. Defends against key-reuse mistakes where the secp256k1
+	// signing key is also used to mint tokens under a different label.
+	store := NewStore()
+	tok, priv := issueAndAdd(t, store, nil)
+
+	original, err := jwt.ParseWithClaims(tok.Encoded, &Claims{}, func(*jwt.Token) (any, error) {
+		return &priv.PublicKey, nil
+	}, jwt.WithValidMethods([]string{"ES256K"}))
+	if err != nil {
+		t.Fatalf("parse original: %v", err)
+	}
+	tampered := *original.Claims.(*Claims)
+	tampered.Issuer = "not-hush"
+	mangled, err := signEncoded(&tampered, priv)
+	if err != nil {
+		t.Fatalf("re-sign: %v", err)
+	}
+
+	if _, err := Validate(t.Context(), mangled, &priv.PublicKey, store, "100.64.0.1", "FAKE_SECRET"); !errors.Is(err, ErrInvalidIssuer) {
+		t.Fatalf("got %v, want ErrInvalidIssuer", err)
+	}
+}
+
 func TestValidate_AlgConfusion_None_Refused(t *testing.T) {
 	store := NewStore()
 	tok, priv := issueAndAdd(t, store, nil)

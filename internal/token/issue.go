@@ -12,6 +12,12 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+// tokenIssuer is the fixed value written to and required from the JWT iss
+// claim. Centralized so Issue and Validate cannot drift; an operator who
+// shares the signing key with another service cannot smuggle in a token
+// issued under a different label.
+const tokenIssuer = "hush"
+
 // IssueParams carries the issuer-side knobs supplied by the claim
 // handler. All fields except MaxUses (for SUPERVISOR) are required.
 type IssueParams struct {
@@ -100,7 +106,7 @@ func Issue(ctx context.Context, signKey *ecdsa.PrivateKey, params IssueParams) (
 	expiresAt := params.Now.Add(params.TTL)
 	claims := Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer:    "hush",
+			Issuer:    tokenIssuer,
 			IssuedAt:  jwt.NewNumericDate(params.Now),
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
 			ID:        jti,

@@ -111,8 +111,19 @@ func (l *Lifecycle) lookupValidator(scope string) Validator {
 // Constitution X: this is the ONE permitted `string(*SecureBytes)` site
 // introduced by SDD-24 — the OS fork boundary. The env slice is zeroed
 // after Start returns (FR-026-008).
+//
+//nolint:gocognit // sequential fork-boundary plumbing: deferred wipe + per-scope SecureBytes use
 func (l *Lifecycle) startChild(ctx context.Context) error {
 	env := append([]string(nil), l.config.Child.EnvPassthrough...)
+	// FR-026-008: zero the env slice on every exit path — success, every
+	// error return below, and any panic that unwinds through this frame.
+	// Child.Start makes its own defensive copy of the slice into cmd.Env,
+	// so wiping the parent's view does not blank the child's environment.
+	defer func() {
+		for i := range env {
+			env[i] = ""
+		}
+	}()
 	for _, scope := range l.config.Scope {
 		sb, ok := l.grace.Get(scope)
 		if !ok || sb == nil {
@@ -147,11 +158,6 @@ func (l *Lifecycle) startChild(ctx context.Context) error {
 	child := NewChild(childCfg)
 	if err := child.Start(ctx); err != nil {
 		return fmt.Errorf("supervise: child start: %w", err)
-	}
-
-	// Zero env slice after Start (FR-026-008). Drop reference; GC takes the rest.
-	for i := range env {
-		env[i] = ""
 	}
 
 	now := l.deps.NowFn()

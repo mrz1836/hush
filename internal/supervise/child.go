@@ -133,7 +133,14 @@ func (c *Child) Start(ctx context.Context) error {
 
 	cmd := exec.CommandContext(ctx, c.cfg.Command[0], c.cfg.Command[1:]...) //nolint:gosec // cfg.Command[0] is validated as an absolute path; argv-style call avoids shell parsing per FR-020-1.
 	cmd.Path = c.cfg.Command[0]
-	cmd.Env = c.cfg.Env
+	// Defensive copy of the env slice: the caller (Lifecycle.startChild)
+	// owns cfg.Env and zeroes its contents after Start returns to scrub
+	// SECRET=value pairs from the parent's heap. Sharing the backing
+	// array would either race the zero-loop against exec.Cmd's own use
+	// of the slice or, worse, blank the env the child sees if the wipe
+	// happens between cmd.Start's slice read and the fork. Constitution X.
+	cmd.Env = make([]string, len(c.cfg.Env))
+	copy(cmd.Env, c.cfg.Env)
 	cmd.Dir = c.cfg.Dir
 	cmd.Stdout = c.stdoutRing
 	cmd.Stderr = c.stderrRing

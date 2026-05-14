@@ -19,8 +19,15 @@ import (
 )
 
 // injectStateDir replaces __STATE_DIR__ in src with dir and writes to a temp file.
+// It also chmod's dir to 0o700 (when it exists) so the production
+// enforceAuditLogParentMode guard (gated by RequireFileModeChecks, default
+// true) sees a strict parent. Best-effort: tests that deliberately point at
+// a missing state_dir still work.
 func injectStateDir(t *testing.T, src, dir string) string {
 	t.Helper()
+	if _, err := os.Stat(dir); err == nil {
+		require.NoError(t, os.Chmod(dir, 0o700))
+	}
 	raw, err := os.ReadFile(src) //nolint:gosec // G304: src is a testdata fixture path controlled by the test, not user input
 	require.NoError(t, err)
 	content := strings.ReplaceAll(string(raw), "__STATE_DIR__", dir)
@@ -171,6 +178,7 @@ func TestServer_ExpandsTildePathsCorrectly(t *testing.T) {
 	// Write a minimal config that uses ~ for state_dir. The state_dir must
 	// exist, so we use t.TempDir() but express it via its real path.
 	dir := t.TempDir()
+	require.NoError(t, os.Chmod(dir, 0o700))
 	// If TempDir is under HOME, we can use a ~ path; otherwise just use absolute.
 	var rawStateDir string
 	if strings.HasPrefix(dir, home+"/") {
@@ -417,7 +425,7 @@ func TestLoadServer_AllErrorsAreSentinels(t *testing.T) {
 		ErrTailscaleBindRequired, ErrListenLoopback, ErrListenUnspecified,
 		ErrListenPublic, ErrListenMalformed, ErrTailscaleRequired,
 		ErrPathPrefixInvalid, ErrAuditLogEscape,
-		ErrStateDirNotFound, ErrStateDirUnsafe,
+		ErrStateDirNotFound, ErrStateDirUnsafe, ErrAuditLogParentUnsafe,
 		ErrArgonMemoryTooLow, ErrArgonTimeTooLow, ErrArgonThreadsTooLow,
 		ErrArgonMemoryTooHigh, ErrArgonTimeTooHigh, ErrArgonThreadsTooHigh,
 		ErrSupervisorTTLOutOfRange,
@@ -486,6 +494,7 @@ func TestServer_HealthBindInheritsListenAddr(t *testing.T) {
 func configWithMode(t *testing.T, mode os.FileMode) string {
 	t.Helper()
 	dir := t.TempDir()
+	require.NoError(t, os.Chmod(dir, 0o700))
 	raw, err := os.ReadFile("testdata/valid/minimal-valid.toml")
 	require.NoError(t, err)
 	content := strings.ReplaceAll(string(raw), "__STATE_DIR__", dir)

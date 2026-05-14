@@ -151,6 +151,22 @@
                 },
                 {
                     "linters": [
+                        "gocognit",
+                        "gocyclo",
+                        "err113",
+                        "nolintlint"
+                    ],
+                    "path": "internal/discord/alerts/.*_test\\.go"
+                },
+                {
+                    "linters": [
+                        "gocognit",
+                        "gocyclo"
+                    ],
+                    "path": "internal/discord/bot_alerts_test\\.go"
+                },
+                {
+                    "linters": [
                         "goconst",
                         "err113",
                         "errcheck",

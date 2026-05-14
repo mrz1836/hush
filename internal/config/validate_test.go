@@ -77,6 +77,7 @@ func TestServer_AcceptsTailscaleCGNAT(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
+			require.NoError(t, os.Chmod(dir, 0o700))
 			content := "[server]\n" +
 				"listen_addr = \"" + tc.listenAddr + "\"\n" +
 				"path_prefix = \"a8k2f9\"\n" +
@@ -108,6 +109,7 @@ func TestServer_AcceptsRequireTailscaleTrue(t *testing.T) {
 	t.Parallel()
 	// Explicit true — loads cleanly.
 	dir := t.TempDir()
+	require.NoError(t, os.Chmod(dir, 0o700))
 	content := "[server]\n" +
 		"listen_addr = \"100.96.10.4:7743\"\n" +
 		"path_prefix = \"a8k2f9\"\n" +
@@ -191,6 +193,7 @@ func TestServer_AcceptsValidPathPrefix(t *testing.T) {
 		t.Run(prefix, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
+			require.NoError(t, os.Chmod(dir, 0o700))
 			content := "[server]\n" +
 				"listen_addr = \"100.96.10.4:7743\"\n" +
 				"path_prefix = \"" + prefix + "\"\n" +
@@ -223,6 +226,7 @@ func TestServer_RejectsArgonMemoryUnder256(t *testing.T) {
 func TestServer_AcceptsArgonMemoryAt256(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
+	require.NoError(t, os.Chmod(dir, 0o700))
 	content := "[server]\n" +
 		"listen_addr = \"100.96.10.4:7743\"\n" +
 		"path_prefix = \"a8k2f9\"\n" +
@@ -274,6 +278,7 @@ func TestServer_RejectsArgonThreadsUnder4(t *testing.T) {
 func argonCfgWithOverrides(t *testing.T, overrides string) (*Server, error) {
 	t.Helper()
 	dir := t.TempDir()
+	require.NoError(t, os.Chmod(dir, 0o700))
 	content := "[server]\n" +
 		"listen_addr = \"100.96.10.4:7743\"\n" +
 		"path_prefix = \"a8k2f9\"\n" +
@@ -394,6 +399,14 @@ func TestServer_AuditLogContainmentRejectsDriveLetterFalsePositive(t *testing.T)
 func TestValidate_MultiViolationJoinsErrors(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
+	require.NoError(t, os.Chmod(dir, 0o700))
+	// Use a separate 0o700 directory for audit_log so it passes the
+	// parent-mode guard (which runs before Validate and would otherwise
+	// short-circuit), leaving the containment check to fire in Validate
+	// alongside the other rules under test.
+	otherDir := t.TempDir()
+	require.NoError(t, os.Chmod(otherDir, 0o700))
+	auditLog := filepath.Join(otherDir, "audit.jsonl")
 
 	// A synthetic config with multiple violations simultaneously:
 	// loopback listen_addr + argon_memory_mb=128 + audit_log outside state_dir.
@@ -401,7 +414,7 @@ func TestValidate_MultiViolationJoinsErrors(t *testing.T) {
 		"listen_addr = \"127.0.0.1:7743\"\n" +
 		"path_prefix = \"a8k2f9\"\n" +
 		"state_dir = \"" + dir + "\"\n" +
-		"audit_log = \"/etc/passwd\"\n" +
+		"audit_log = \"" + auditLog + "\"\n" +
 		"discord_owner_id = \"123456789012345678\"\n" +
 		"\n[discord]\n" +
 		"bot_token_keychain_item = \"hush-discord\"\n" +
