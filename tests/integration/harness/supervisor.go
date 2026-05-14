@@ -16,7 +16,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"sync"
 	"testing"
 	"time"
 
@@ -32,44 +31,14 @@ import (
 // later without touching call sites.
 func jsonUnmarshal(data []byte, v any) error { return json.Unmarshal(data, v) }
 
-// FakeClock implements supervise.Clock with an injectable time the
-// scenario advances via Advance / SetTo. Used by Scenarios 8 / 9 / 11
-// to drive documented transitions without time.Sleep.
-type FakeClock struct {
-	mu  sync.Mutex
-	now time.Time
-}
+// FakeClock is the harness's injectable monotonic clock, aliased to the
+// canonical testutil implementation. Used by Scenarios 8 / 9 / 11 to
+// drive documented transitions without time.Sleep.
+type FakeClock = testutil.FakeClock
 
 // NewFakeClock builds a FakeClock anchored at the supplied instant.
 func NewFakeClock(t time.Time) *FakeClock {
-	return &FakeClock{now: t}
-}
-
-// Now implements supervise.Clock.
-func (f *FakeClock) Now() time.Time {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.now
-}
-
-// Advance moves the clock forward by d.
-func (f *FakeClock) Advance(d time.Duration) {
-	f.mu.Lock()
-	f.now = f.now.Add(d)
-	f.mu.Unlock()
-}
-
-// SetTo pins the clock to t.
-func (f *FakeClock) SetTo(t time.Time) {
-	f.mu.Lock()
-	f.now = t
-	f.mu.Unlock()
-}
-
-// NowFn returns a time.Time-valued closure backed by this FakeClock —
-// suitable for supervise.Deps.NowFn.
-func (f *FakeClock) NowFn() func() time.Time {
-	return f.Now
+	return testutil.NewFakeClock(t)
 }
 
 // TestSupervisor composes the real supervise.Lifecycle against a
@@ -475,7 +444,7 @@ func GoroutineSnapshot() int { return runtime.NumGoroutine() }
 // failure if the post-count exceeds preCount. Bounded — never sleeps.
 func AssertNoLeak(t *testing.T, preCount, maxIters int) {
 	t.Helper()
-	for i := 0; i < maxIters; i++ {
+	for range maxIters {
 		if runtime.NumGoroutine() <= preCount {
 			return
 		}

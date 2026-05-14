@@ -24,7 +24,7 @@ func TestAuditChannel_AllFiveLifecycleEventsMirrored(t *testing.T) {
 		AuditChannelID: "audit-chan",
 		DMRateLimit:    time.Microsecond,
 	}
-	a := newTestApprover(ctx, shim, cfg, newSilentLogger())
+	a := newTestApprover(ctx, shim, cfg, testutil.NewSilentLogger())
 	shim.TriggerReady()
 
 	// Approve cycle → request_received + approved
@@ -62,7 +62,7 @@ func TestAuditChannel_AllFiveLifecycleEventsMirrored(t *testing.T) {
 	rlReq.ClientIP = "100.96.0.44"
 	cfg2 := cfg
 	cfg2.DMRateLimit = time.Hour
-	a2 := newTestApprover(ctx, shim, cfg2, newSilentLogger())
+	a2 := newTestApprover(ctx, shim, cfg2, testutil.NewSilentLogger())
 	shim.TriggerReady()
 	primerPrev := shim.DMCount()
 	go func() {
@@ -116,7 +116,7 @@ func TestAuditChannel_FailureDoesNotBlockApproval(t *testing.T) {
 		AuditChannelID: "audit-chan",
 	}
 	logBuf := &syncBuffer{}
-	logger := slog.New(slog.NewJSONHandler(logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	logger := testutil.NewCapturingLogger(logBuf, slog.LevelDebug)
 	a := newTestApprover(ctx, shim, cfg, logger)
 	shim.TriggerReady()
 
@@ -157,7 +157,7 @@ func TestAuditChannel_NoTokenInPayload(t *testing.T) {
 		AppID:          "app",
 		AuditChannelID: "audit-chan",
 	}
-	a := newTestApprover(ctx, shim, cfg, newSilentLogger())
+	a := newTestApprover(ctx, shim, cfg, testutil.NewSilentLogger())
 	shim.TriggerReady()
 	go func() {
 		uuid := waitForCustomID(t, shim)
@@ -185,7 +185,7 @@ func TestAuditChannel_DisabledWhenIDEmpty(t *testing.T) {
 		AppID:   "app",
 		// AuditChannelID empty
 	}
-	a := newTestApprover(ctx, shim, cfg, newSilentLogger())
+	a := newTestApprover(ctx, shim, cfg, testutil.NewSilentLogger())
 	shim.TriggerReady()
 	go func() {
 		uuid := waitForCustomID(t, shim)

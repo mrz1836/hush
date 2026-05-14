@@ -12,35 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mrz1836/hush/internal/testutil"
 	"github.com/mrz1836/hush/internal/vault/securebytes"
 )
-
-// fakeClock is the inline test-only Clock implementation. Per R-011
-// it lives here in state_test.go (no internal/testutil package).
-type fakeClock struct {
-	mu  sync.Mutex
-	now time.Time
-}
-
-func newFakeClock(t time.Time) *fakeClock { return &fakeClock{now: t} }
-
-func (f *fakeClock) Now() time.Time {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.now
-}
-
-func (f *fakeClock) Set(t time.Time) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.now = t
-}
-
-func (f *fakeClock) Advance(d time.Duration) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.now = f.now.Add(d)
-}
 
 // allEvents is the closed event vocabulary. Used by negative-cell
 // generation and keyset assertions.
@@ -168,7 +142,7 @@ func TestTransitions_KeysetMatchesStateVocabulary(t *testing.T) { //nolint:gocog
 func TestNewStore_InitialState(t *testing.T) {
 	t.Parallel()
 	t0 := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
-	clk := newFakeClock(t0)
+	clk := testutil.NewFakeClock(t0)
 	s := NewStore(context.Background(), clk)
 	snap := s.Snapshot()
 	if snap.State != StateFetching {
@@ -231,7 +205,7 @@ func TestStore_LegalTransitions(t *testing.T) { //nolint:gocognit // structural 
 	for _, tc := range legalCells {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			clk := newFakeClock(t0)
+			clk := testutil.NewFakeClock(t0)
 			s := NewStore(context.Background(), clk)
 			for _, p := range prefixFor(tc.src) {
 				if err := s.Transition(context.Background(), p); err != nil {
@@ -294,7 +268,7 @@ func TestStore_IllegalTransitionErr(t *testing.T) { //nolint:gocognit,gocyclo //
 		name := fmt.Sprintf("%s+%s", ic.src, ic.ev)
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			clk := newFakeClock(t0)
+			clk := testutil.NewFakeClock(t0)
 			s := NewStore(context.Background(), clk)
 			for _, p := range prefixFor(ic.src) {
 				if err := s.Transition(context.Background(), p); err != nil {
@@ -345,7 +319,7 @@ func TestStore_IllegalTransitionErr(t *testing.T) { //nolint:gocognit,gocyclo //
 func TestStore_StopIsIdempotent(t *testing.T) { //nolint:gocognit,gocyclo // structural complexity: idempotency test plus rejection sweep across 14 non-stop events
 	t.Parallel()
 	t0 := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
-	clk := newFakeClock(t0)
+	clk := testutil.NewFakeClock(t0)
 	s := NewStore(context.Background(), clk)
 	if err := s.Transition(context.Background(), EventStopRequested); err != nil {
 		t.Fatalf("first stop: unexpected error: %v", err)
@@ -389,7 +363,7 @@ func TestStore_StopIsIdempotent(t *testing.T) { //nolint:gocognit,gocyclo // str
 func TestStore_GraceRestartReentry(t *testing.T) {
 	t.Parallel()
 	t0 := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
-	clk := newFakeClock(t0)
+	clk := testutil.NewFakeClock(t0)
 	s := NewStore(context.Background(), clk)
 	mustTransition(t, s, EventFetchOK, StateRunning)
 	mustTransition(t, s, EventGraceRestartTriggered, StateGraceRestart)
@@ -415,7 +389,7 @@ func mustTransition(t *testing.T, s *Store, ev Event, want State) {
 func TestStore_TwoStepRecoveryFromAwaitingApproval(t *testing.T) {
 	t.Parallel()
 	t0 := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
-	clk := newFakeClock(t0)
+	clk := testutil.NewFakeClock(t0)
 	s := NewStore(context.Background(), clk)
 	mustTransition(t, s, EventFetchAuthRequired, StateAwaitingApproval)
 	mustTransition(t, s, EventApprovalGranted, StateFetching)
@@ -424,7 +398,7 @@ func TestStore_TwoStepRecoveryFromAwaitingApproval(t *testing.T) {
 	// Re-prove there is no composite shortcut: from a fresh awaiting-approval,
 	// EventApprovalGranted lands on fetching (not running), and a subsequent
 	// EventValidatorFailed re-enters awaiting-approval.
-	clk2 := newFakeClock(t0)
+	clk2 := testutil.NewFakeClock(t0)
 	s2 := NewStore(context.Background(), clk2)
 	mustTransition(t, s2, EventFetchAuthRequired, StateAwaitingApproval)
 	mustTransition(t, s2, EventApprovalGranted, StateFetching)
@@ -436,7 +410,7 @@ func TestStore_TwoStepRecoveryFromAwaitingApproval(t *testing.T) {
 func TestStore_SnapshotIsDefensiveCopy(t *testing.T) {
 	t.Parallel()
 	t0 := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
-	clk := newFakeClock(t0)
+	clk := testutil.NewFakeClock(t0)
 	s := NewStore(context.Background(), clk)
 	clk.Advance(time.Second)
 	if err := s.Transition(context.Background(), EventFetchOK); err != nil {
@@ -489,7 +463,7 @@ func TestStore_TokenLogValueRedacts(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = tok.Destroy() })
 
-	clk := newFakeClock(time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC))
+	clk := testutil.NewFakeClock(time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC))
 	s := NewStore(context.Background(), clk)
 	s.setToken(tok)
 	snap := s.Snapshot()
@@ -536,7 +510,7 @@ func TestStore_TokenZeroOnRelease(t *testing.T) {
 	if err != nil {
 		t.Fatalf("securebytes.New: %v", err)
 	}
-	clk := newFakeClock(time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC))
+	clk := testutil.NewFakeClock(time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC))
 	s := NewStore(context.Background(), clk)
 	s.setToken(tok)
 
@@ -564,7 +538,7 @@ func TestStore_TokenZeroOnRelease(t *testing.T) {
 func TestStore_ConcurrentTransitionAndSnapshot(t *testing.T) { //nolint:gocognit // structural complexity: goroutine fan-out + race-clean assertions per Constitution VIII
 	t.Parallel()
 	t0 := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
-	clk := newFakeClock(t0)
+	clk := testutil.NewFakeClock(t0)
 	s := NewStore(context.Background(), clk)
 
 	const transitionGoroutines = 8
@@ -573,11 +547,11 @@ func TestStore_ConcurrentTransitionAndSnapshot(t *testing.T) { //nolint:gocognit
 
 	var transitionWG sync.WaitGroup
 	transitionWG.Add(transitionGoroutines)
-	for i := 0; i < transitionGoroutines; i++ {
+	for range transitionGoroutines {
 		go func() {
 			defer transitionWG.Done()
 			ctx := context.Background()
-			for j := 0; j < iterations; j++ {
+			for range iterations {
 				clk.Advance(time.Microsecond)
 				_ = s.Transition(ctx, EventFetchOK)
 				clk.Advance(time.Microsecond)
@@ -589,7 +563,7 @@ func TestStore_ConcurrentTransitionAndSnapshot(t *testing.T) { //nolint:gocognit
 	stop := make(chan struct{})
 	var readerWG sync.WaitGroup
 	readerWG.Add(readerGoroutines)
-	for i := 0; i < readerGoroutines; i++ {
+	for range readerGoroutines {
 		go func() {
 			defer readerWG.Done()
 			for {
@@ -623,7 +597,7 @@ func TestStore_ConcurrentTransitionAndSnapshot(t *testing.T) { //nolint:gocognit
 
 func TestStore_NoSideEffects(t *testing.T) {
 	t0 := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
-	clk := newFakeClock(t0)
+	clk := testutil.NewFakeClock(t0)
 	before := runtime.NumGoroutine()
 	s := NewStore(context.Background(), clk)
 
@@ -681,7 +655,7 @@ func TestStore_NoSideEffects(t *testing.T) {
 
 func TestStore_TransitionUnknownEvent(t *testing.T) {
 	t.Parallel()
-	clk := newFakeClock(time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC))
+	clk := testutil.NewFakeClock(time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC))
 	s := NewStore(context.Background(), clk)
 	bogus := Event("garbage-not-in-set")
 	err := s.Transition(context.Background(), bogus)

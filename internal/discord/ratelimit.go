@@ -1,5 +1,9 @@
 package discord
 
+// SDD-28 sibling at internal/discord/alerts/ratelimit.go shares this
+// shape; duplication is intentional per CLAUDE.md R-016 (alerts
+// imports stdlib only) + PACKAGE-MAP.md SDD-11 lock on this surface.
+
 import (
 	"sync"
 	"time"

@@ -4,11 +4,12 @@ import (
 	"bytes"
 	"errors"
 	"log/slog"
-	"math/rand"
+	"math/rand/v2"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/mrz1836/hush/internal/testutil"
 	"github.com/mrz1836/hush/internal/vault/securebytes"
 )
 
@@ -16,7 +17,7 @@ import (
 // returns the cached SecureBytes intact (FR-021-12, B-GR-1,
 // Lifecycle Scenario 9).
 func TestGrace_UsesCacheOnExpiredJWT(t *testing.T) {
-	clk := newFakeClock(time.Date(2026, 5, 10, 14, 0, 0, 0, time.UTC))
+	clk := testutil.NewFakeClock(time.Date(2026, 5, 10, 14, 0, 0, 0, time.UTC))
 	g := NewGrace(60*time.Minute, true)
 	g.setClockForTest(clk.Now)
 
@@ -40,7 +41,7 @@ func TestGrace_UsesCacheOnExpiredJWT(t *testing.T) {
 // TestGrace_TTLCapAt4h: NewGrace(8h, true) is capped to 4h; an entry
 // is evicted at T0+4h+1ns (FR-021-12, GR-1, B-GR-5).
 func TestGrace_TTLCapAt4h(t *testing.T) {
-	clk := newFakeClock(time.Date(2026, 5, 10, 14, 0, 0, 0, time.UTC))
+	clk := testutil.NewFakeClock(time.Date(2026, 5, 10, 14, 0, 0, 0, time.UTC))
 	g := NewGrace(8*time.Hour, true)
 	g.setClockForTest(clk.Now)
 
@@ -93,7 +94,7 @@ func TestGrace_ZeroWindowEqualsDisabled(t *testing.T) {
 // TestGrace_LazyEvictsOnGetAfterTTL: Get on an expired entry destroys
 // + removes the entry inline (FR-021-13, GR-4, B-GR-2).
 func TestGrace_LazyEvictsOnGetAfterTTL(t *testing.T) {
-	clk := newFakeClock(time.Date(2026, 5, 10, 14, 0, 0, 0, time.UTC))
+	clk := testutil.NewFakeClock(time.Date(2026, 5, 10, 14, 0, 0, 0, time.UTC))
 	g := NewGrace(30*time.Minute, true)
 	g.setClockForTest(clk.Now)
 
@@ -201,9 +202,9 @@ func TestGrace_NeverRendersValueAsString(t *testing.T) {
 // keep the test below the gocognit ceiling.
 func graceWorker(t *testing.T, g *Grace, seed int64) {
 	t.Helper()
-	r := rand.New(rand.NewSource(seed)) //nolint:gosec // test-only randomness
-	for j := 0; j < 50; j++ {
-		switch r.Intn(3) {
+	r := rand.New(rand.NewPCG(uint64(seed), 0))
+	for range 50 {
+		switch r.IntN(3) {
 		case 0:
 			sb := newSecureBytes(t, []byte("v"))
 			g.Set("K", sb)
@@ -223,7 +224,7 @@ func TestGrace_ConcurrentRaceClean(t *testing.T) {
 	const N = 100
 	var wg sync.WaitGroup
 	wg.Add(N)
-	for i := 0; i < N; i++ {
+	for i := range N {
 		go func(i int) {
 			defer wg.Done()
 			graceWorker(t, g, int64(i))

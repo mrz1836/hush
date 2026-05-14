@@ -3,8 +3,6 @@ package discord
 import (
 	"context"
 	"errors"
-	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,13 +11,10 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 
+	"github.com/mrz1836/hush/internal/testutil"
 	tk "github.com/mrz1836/hush/internal/token"
 	"github.com/mrz1836/hush/internal/vault/securebytes"
 )
-
-func newSilentLogger() *slog.Logger {
-	return slog.New(slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelWarn}))
-}
 
 func TestRateLimit_BlocksSecondPromptWithin5Min(t *testing.T) {
 	t.Parallel()
@@ -132,7 +127,7 @@ func TestRateLimit_TransportUnavailableDoesNotConsumeToken(t *testing.T) {
 		OwnerID: "owner",
 		AppID:   "app",
 	}
-	a := newTestApprover(ctx, shim, cfg, newSilentLogger())
+	a := newTestApprover(ctx, shim, cfg, testutil.NewSilentLogger())
 	// available defaults to false
 	req := interactiveSampleRequest()
 	if _, err := a.RequestApproval(ctx, req); !errors.Is(err, ErrDiscordUnavailable) {
@@ -163,7 +158,7 @@ func TestRateLimit_DeliveryFailureRefundsToken(t *testing.T) {
 		OwnerID: "owner",
 		AppID:   "app",
 	}
-	a := newTestApprover(ctx, shim, cfg, newSilentLogger())
+	a := newTestApprover(ctx, shim, cfg, testutil.NewSilentLogger())
 	shim.TriggerReady()
 
 	// Program first send to fail, then succeed.
@@ -200,7 +195,7 @@ func TestRateLimit_ZeroDMRateLimitUsesDefault(t *testing.T) {
 			AppID:       "app",
 			DMRateLimit: w,
 		}
-		a := newTestApprover(ctx, shim, cfg, newSilentLogger())
+		a := newTestApprover(ctx, shim, cfg, testutil.NewSilentLogger())
 		if a.rateLimitWin != DefaultDMRateLimit {
 			t.Errorf("DMRateLimit=%v: rateLimitWin=%v; want %v",
 				w, a.rateLimitWin, DefaultDMRateLimit)

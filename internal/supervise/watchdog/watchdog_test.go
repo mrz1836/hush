@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/mrz1836/hush/internal/supervise"
+	"github.com/mrz1836/hush/internal/testutil"
 )
 
 // -------------------- test helpers --------------------
@@ -147,25 +148,6 @@ func (h *fastCountHandler) classifyInfo(r slog.Record) {
 		}
 		return true
 	})
-}
-
-type fakeClock struct {
-	mu sync.Mutex
-	t  time.Time
-}
-
-func newFakeClock(t0 time.Time) *fakeClock { return &fakeClock{t: t0} }
-
-func (c *fakeClock) Now() time.Time {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.t
-}
-
-func (c *fakeClock) Advance(d time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.t = c.t.Add(d)
 }
 
 // setNowForTest installs a fake clock on w and resets per-pattern
@@ -412,7 +394,7 @@ func TestWatchdog_EmptyPatternSetIsBenign(t *testing.T) {
 	}
 	cancel, done := startRun(t, wd)
 
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		wd.Ingest([]byte("noise"))
 	}
 
@@ -565,7 +547,7 @@ func TestWatchdog_IngestAfterRunReturnIsNoop(t *testing.T) {
 	preRecords := len(handler.snapshot())
 
 	const tag = "POST-RUN-TAG-XYZ"
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		wd.Ingest([]byte("match " + tag))
 	}
 
@@ -610,7 +592,7 @@ func TestWatchdog_PrecompiledPatternsReused(t *testing.T) {
 		}
 	}()
 
-	for i := 0; i < 10000; i++ {
+	for range 10000 {
 		wd.Ingest([]byte("always-matching line"))
 	}
 
@@ -634,7 +616,7 @@ func TestWatchdog_SC001_EmitLatencyUnder100ms(t *testing.T) {
 	cancel, done := startRun(t, wd)
 	defer func() { cancel(); <-done }()
 
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		time.Sleep(2 * time.Microsecond)
 		start := time.Now()
 		wd.Ingest([]byte("401 trial"))
@@ -661,14 +643,14 @@ func TestWatchdog_RateLimitBlocksExcess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWatchdog: %v", err)
 	}
-	clock := newFakeClock(time.Unix(1_000_000, 0))
+	clock := testutil.NewFakeClock(time.Unix(1_000_000, 0))
 	setNowForTest(wd, clock.Now)
 
 	cancel, done := startRun(t, wd)
 	defer func() { cancel(); <-done }()
 
 	line := []byte("401 Unauthorized " + sentinel)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		wd.Ingest(line)
 	}
 	waitForLinesEmpty(t, wd, time.Second)
@@ -717,7 +699,7 @@ func TestWatchdog_BucketRefillsAfterInterval(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWatchdog: %v", err)
 	}
-	clock := newFakeClock(time.Unix(1_000_000, 0))
+	clock := testutil.NewFakeClock(time.Unix(1_000_000, 0))
 	setNowForTest(wd, clock.Now)
 
 	cancel, done := startRun(t, wd)
@@ -759,7 +741,7 @@ func TestWatchdog_PerPatternBudgetIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWatchdog: %v", err)
 	}
-	clock := newFakeClock(time.Unix(1_000_000, 0))
+	clock := testutil.NewFakeClock(time.Unix(1_000_000, 0))
 	setNowForTest(wd, clock.Now)
 
 	cancel, done := startRun(t, wd)
@@ -800,7 +782,7 @@ func TestWatchdog_IngestNonBlockingWhenQueueFull(t *testing.T) {
 		t.Fatalf("NewWatchdog: %v", err)
 	}
 
-	for i := 0; i < lineChannelCapacity; i++ {
+	for range lineChannelCapacity {
 		wd.Ingest([]byte("filler"))
 	}
 
@@ -830,10 +812,10 @@ func TestWatchdog_QueueFullDropEpisodeOnceWARN(t *testing.T) {
 	episodeSentinel := []byte("EPISODE-LINE-XYZZY-MARK")
 	closeSentinel := []byte("CLOSE-XYZZY-MARK")
 
-	for i := 0; i < lineChannelCapacity; i++ {
+	for range lineChannelCapacity {
 		wd.Ingest(fillSentinel)
 	}
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		wd.Ingest(episodeSentinel)
 	}
 
@@ -891,7 +873,7 @@ func TestWatchdog_AlertOutputSaturatedDropsWARN(t *testing.T) {
 	defer func() { cancel(); <-done }()
 
 	line := []byte("401 " + sentinel)
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		wd.Ingest(line)
 	}
 	waitForLinesEmpty(t, wd, time.Second)
@@ -939,10 +921,10 @@ func TestWatchdog_ConcurrentLogIngest(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(producers)
-	for i := 0; i < producers; i++ {
+	for range producers {
 		go func() {
 			defer wg.Done()
-			for j := 0; j < perProducer; j++ {
+			for range perProducer {
 				wd.Ingest([]byte("match"))
 			}
 		}()

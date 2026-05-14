@@ -11,9 +11,10 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/mrz1836/hush/internal/testutil"
 )
 
 // --- test helpers -----------------------------------------------------
@@ -128,30 +129,11 @@ func (h *recordingHandler) snapshot() []capturedRecord {
 	return out
 }
 
-// fakeClock is an atomically-advanceable monotonic clock.
-type fakeClock struct {
-	v atomic.Int64
-}
-
-func newFakeClock(start time.Time) *fakeClock {
-	c := &fakeClock{}
-	c.v.Store(start.UnixNano())
-	return c
-}
-
-func (c *fakeClock) now() time.Time {
-	return time.Unix(0, c.v.Load())
-}
-
-func (c *fakeClock) advance(d time.Duration) {
-	c.v.Add(int64(d))
-}
-
 func newTestRouter(t *testing.T, sender Sender) *Router {
 	t.Helper()
 	r := NewRouter(sender, "audit-ch-id", 1*time.Second, 1*time.Second, slog.New(&recordingHandler{}))
-	c := newFakeClock(time.Unix(1_700_000_000, 0))
-	r.setClock(c.now)
+	c := testutil.NewFakeClock(time.Unix(1_700_000_000, 0))
+	r.setClock(c.Now)
 	return r
 }
 
@@ -337,8 +319,8 @@ func TestRoute_CriticalTransportFailureRefundsBuckets(t *testing.T) {
 	fail := &failingSender{err: injected}
 	rh := &recordingHandler{}
 	r := NewRouter(fail, "audit-ch-id", 1*time.Second, 1*time.Second, slog.New(rh))
-	c := newFakeClock(time.Unix(1_700_000_000, 0))
-	r.setClock(c.now)
+	c := testutil.NewFakeClock(time.Unix(1_700_000_000, 0))
+	r.setClock(c.Now)
 
 	alert := Alert{Class: AlertClassApprovalRequest, SupervisorName: "sup-a", Pattern: "p1"}
 	err := r.Route(context.Background(), alert)
@@ -404,8 +386,8 @@ func TestRoute_WarningTransportFailureRefundsBuckets(t *testing.T) {
 	injected := errors.New("discord 500")
 	fail := &failingSender{err: injected}
 	r := NewRouter(fail, "audit-ch-id", 1*time.Second, 1*time.Second, slog.New(&recordingHandler{}))
-	c := newFakeClock(time.Unix(1_700_000_000, 0))
-	r.setClock(c.now)
+	c := testutil.NewFakeClock(time.Unix(1_700_000_000, 0))
+	r.setClock(c.Now)
 
 	alert := Alert{Class: AlertClassValidatorStaleFailure, SupervisorName: "sup-w", Pattern: "p1"}
 	err := r.Route(context.Background(), alert)
@@ -426,8 +408,8 @@ func TestRoute_InfoLogsOnly_NoDiscordCall(t *testing.T) {
 	fail := &failOnInvokeSender{t: t}
 	rh := &recordingHandler{}
 	r := NewRouter(fail, "audit-ch-id", 1*time.Second, 1*time.Second, slog.New(rh))
-	c := newFakeClock(time.Unix(1_700_000_000, 0))
-	r.setClock(c.now)
+	c := testutil.NewFakeClock(time.Unix(1_700_000_000, 0))
+	r.setClock(c.Now)
 
 	alert := Alert{Class: AlertClassDiscordReconnected, SupervisorName: "sup-c"}
 	if err := r.Route(context.Background(), alert); err != nil {

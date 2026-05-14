@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/mrz1836/hush/internal/testutil"
 )
 
 const (
@@ -275,9 +277,8 @@ func TestNonceCache_RunStopsOnContextCancel(t *testing.T) {
 
 func TestNonceCache_RunLogsStoppedOnce(t *testing.T) {
 	var buf bytes.Buffer
-	handler := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
 	oldLogger := slog.Default()
-	slog.SetDefault(slog.New(handler))
+	slog.SetDefault(testutil.NewCapturingLogger(&buf, slog.LevelDebug))
 	t.Cleanup(func() { slog.SetDefault(oldLogger) })
 
 	ctx, cancel := context.WithCancel(t.Context())

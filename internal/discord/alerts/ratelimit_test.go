@@ -6,13 +6,15 @@ import (
 	"log/slog"
 	"testing"
 	"time"
+
+	"github.com/mrz1836/hush/internal/testutil"
 )
 
-func newBucketRouter(t *testing.T, sender Sender, supWindow, patWindow time.Duration) (*Router, *fakeClock) {
+func newBucketRouter(t *testing.T, sender Sender, supWindow, patWindow time.Duration) (*Router, *testutil.FakeClock) {
 	t.Helper()
 	r := NewRouter(sender, "audit-ch-id", supWindow, patWindow, slog.New(&recordingHandler{}))
-	c := newFakeClock(time.Unix(1_700_000_000, 0))
-	r.setClock(c.now)
+	c := testutil.NewFakeClock(time.Unix(1_700_000_000, 0))
+	r.setClock(c.Now)
 	return r, c
 }
 
@@ -23,8 +25,8 @@ func TestRateLimit_PerSupervisorBlocksExcess(t *testing.T) {
 	sender := &recordingSender{}
 	rh := &recordingHandler{}
 	r := NewRouter(sender, "audit-ch-id", 1*time.Second, 1*time.Microsecond, slog.New(rh))
-	c := newFakeClock(time.Unix(1_700_000_000, 0))
-	r.setClock(c.now)
+	c := testutil.NewFakeClock(time.Unix(1_700_000_000, 0))
+	r.setClock(c.Now)
 
 	first := Alert{Class: AlertClassApprovalRequest, SupervisorName: "sup-x", Pattern: "p1"}
 	second := Alert{Class: AlertClassApprovalRequest, SupervisorName: "sup-x", Pattern: "p2"}
@@ -32,7 +34,7 @@ func TestRateLimit_PerSupervisorBlocksExcess(t *testing.T) {
 	if err := r.Route(context.Background(), first); err != nil {
 		t.Fatalf("first: %v", err)
 	}
-	c.advance(100 * time.Millisecond)
+	c.Advance(100 * time.Millisecond)
 
 	recsBefore := len(rh.snapshot())
 	err := r.Route(context.Background(), second)
@@ -46,7 +48,7 @@ func TestRateLimit_PerSupervisorBlocksExcess(t *testing.T) {
 		t.Errorf("rate-limited path emitted slog records: before %d after %d", recsBefore, recsAfter)
 	}
 
-	c.advance(1100 * time.Millisecond)
+	c.Advance(1100 * time.Millisecond)
 	third := Alert{Class: AlertClassApprovalRequest, SupervisorName: "sup-x", Pattern: "p3"}
 	if err := r.Route(context.Background(), third); err != nil {
 		t.Fatalf("third: %v", err)
@@ -69,13 +71,13 @@ func TestRateLimit_PerPatternBlocksExcess(t *testing.T) {
 	if err := r.Route(context.Background(), a); err != nil {
 		t.Fatalf("first: %v", err)
 	}
-	c.advance(50 * time.Millisecond)
+	c.Advance(50 * time.Millisecond)
 	err := r.Route(context.Background(), b)
 	if !errors.Is(err, ErrAlertRateLimited) {
 		t.Fatalf("second (same pattern, different supervisor): want ErrAlertRateLimited, got %v", err)
 	}
 
-	c.advance(1100 * time.Millisecond)
+	c.Advance(1100 * time.Millisecond)
 	if err := r.Route(context.Background(), b); err != nil {
 		t.Fatalf("third (after advance): %v", err)
 	}
@@ -171,13 +173,13 @@ func TestRateLimit_MonotonicClock(t *testing.T) {
 
 	// Inject a fake clock advance > window.
 	start := time.Unix(1_700_000_000, 0)
-	c := newFakeClock(start)
-	bucket2 := newRatebucket(10*time.Millisecond, c.now)
+	c := testutil.NewFakeClock(start)
+	bucket2 := newRatebucket(10*time.Millisecond, c.Now)
 	if !bucket2.acquire("m") {
 		t.Fatalf("bucket2 first acquire denied")
 	}
 	bucket2.commit("m")
-	c.advance(11 * time.Millisecond)
+	c.Advance(11 * time.Millisecond)
 	if !bucket2.acquire("m") {
 		t.Fatalf("bucket2 acquire after window+1ms denied — monotonic clock invariant broken")
 	}

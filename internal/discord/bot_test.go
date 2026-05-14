@@ -39,7 +39,7 @@ func TestNewBotApprover_ValidatesConfig(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	logger := newSilentLogger()
+	logger := testutil.NewSilentLogger()
 	good := func() BotConfig {
 		return BotConfig{
 			Token:   mustSecureBytes(t, []byte("tok")),
@@ -100,7 +100,7 @@ func TestNewBotApprover_DestroyedTokenRejected(t *testing.T) {
 	_ = sb.Destroy()
 	_, err = NewBotApprover(ctx, BotConfig{
 		Token: sb, OwnerID: "o", AppID: "a",
-	}, newSilentLogger())
+	}, testutil.NewSilentLogger())
 	if !errors.Is(err, ErrMissingToken) {
 		t.Fatalf("err = %v; want ErrMissingToken", err)
 	}
@@ -117,7 +117,7 @@ func TestNewBotApprover_BootDownStartsUnavailable(t *testing.T) {
 		OwnerID: "owner",
 		AppID:   "app",
 	}
-	a := newTestApprover(ctx, shim, cfg, newSilentLogger())
+	a := newTestApprover(ctx, shim, cfg, testutil.NewSilentLogger())
 	if err := a.session.Open(); err == nil {
 		t.Fatal("shim Open() should still fail")
 	}
@@ -140,7 +140,7 @@ func TestDecisionRouting_Approve(t *testing.T) {
 		OwnerID: "owner",
 		AppID:   "app",
 	}
-	a := newTestApprover(ctx, shim, cfg, newSilentLogger())
+	a := newTestApprover(ctx, shim, cfg, testutil.NewSilentLogger())
 	shim.TriggerReady()
 
 	go func() {
@@ -173,7 +173,7 @@ func TestDecisionRouting_Deny(t *testing.T) {
 		OwnerID: "owner",
 		AppID:   "app",
 	}
-	a := newTestApprover(ctx, shim, cfg, newSilentLogger())
+	a := newTestApprover(ctx, shim, cfg, testutil.NewSilentLogger())
 	shim.TriggerReady()
 
 	go func() {
@@ -199,7 +199,7 @@ func TestDecisionRouting_Timeout(t *testing.T) {
 		OwnerID: "owner",
 		AppID:   "app",
 	}
-	a := newTestApprover(parent, shim, cfg, newSilentLogger())
+	a := newTestApprover(parent, shim, cfg, testutil.NewSilentLogger())
 	shim.TriggerReady()
 
 	ctx, cancel2 := context.WithTimeout(parent, 50*time.Millisecond)
@@ -223,7 +223,7 @@ func TestDecisionRouting_CtxCancelled(t *testing.T) {
 		OwnerID: "owner",
 		AppID:   "app",
 	}
-	a := newTestApprover(parent, shim, cfg, newSilentLogger())
+	a := newTestApprover(parent, shim, cfg, testutil.NewSilentLogger())
 	shim.TriggerReady()
 
 	ctx, cancel := context.WithCancel(parent)
@@ -250,7 +250,7 @@ func TestDecisionRouting_FirstActionWins(t *testing.T) {
 		OwnerID: "owner",
 		AppID:   "app",
 	}
-	a := newTestApprover(ctx, shim, cfg, newSilentLogger())
+	a := newTestApprover(ctx, shim, cfg, testutil.NewSilentLogger())
 	shim.TriggerReady()
 
 	go func() {
@@ -277,7 +277,7 @@ func TestInteractionHandler_IgnoresNonComponentEvents(t *testing.T) {
 		OwnerID: "owner",
 		AppID:   "app",
 	}
-	a := newTestApprover(ctx, shim, cfg, newSilentLogger())
+	a := newTestApprover(ctx, shim, cfg, testutil.NewSilentLogger())
 	// Build a non-component interaction directly and dispatch.
 	a.onInteractionCreate(nil)
 	// Interaction with bad CustomID (no ":" separator) — silently dropped.
@@ -302,7 +302,7 @@ func TestBotApprover_DisconnectFastPath(t *testing.T) {
 		OwnerID: "owner",
 		AppID:   "app",
 	}
-	a := newTestApprover(ctx, shim, cfg, newSilentLogger())
+	a := newTestApprover(ctx, shim, cfg, testutil.NewSilentLogger())
 	// available defaults to false; mimic disconnect state.
 	start := time.Now()
 	_, err := a.RequestApproval(ctx, interactiveSampleRequest())
@@ -331,7 +331,7 @@ func TestBotApprover_NeverAutoApprovesOnDiscordError(t *testing.T) {
 			OwnerID: "owner",
 			AppID:   "app",
 		}
-		a := newTestApprover(ctx, shim, cfg, newSilentLogger())
+		a := newTestApprover(ctx, shim, cfg, testutil.NewSilentLogger())
 		return a, shim, cancel
 	}
 
@@ -475,7 +475,7 @@ func TestBotApprover_TokenAbsentFromAllArtifacts(t *testing.T) {
 	t.Cleanup(func() { _ = tokenSB.Destroy() })
 
 	logBuf := &syncBuffer{}
-	logger := slog.New(slog.NewJSONHandler(logBuf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	logger := testutil.NewCapturingLogger(logBuf, slog.LevelDebug)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -560,7 +560,7 @@ func TestBotApprover_RaceClean(t *testing.T) {
 		AppID:       "app",
 		DMRateLimit: time.Microsecond, // disable rate limiting for the race test
 	}
-	a := newTestApprover(ctx, shim, cfg, newSilentLogger())
+	a := newTestApprover(ctx, shim, cfg, testutil.NewSilentLogger())
 	shim.TriggerReady()
 
 	// Background harasser: flips disconnect/ready randomly.

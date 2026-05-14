@@ -17,9 +17,8 @@ import (
 	"github.com/mrz1836/hush/internal/vault/securebytes"
 )
 
-// fakeClock is shared with state_test.go; declared there. This file
-// adds the HTTP / log / ECIES fixtures the new SDD-21 tests depend
-// on.
+// State/grace/refresh tests use testutil.FakeClock. This file adds
+// the HTTP / log / ECIES fixtures the new SDD-21 tests depend on.
 
 // roundTripFunc adapts a func to an http.RoundTripper.
 type roundTripFunc func(req *http.Request) (*http.Response, error)
@@ -103,7 +102,7 @@ func encryptForTest(t *testing.T, recipient *ecdsa.PrivateKey, plaintext []byte)
 	return env
 }
 
-// storeClock is a Clock impl for tests; independent from fakeClock.
+// storeClock is a Clock impl for tests; independent from testutil.FakeClock.
 type storeClock struct {
 	mu  sync.Mutex
 	now time.Time

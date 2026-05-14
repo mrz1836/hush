@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/mrz1836/hush/internal/testutil"
 )
 
 func TestMonitor_DisconnectSurfacesUnavailable(t *testing.T) {
@@ -17,7 +19,7 @@ func TestMonitor_DisconnectSurfacesUnavailable(t *testing.T) {
 		OwnerID: "owner",
 		AppID:   "app",
 	}
-	a := newTestApprover(ctx, shim, cfg, newSilentLogger())
+	a := newTestApprover(ctx, shim, cfg, testutil.NewSilentLogger())
 	shim.TriggerReady()
 	if !a.available.Load() {
 		t.Fatal("expected available=true after Ready")
@@ -42,7 +44,7 @@ func TestMonitor_DisconnectUnblocksInFlightRequest(t *testing.T) {
 		OwnerID: "owner",
 		AppID:   "app",
 	}
-	a := newTestApprover(ctx, shim, cfg, newSilentLogger())
+	a := newTestApprover(ctx, shim, cfg, testutil.NewSilentLogger())
 	shim.TriggerReady()
 
 	type result struct {
@@ -88,7 +90,7 @@ func TestMonitor_ReconnectRestoresAvailability(t *testing.T) {
 		OwnerID: "owner",
 		AppID:   "app",
 	}
-	a := newTestApprover(ctx, shim, cfg, newSilentLogger())
+	a := newTestApprover(ctx, shim, cfg, testutil.NewSilentLogger())
 	shim.TriggerReady()
 	shim.TriggerDisconnect()
 	shim.TriggerReady()
@@ -144,7 +146,7 @@ func TestMonitor_ResumedFlipsAvailable(t *testing.T) {
 		OwnerID: "owner",
 		AppID:   "app",
 	}
-	a := newTestApprover(ctx, shim, cfg, newSilentLogger())
+	a := newTestApprover(ctx, shim, cfg, testutil.NewSilentLogger())
 	if a.available.Load() {
 		t.Fatal("available should default to false")
 	}
@@ -180,7 +182,7 @@ func TestMonitor_ReconnectLoopHandlesOpenFailures(t *testing.T) {
 		OwnerID: "owner",
 		AppID:   "app",
 	}
-	a := newTestApprover(ctx, shim, cfg, newSilentLogger())
+	a := newTestApprover(ctx, shim, cfg, testutil.NewSilentLogger())
 	a.reconnectBaseDelay = 500 * time.Microsecond
 	a.reconnectMaxDelay = time.Millisecond
 	shim.SetOpenErr(errShimOpenFail)
@@ -217,7 +219,7 @@ func TestMonitor_GoroutineExitsOnCtxCancel(t *testing.T) {
 		OwnerID: "owner",
 		AppID:   "app",
 	}
-	a := newTestApprover(ctx, shim, cfg, newSilentLogger())
+	a := newTestApprover(ctx, shim, cfg, testutil.NewSilentLogger())
 	shim.TriggerReady()
 	shim.TriggerDisconnect()
 

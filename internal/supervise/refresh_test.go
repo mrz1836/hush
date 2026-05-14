@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/mrz1836/hush/internal/testutil"
 )
 
 // fireRecorder is a refill callback adapter. Each invocation
@@ -31,7 +33,7 @@ func (fr *fireRecorder) setErr(err error) { fr.err.Store(&err) }
 // startRefresher fires Run in a goroutine with the given clock.
 // Returns the tick channel and a cancel func that stops Run and
 // waits for it to return.
-func startRefresher(t *testing.T, window string, ttl time.Duration, fr *fireRecorder, clk *fakeClock) (chan time.Time, func()) {
+func startRefresher(t *testing.T, window string, ttl time.Duration, fr *fireRecorder, clk *testutil.FakeClock) (chan time.Time, func()) {
 	t.Helper()
 	logger, _ := newRecordingLogger()
 	r := NewRefresher(window, ttl, fr.callback, logger)
@@ -92,7 +94,7 @@ func expectNoFire(t *testing.T, tickC chan<- time.Time, fr *fireRecorder, prev i
 func TestRefresh_FiresInWindow(t *testing.T) {
 	loc := time.Local //nolint:gosmopolitan // FR-021-7: refresh tests pin to local time per spec
 	day := time.Date(2026, 5, 10, 8, 55, 0, 0, loc)
-	clk := newFakeClock(day)
+	clk := testutil.NewFakeClock(day)
 	fr := &fireRecorder{}
 	tickC, stop := startRefresher(t, "09:00-10:00", 12*time.Hour, fr, clk)
 	defer stop()
@@ -100,16 +102,16 @@ func TestRefresh_FiresInWindow(t *testing.T) {
 	// First tick at 08:55: outside window — no fire.
 	expectNoFire(t, tickC, fr, 0)
 	// Advance to 09:05: in window — fires once.
-	clk.Set(time.Date(2026, 5, 10, 9, 5, 0, 0, loc))
+	clk.SetTo(time.Date(2026, 5, 10, 9, 5, 0, 0, loc))
 	pumpTick(t, tickC, fr, 1)
 	// 09:30 still in window — no second fire today.
-	clk.Set(time.Date(2026, 5, 10, 9, 30, 0, 0, loc))
+	clk.SetTo(time.Date(2026, 5, 10, 9, 30, 0, 0, loc))
 	expectNoFire(t, tickC, fr, 1)
 	// 09:55 still in window — no second fire today.
-	clk.Set(time.Date(2026, 5, 10, 9, 55, 0, 0, loc))
+	clk.SetTo(time.Date(2026, 5, 10, 9, 55, 0, 0, loc))
 	expectNoFire(t, tickC, fr, 1)
 	// Advance to next day 09:05 — fires.
-	clk.Set(time.Date(2026, 5, 11, 9, 5, 0, 0, loc))
+	clk.SetTo(time.Date(2026, 5, 11, 9, 5, 0, 0, loc))
 	pumpTick(t, tickC, fr, 2)
 }
 
@@ -117,7 +119,7 @@ func TestRefresh_FiresInWindow(t *testing.T) {
 // 30 minutes — first tick fires once (FR-021-8, B-RF-2).
 func TestRefresh_T30MinFallback(t *testing.T) {
 	loc := time.Local //nolint:gosmopolitan // FR-021-7: refresh tests pin to local time per spec
-	clk := newFakeClock(time.Date(2026, 5, 10, 11, 0, 0, 0, loc))
+	clk := testutil.NewFakeClock(time.Date(2026, 5, 10, 11, 0, 0, 0, loc))
 	fr := &fireRecorder{}
 	// Window already passed (09:00-10:00); ttl puts deadline 25 min
 	// from now (11:25), well inside the T-30 fallback budget.
@@ -140,7 +142,7 @@ func TestRefresh_StopsOnCtxCancel(t *testing.T) {
 	fr := &fireRecorder{}
 	r := NewRefresher("09:00-10:00", time.Hour, fr.callback, logger)
 	loc := time.Local //nolint:gosmopolitan // FR-021-7: refresh tests pin to local time per spec
-	clk := newFakeClock(time.Date(2026, 5, 10, 14, 0, 0, 0, loc))
+	clk := testutil.NewFakeClock(time.Date(2026, 5, 10, 14, 0, 0, 0, loc))
 	r.setClockForTest(clk.Now)
 	tickC := make(chan time.Time, 1)
 	r.setTickerForTest(tickC)
@@ -176,7 +178,7 @@ func TestRefresh_StopsOnCtxCancel(t *testing.T) {
 // in-window ticks must NOT fire (FR-021-10, B-RF-3).
 func TestRefresh_NoDoubleFireSameWindow(t *testing.T) {
 	loc := time.Local //nolint:gosmopolitan // FR-021-7: refresh tests pin to local time per spec
-	clk := newFakeClock(time.Date(2026, 5, 10, 9, 30, 0, 0, loc))
+	clk := testutil.NewFakeClock(time.Date(2026, 5, 10, 9, 30, 0, 0, loc))
 	fr := &fireRecorder{}
 
 	logger, _ := newRecordingLogger()
@@ -200,7 +202,7 @@ func TestRefresh_NoDoubleFireSameWindow(t *testing.T) {
 // already inside window — first tick fires (FR-021-10, B-RF-4).
 func TestRefresh_FiresOnStartIfInsideWindow(t *testing.T) {
 	loc := time.Local //nolint:gosmopolitan // FR-021-7: refresh tests pin to local time per spec
-	clk := newFakeClock(time.Date(2026, 5, 10, 9, 30, 0, 0, loc))
+	clk := testutil.NewFakeClock(time.Date(2026, 5, 10, 9, 30, 0, 0, loc))
 	fr := &fireRecorder{}
 	_, stop := startRefresher(t, "09:00-10:00", 12*time.Hour, fr, clk)
 	defer stop()
@@ -219,7 +221,7 @@ func TestRefresh_FiresOnStartIfInsideWindow(t *testing.T) {
 // (FR-021-11a, B-RF-7).
 func TestRefresh_RateLimitedTreatedAsIssued(t *testing.T) {
 	loc := time.Local //nolint:gosmopolitan // FR-021-7: refresh tests pin to local time per spec
-	clk := newFakeClock(time.Date(2026, 5, 10, 9, 30, 0, 0, loc))
+	clk := testutil.NewFakeClock(time.Date(2026, 5, 10, 9, 30, 0, 0, loc))
 	fr := &fireRecorder{}
 	fr.setErr(errors.New("rate-limited"))
 
@@ -242,7 +244,7 @@ func TestRefresh_RateLimitedTreatedAsIssued(t *testing.T) {
 	}
 
 	// Subsequent ticks within the window do not re-fire.
-	clk.Set(time.Date(2026, 5, 10, 9, 45, 0, 0, loc))
+	clk.SetTo(time.Date(2026, 5, 10, 9, 45, 0, 0, loc))
 	expectNoFire(t, tickC, fr, 1)
 
 	cancel()
@@ -260,7 +262,7 @@ func TestRefresh_RateLimitedTreatedAsIssued(t *testing.T) {
 // clock backwards within window — no re-fire (FR-021-11, B-RF-6).
 func TestRefresh_BackwardsClockNoDoubleFire(t *testing.T) {
 	loc := time.Local //nolint:gosmopolitan // FR-021-7: refresh tests pin to local time per spec
-	clk := newFakeClock(time.Date(2026, 5, 10, 9, 30, 0, 0, loc))
+	clk := testutil.NewFakeClock(time.Date(2026, 5, 10, 9, 30, 0, 0, loc))
 	fr := &fireRecorder{}
 
 	logger, _ := newRecordingLogger()
@@ -274,7 +276,7 @@ func TestRefresh_BackwardsClockNoDoubleFire(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { done <- r.Run(ctx) }()
 
-	clk.Set(time.Date(2026, 5, 10, 9, 15, 0, 0, loc))
+	clk.SetTo(time.Date(2026, 5, 10, 9, 15, 0, 0, loc))
 	expectNoFire(t, tickC, fr, 0)
 
 	cancel()
@@ -285,7 +287,7 @@ func TestRefresh_BackwardsClockNoDoubleFire(t *testing.T) {
 // fires; tick at 00:30 the next calendar day does NOT re-fire.
 func TestRefresh_WindowCrossesMidnight(t *testing.T) {
 	loc := time.Local //nolint:gosmopolitan // FR-021-7: refresh tests pin to local time per spec
-	clk := newFakeClock(time.Date(2026, 5, 10, 23, 30, 0, 0, loc))
+	clk := testutil.NewFakeClock(time.Date(2026, 5, 10, 23, 30, 0, 0, loc))
 	fr := &fireRecorder{}
 	tickC, stop := startRefresher(t, "23:00-01:00", 12*time.Hour, fr, clk)
 	defer stop()
@@ -300,7 +302,7 @@ func TestRefresh_WindowCrossesMidnight(t *testing.T) {
 	// Pin the test to the documented behaviour: lastFiredDay was
 	// set on 2026-05-10; on 05-11 we expect another fire if still
 	// inside window. Verify neither flake nor leak.
-	clk.Set(time.Date(2026, 5, 11, 0, 30, 0, 0, loc))
+	clk.SetTo(time.Date(2026, 5, 11, 0, 30, 0, 0, loc))
 	pumpTick(t, tickC, fr, 2)
 }
 
@@ -386,7 +388,7 @@ func TestRefresh_WindowContains_StartEqualsEnd(t *testing.T) {
 // where testTickC is unset.
 func TestRefresh_RealTimerPath(t *testing.T) {
 	loc := time.Local //nolint:gosmopolitan // FR-021-7: refresh tests pin to local time per spec
-	clk := newFakeClock(time.Date(2026, 5, 10, 14, 0, 0, 0, loc))
+	clk := testutil.NewFakeClock(time.Date(2026, 5, 10, 14, 0, 0, 0, loc))
 	fr := &fireRecorder{}
 	logger, _ := newRecordingLogger()
 	r := NewRefresher("09:00-10:00", time.Hour, fr.callback, logger)
@@ -409,7 +411,7 @@ func TestRefresh_RunIsSingleShot(t *testing.T) {
 	fr := &fireRecorder{}
 	r := NewRefresher("09:00-10:00", time.Hour, fr.callback, logger)
 	loc := time.Local //nolint:gosmopolitan // FR-021-7: refresh tests pin to local time per spec
-	clk := newFakeClock(time.Date(2026, 5, 10, 14, 0, 0, 0, loc))
+	clk := testutil.NewFakeClock(time.Date(2026, 5, 10, 14, 0, 0, 0, loc))
 	r.setClockForTest(clk.Now)
 	tickC := make(chan time.Time, 1)
 	r.setTickerForTest(tickC)
