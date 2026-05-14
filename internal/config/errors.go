@@ -31,8 +31,9 @@ var (
 	ErrPathPrefixInvalid = errors.New("hush/config: path_prefix invalid (must be 6-32 chars, [A-Za-z0-9_-])")
 	ErrAuditLogEscape    = errors.New("hush/config: audit_log resolves outside state_dir")
 	// ErrStateDirNotFound wraps fs.ErrNotExist so errors.Is(err, fs.ErrNotExist) is true.
-	ErrStateDirNotFound = fmt.Errorf("hush/config: state_dir does not exist: %w", fs.ErrNotExist)
-	ErrStateDirUnsafe   = errors.New("hush/config: state_dir is not a directory")
+	ErrStateDirNotFound     = fmt.Errorf("hush/config: state_dir does not exist: %w", fs.ErrNotExist)
+	ErrStateDirUnsafe       = errors.New("hush/config: state_dir is not a directory")
+	ErrAuditLogParentUnsafe = errors.New("hush/config: audit_log parent dir is group- or other-accessible")
 )
 
 // Crypto-floor errors — Constitution III.

@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
@@ -159,12 +160,47 @@ func LoadServer(ctx context.Context, path string) (*Server, error) {
 		if err := enforceConfigFileMode(f, path); err != nil {
 			return nil, err
 		}
+		if err := enforceAuditLogParentMode(s.Server.AuditLog, s.Server.StateDir); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := s.Validate(); err != nil {
 		return nil, err
 	}
 	return s, nil
+}
+
+// enforceAuditLogParentMode rejects any audit_log whose immediate parent
+// directory is group- or other-accessible (Perm()&0o077 != 0). The audit
+// chain is the only tamper-evident record of approvals; if its parent is
+// world-writable (e.g., /tmp), any local user can rename, truncate, or
+// pre-seed the chain file before hush opens it. Mirrors the vault's
+// parent-dir guard in internal/vault/file.go and is gated by the same
+// Security.RequireFileModeChecks flag as enforceConfigFileMode so unit
+// tests on systems without perm semantics can opt out.
+//
+// Short-circuits to nil when audit_log lexically escapes state_dir or its
+// parent does not exist; both conditions are diagnosed more specifically
+// by Validate's containment rule (ErrAuditLogEscape).
+func enforceAuditLogParentMode(auditLog, stateDir string) error {
+	if !isUnderStateDir(auditLog, stateDir) {
+		return nil
+	}
+	parent := filepath.Dir(auditLog)
+	info, statErr := os.Stat(parent)
+	if statErr != nil {
+		// Deliberate swallow: a missing parent is diagnosed downstream
+		// (Writer.Run fails on first append) or by Validate's containment
+		// rule when the path lies outside state_dir. Surfacing it here
+		// would mask the more specific error and break the multi-violation
+		// joining tests.
+		return nil //nolint:nilerr // see comment above
+	}
+	if mode := info.Mode().Perm(); mode&0o077 != 0 {
+		return fmt.Errorf("hush/config: audit_log parent %q mode %#o: %w", parent, mode, ErrAuditLogParentUnsafe)
+	}
+	return nil
 }
 
 // decodeStrict TOML-decodes from r with unknown-field rejection, mapping
