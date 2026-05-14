@@ -2351,6 +2351,96 @@ operator signal that AC-10 is still partially unmet.
 
 ---
 
+## `deploy/` — Exported API — locked at SDD-29
+
+**Purpose.** Operator-facing deploy artefacts for v0.1.0: the four
+files an operator copies to a fresh macOS or Linux host to turn a
+built `hush` binary into a runnable daemon. No exported Go symbols —
+see `deploy/install.sh --help` (or the script header) for installation
+usage. The Go integration test suite lives at `tests/deploy/`
+(`//go:build integration`) and asserts the operator-facing contract.
+
+**File inventory (locked).**
+
+- `deploy/hush.plist` — launchd job for the hush vault server on
+  macOS. `Label=com.hush.server` (product identifier, not
+  operator-specific); `ProgramArguments=["/usr/local/bin/hush",
+  "serve", "--config", "/usr/local/etc/hush/config.toml"]`;
+  `UserName=_hush` (non-root, per macOS system-user convention);
+  `RunAtLoad=true`; `KeepAlive=true`; standard log paths under
+  `/usr/local/var/log/`. Mode `0644`. install.sh sed-substitutes
+  `<string>_hush</string>` only if `HUSH_USER` overrides the default.
+- `deploy/hush.service` — systemd unit for the hush vault server on
+  Linux. Sections `[Unit]`/`[Service]`/`[Install]`;
+  `User=@HUSH_USER@` (install.sh substitutes to resolved
+  `${HUSH_USER}`, default `hush`);
+  `ExecStart=/usr/local/bin/hush serve --config
+  /etc/hush/config.toml`; `Restart=on-failure`; hardening directives
+  `NoNewPrivileges`/`ProtectSystem=strict`/`ProtectHome=true`/
+  `PrivateTmp=true`. Mode `0644`.
+- `deploy/install.sh` — idempotent installer (bash 3.2+ compatible;
+  `#!/usr/bin/env bash` + `set -euo pipefail`). Reads 5 env vars
+  (`PREFIX`, `HUSH_USER`, `HUSH_STATE_DIR`, `HUSH_INSTALL_ROOT`,
+  `HUSH_SOURCE_BIN`) plus a `HUSH_FORCE_OS` test-only escape hatch.
+  Executes a 7-step flow: (1) idempotent system-user creation
+  (`dscl`/`useradd`); (2) `install -d -m 0700 -o ${HUSH_USER}
+  ${STATE_DIR}` (Constitution X); (3) macOS-only `tmutil
+  addexclusion` (Constitution XI non-negotiable; hard-fails exit-4
+  if `tmutil` missing; deduped via in-state-dir marker so re-runs
+  invoke at most once); (4) `install -m 0755` of the binary;
+  (5) `install -m 0644` of the service file with `@HUSH_USER@`
+  substitution on Linux + optional `<string>_hush</string>`
+  substitution on macOS; (6) Linux-only `systemctl daemon-reload`;
+  (7) byte-identical-across-reruns next-steps banner. **Creates
+  ZERO Keychain entries** (FR-003 absolute lock); the banner prints
+  the operator-runnable `security add-generic-password -T
+  "/usr/local/bin/hush" ...` invocation. Mode `0755`. Exit codes
+  `0=success/no-op` / `1=generic` / `2=bad-input` / `3=privilege` /
+  `4=missing-tool`; every stderr message follows
+  `install.sh: <stage>: <reason>` format.
+- `deploy/supervise-launch.sh.template` — generic per-daemon
+  launcher operators copy and customise. Single-line core
+  `exec /usr/local/bin/hush supervise --config '<CONFIG_PATH>'`.
+  Three placeholders (`<NAME>`, `<KEYCHAIN_ITEM>`, `<CONFIG_PATH>`)
+  with documenting header comment block + load-bearing DO-NOT
+  warning against `hush request --exec` (which would re-prompt on
+  every restart and defeat Constitution IV's TTL discipline).
+  Pre-flight grep guard exits `78` (`EX_CONFIG`) on any
+  unsubstituted placeholder. `hush request --exec` appears EXACTLY
+  ONCE inside the DO-NOT warning comment (filtered out by the
+  non-comment-line grep used by `TestDeploy_LauncherTemplateExecsSupervise`).
+  Mode `0644` (template, not directly executable). install.sh does
+  NOT install this file — the operator copies it per daemon.
+
+**Verification harness.** Go integration tests under `tests/deploy/`
+gated by `//go:build integration`:
+`TestDeploy_InstallIdempotent` / `TestDeploy_InstallRefusesUnsupportedOS` /
+`TestDeploy_InstallRefusesMissingBinary` /
+`TestDeploy_InstallRefusesMissingTmutil` (darwin-guarded) /
+`TestDeploy_InstallBannerByteIdentical` / `TestDeploy_PlistParsesAsXML` /
+`TestDeploy_ServiceParsesAsINI` / `TestDeploy_LauncherTemplateExecsSupervise` /
+`TestDeploy_NoOperatorSpecificNames` / `TestDeploy_AllShellFilesParse`.
+Runner: `magex test:race -tags=integration -run TestDeploy_
+./tests/deploy/...`. Fixtures `tests/deploy/testdata/tmutil_stub.sh`
+(recording shim placed first on PATH for macOS runs) and
+`tests/deploy/testdata/fake-hush` (zero-byte stand-in for
+`HUSH_SOURCE_BIN`).
+
+**Anti-API (deliberately NOT in scope).** install.sh creates ZERO
+Keychain entries / reads ZERO secret material (FR-003 lock). No
+file under `deploy/` hard-codes any operator-specific daemon name,
+hostname, Tailscale tag, or Discord ID — the
+`TestDeploy_NoOperatorSpecificNames` denylist grep
+(`openclaw|hermes|mrz|100.90.|tag:trusted`) returns zero matches
+across the four committed files. The launcher template uses `hush
+supervise` exclusively; any active `hush request --exec` line is a
+contract violation. `${HUSH_STATE_DIR}` is never backed up
+(Constitution XI). The `deploy/examples/` subtree (per-operator
+supervisor TOMLs) is SDD-30 territory and out of SDD-29's
+operator-agnostic scope.
+
+---
+
 ## `internal/logging/`
 
 Purpose:

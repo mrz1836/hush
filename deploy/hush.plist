@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.hush.server</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/hush</string>
+    <string>serve</string>
+    <string>--config</string>
+    <string>/usr/local/etc/hush/config.toml</string>
+  </array>
+  <key>UserName</key>
+  <string>_hush</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/usr/local/var/log/hush.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/usr/local/var/log/hush.err.log</string>
+</dict>
+</plist>

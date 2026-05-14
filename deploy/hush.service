@@ -1,0 +1,18 @@
+[Unit]
+Description=hush — Discord-gated secrets broker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@HUSH_USER@
+ExecStart=/usr/local/bin/hush serve --config /etc/hush/config.toml
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
