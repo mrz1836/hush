@@ -1245,6 +1245,113 @@ SDD-28 will add the alert-class catalogue + tiered routing as a
 sibling sub-package (`internal/discord/alerts`). SDD-28 MUST NOT alter
 any symbol above.
 
+### Exported API — locked at SDD-28
+
+Package path: `github.com/mrz1836/hush/internal/discord/alerts`
+(sibling sub-package of `internal/discord/`).
+
+```go
+// 1 type + 8 constants
+type AlertClass string
+const (
+    AlertClassApprovalRequest               AlertClass = "approval-request"
+    AlertClassDaemonRefreshRequest          AlertClass = "daemon-refresh-request"
+    AlertClassValidatorStaleFailure         AlertClass = "validator-stale-failure"
+    AlertClassChildExit78StaleFailure       AlertClass = "child-exit-78-stale-failure"
+    AlertClassLogPatternStaleWarning        AlertClass = "log-pattern-stale-warning"
+    AlertClassDiscordDisconnected           AlertClass = "discord-disconnected"
+    AlertClassDiscordReconnected            AlertClass = "discord-reconnected"
+    AlertClassVaultUnreachableAtBootTimeout AlertClass = "vault-unreachable-at-boot-timeout"
+)
+
+// 1 type + 3 constants
+type Tier int
+const (
+    TierCritical Tier = iota // 0 → owner DM
+    TierWarning              // 1 → audit channel
+    TierInfo                 // 2 → slog INFO; zero Discord network call
+)
+
+// caller payload
+type Alert struct {
+    Class          AlertClass
+    Tier           Tier // informational; Router re-derives from Class (FR-004)
+    SupervisorName string
+    MachineName    string
+    Pattern        string
+    Detail         string
+    Time           time.Time
+}
+
+// consumer-side transport seam (R-003). *discord.BotApprover satisfies
+// it via additive methods in internal/discord/bot_alerts.go.
+type Sender interface {
+    SendOwnerDM(ctx context.Context, message string) error
+    PostChannel(ctx context.Context, channelID, message string) error
+}
+
+// opaque router
+type Router struct { /* unexported */ }
+
+// Constructor panics on nil sender / nil logger (Constitution IX
+// startup-wiring exception); zero/negative bucket durations fall back
+// to DefaultBucketWindow.
+func NewRouter(sender Sender, auditChannelID string,
+    perSupervisorBucket, perPatternBucket time.Duration,
+    logger *slog.Logger) *Router
+
+func (r *Router) Route(ctx context.Context, alert Alert) error
+
+const DefaultBucketWindow = 1 * time.Minute
+
+// 3 sentinels
+var ErrAlertRateLimited  = errors.New("hush/discord/alerts: rate limited")
+var ErrAlertTransport    = errors.New("hush/discord/alerts: transport failed")
+var ErrUnknownAlertClass = errors.New("hush/discord/alerts: unknown class")
+```
+
+Behaviour contract:
+- Class→tier binding is immutable: ApprovalRequest=Critical,
+  DaemonRefreshRequest=Critical, ValidatorStaleFailure=Warning,
+  ChildExit78StaleFailure=Critical, LogPatternStaleWarning=Warning,
+  DiscordDisconnected=Warning, DiscordReconnected=Info,
+  VaultUnreachableAtBootTimeout=Critical.
+- `Alert.Tier` is caller-informational; Router re-derives the
+  authoritative tier from `Alert.Class` (FR-004).
+- Per-supervisor + per-pattern minimum-interval debounce with
+  commit-on-success semantics. Either bucket exhausted →
+  `ErrAlertRateLimited` (NO slog record; caller logs per FR-016).
+- Transport failure refunds both buckets (commit-on-success per
+  FR-012a) and returns `errors.Join(ErrAlertTransport, underlying)`.
+- Templates render only `{SupervisorName, MachineName, Pattern,
+  Detail}` with omit-empty lines. `Alert.Time`, `Alert.Class`, and
+  `Alert.Tier` are NEVER reachable from the rendered body
+  (Constitution X — class is implicit in the label prefix).
+- slog allow-list: `{class, tier, supervisor, machine, pattern,
+  outcome}`; level matrix Critical/Warning success=DEBUG, Info
+  success=INFO, transport failure / unknown class = WARN, rate-limit
+  suppression = NO RECORD.
+- Zero new go.mod dependencies; stdlib only (`context`, `errors`,
+  `fmt`, `log/slog`, `strings`, `sync`, `time`). The alerts package
+  NEVER imports `github.com/bwmarrin/discordgo`,
+  `github.com/mrz1836/hush/internal/discord`, or
+  `github.com/mrz1836/hush/internal/vault/securebytes`.
+- Zero goroutines spawned; Route is synchronous end-to-end on the
+  caller's goroutine.
+
+Additive methods on the SDD-11 `*BotApprover` (added in
+`internal/discord/bot_alerts.go` — non-locked-surface extensions; the
+SDD-11 `Approver` interface is untouched):
+
+```go
+func (a *BotApprover) SendOwnerDM(ctx context.Context, message string) error
+func (a *BotApprover) PostChannel(ctx context.Context, channelID, message string) error
+var _ alerts.Sender = (*BotApprover)(nil) // compile-time guard
+```
+
+SDD-28 MUST NOT add a 9th alert class, remove an existing class, or
+re-tier any of the 8 documented classes (FR-005).
+
 ---
 
 ## `internal/supervise/`
