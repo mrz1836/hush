@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+#
+# supervise-launch.sh.template — per-daemon launcher for `hush supervise`
+#
+# WHAT THIS FILE IS
+#   A template the operator copies once per long-running daemon. The
+#   resulting script is registered with launchd (macOS) or systemd
+#   (Linux) as the per-daemon entry point that the init system execs at
+#   boot. It does NOT belong in this repository in its substituted form;
+#   the substituted copy lives in the operator's per-host config tree.
+#
+# SUBSTITUTE THE FOLLOWING THREE PLACEHOLDERS BEFORE USE:
+#
+#   <NAME>          The logical daemon name (a short identifier the
+#                   operator chooses, e.g. "my-agent"). By convention
+#                   the substituted file is renamed <NAME>-hush-launch.sh.
+#
+#   <KEYCHAIN_ITEM> The macOS Keychain item name holding the per-daemon
+#                   client passphrase (e.g. "hush-my-agent"). `hush
+#                   supervise` reads this via its ACL-restricted Keychain
+#                   reader; this script does NOT shell out to `security`.
+#                   The placeholder exists so the substituted copy carries
+#                   an explicit comment identifying which item is in play.
+#
+#   <CONFIG_PATH>   Absolute path to the supervisor TOML for this daemon
+#                   (e.g. /Users/<you>/.hush/supervisors/<NAME>.toml).
+#                   `hush supervise` reads its full config from this file.
+#
+# DO NOT use `hush request --exec` as the daemon entry point. It
+# re-prompts the operator on every restart, defeats the supervisor TTL
+# discipline (Constitution IV), and trains the operator to auto-approve.
+# Use `hush supervise` always.
+#
+# WHERE TO PUT THIS FILE
+#   macOS: invoke via /Library/LaunchDaemons/<NAME>.plist
+#   Linux: invoke via /etc/systemd/system/<NAME>.service
+#
+set -euo pipefail
+
+# Pre-flight: refuse to run with unsubstituted placeholders. The tokens
+# below are split with shell-level string concatenation so this guard
+# line does NOT match itself.
+if grep -qE '<''NAME>|<''KEYCHAIN_ITEM>|<''CONFIG_PATH>' "${BASH_SOURCE[0]}"; then
+  printf 'supervise-launch: placeholders not substituted; refusing to run\n' >&2
+  exit 78
+fi
+
+exec /usr/local/bin/hush supervise --config '<CONFIG_PATH>'

@@ -194,7 +194,7 @@ artifacts off disk.
 
 | ID | Title | Files | Blocked by | Chunk file |
 |----|-------|-------|------------|------------|
-| SDD-29 | Deploy artifacts (launchd plist, systemd unit, install.sh, generic launcher template) | `deploy/*` | SDD-15, SDD-23 | [docs/sdd/SDD-29.md](sdd/SDD-29.md) |
+| ✅ SDD-29 | Deploy artifacts (launchd plist, systemd unit, install.sh, generic launcher template) | `deploy/*` | SDD-15, SDD-23 | [docs/sdd/SDD-29.md](sdd/SDD-29.md) |
 | SDD-30 | Generic example supervisor TOML + Tailscale ACL spec + clean-machine checklist | `deploy/examples/*` + `docs/TAILSCALE-ACLS.md` + `docs/CLEAN-MACHINE.md` | SDD-18, SDD-29 | [docs/sdd/SDD-30.md](sdd/SDD-30.md) |
 
 ### Phase 8 — Release
