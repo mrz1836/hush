@@ -26,10 +26,7 @@ import (
 func TestSuperviseIntegration_DryRunWithDiscordStub(t *testing.T) {
 	stub := testutil.NewDiscordStub(t)
 
-	dir, err := os.MkdirTemp("/tmp", "h23int-")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	require.NoError(t, os.Chmod(dir, 0o700))
+	dir := testutil.ShortTempDir(t, "h23int-")
 
 	socketPath := filepath.Join(dir, "supervise-example.sock")
 	pidPath := filepath.Join(dir, "supervise-example.pid")

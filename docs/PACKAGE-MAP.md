@@ -2088,6 +2088,99 @@ producer closed).
 
 ---
 
+### Exported API — locked at SDD-26
+
+Sub-package path: `github.com/mrz1836/hush/internal/supervise/validators`
+
+SDD-26 ships the pre-flight credential `Validator` interface plus the
+five built-in providers locked by SDD-18's TOML allow-list (anthropic,
+anthropic-oauth, openai, google-ai, github). Each validator answers
+"is this credential currently accepted by the upstream provider?" via
+a single read-only HTTP probe and returns one of three typed sentinel
+errors. The credential is consumed exclusively via
+`securebytes.Use(fn)`; the single `string(...)` site documented at
+research reference R-008 is `req.Header.Set(<header>, string(buf))`
+inside the Use-scoped builder (variable named `buf`, not `secret`).
+No credential value, `*http.Request`, or `*http.Response` is ever
+passed to a logger, error formatter, or other byte sink. Coverage:
+98.1% statement coverage with 103 named tests (18 shared +
+17 × 5 per-provider), race-clean.
+
+```go
+// Validator answers "is this credential currently accepted by the
+// upstream provider?" via a single read-only HTTP probe.
+type Validator interface {
+    Validate(ctx context.Context, secret *securebytes.SecureBytes) error
+}
+
+// Registry is the read-only lookup mapping each FR-010 name to its
+// concrete Validator. Concurrent Get calls are race-safe.
+type Registry struct { /* opaque */ }
+
+// NewRegistry builds a Registry pre-populated with the five built-in
+// validators. Passing nil yields a default *http.Client with the
+// FR-012 5-second timeout and redirect-follow disabled per FR-021.
+func NewRegistry(httpClient *http.Client) *Registry
+
+// Get returns (registered Validator, true) for any of the five fixed
+// FR-010 lowercase names; (nil, false) for everything else.
+func (r *Registry) Get(name string) (Validator, bool)
+
+// Per-provider constructors. Each returns the Validator interface and
+// pins the endpoint URL per research.md R-003a..R-003e.
+func NewAnthropic(httpClient *http.Client) Validator       // x-api-key + anthropic-version
+func NewAnthropicOAuth(httpClient *http.Client) Validator  // Authorization: Bearer + anthropic-version
+func NewOpenAI(httpClient *http.Client) Validator          // Authorization: Bearer
+func NewGoogleAI(httpClient *http.Client) Validator        // x-goog-api-key (header only — never ?key=)
+func NewGitHub(httpClient *http.Client) Validator          // Authorization: token + Accept
+
+// Sentinel errors — Constitution IX sentinel-class read-only globals.
+var (
+    ErrStaleCredential  = errors.New("validators: credential rejected by provider")
+    ErrValidatorTimeout = errors.New("validators: probe timeout")
+    ErrValidatorNetwork = errors.New("validators: probe network failure")
+)
+```
+
+Files: `internal/supervise/validators/validators.go` (shared
+machinery: interface, Registry, three sentinels, `doRequest`,
+`classifyTransportError`, `emitWarnAndWrap`, name + endpoint
+constants), `anthropic.go`, `anthropic_oauth.go`, `openai.go`,
+`google_ai.go`, `github.go` (one per provider — unexported
+`<provider>Validator` struct + `New<Provider>` + `set<Provider>Auth`
+builder), `validators_test.go` (18 shared tests + per-provider
+behaviour helpers), `anthropic_test.go`, `anthropic_oauth_test.go`,
+`openai_test.go`, `google_ai_test.go`, `github_test.go` (17 named
+tests per provider), and `export_test.go` (test-only
+`SetLoggerForTest` seam — R-014).
+
+Constitution principles in scope: V (every failure outcome emits one
+WARN slog record via the single `emitWarnAndWrap` site; success path
+is DEBUG-only; zero silent suppression); VIII (TDD-first, 103 named
+tests, race-clean, ≥90% statement coverage, sentinel-leak fuzz-style
+assertion per provider for FR-015/SC-006); IX (single-method
+`Validator` interface; three sentinel-class globals exempt per
+Constitution IX; zero `init()`; zero mutable package-level state;
+five `<provider>Name` + four `<provider>Endpoint` + four `outcome*` +
+`anthropicVersionHeader` + `defaultTimeout` are compile-time `const`
+declarations; zero goroutines spawned by the package; ctx-first
+`Validate(ctx, secret)`); X (`*SecureBytes` is the only credential
+surface; `Use(fn)`-scoped builder consumption with fresh `[]byte` +
+zero-loop; log-attribute allow-list = `{validator, outcome, status}`;
+`*http.Request` / `*http.Header` never threaded to logger / error /
+byte sink); XI (stdlib-only — `context`, `errors`, `fmt`, `io`,
+`log/slog`, `net`, `net/http`, `time` — plus `internal/vault/securebytes`).
+
+Anti-API (deliberately NOT exported): per-provider concrete struct
+types (kept unexported so callers consume only via the `Validator`
+interface); a sixth registry name (SC-007 closed set; runtime
+extension is post-v0.1.0 per `docs/DAEMONS.md` §5); any setter for
+the `*http.Client` after construction (clients are passed at
+constructor time only); silent suppression of any failure mode;
+mutable package-level state; an `init()` function.
+
+---
+
 ## `tests/integration/` — Exported API — locked at SDD-25
 
 **Purpose.** Lifecycle integration test suite owning AC-10 (15 named

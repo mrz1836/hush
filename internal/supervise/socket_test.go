@@ -19,6 +19,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mrz1836/hush/internal/testutil"
 )
 
 // stubStatusInputs implements StatusInputs with field-backed values.
@@ -42,34 +44,13 @@ func (s *stubStatusInputs) LastAuthFailure() *time.Time  { return s.lastAuthFail
 func (s *stubStatusInputs) ChildUptime() time.Duration   { return s.childUptime }
 func (s *stubStatusInputs) DiscordConnected() bool       { return s.discordConnected }
 
-// shortTempDir returns a 0o700 directory under a short-path root with a
-// short prefix — required because macOS Unix-socket paths are limited to
-// ~104 bytes and t.TempDir() returns long /var/folders/... paths that
-// exceed the cap when combined with our test names. We start from the
-// per-OS convention via defaultRuntimeDir() (research.md R-2) when its
-// length is short enough, falling back to /tmp. Cleanup is registered
-// with t.
+// shortTempDir returns a 0o700 directory whose path is short enough to
+// hold an AF_UNIX socket inside macOS's 104-byte sun_path cap.
+// Delegates to testutil.ShortTempDir, which prefers $TMPDIR (set to a
+// short path by sandboxed runners) and falls back to /tmp.
 func shortTempDir(t *testing.T) string {
 	t.Helper()
-	root := defaultRuntimeDir()
-	// Heuristic: macOS UserCacheDir is long (~/Library/Caches/hush);
-	// drop back to /tmp when the runtime dir would already eat half the
-	// 104-byte cap.
-	if len(root) > 30 {
-		root = "/tmp"
-	}
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		t.Fatalf("mkdir runtime root: %v", err)
-	}
-	d, err := os.MkdirTemp(root, "h22-")
-	if err != nil {
-		t.Fatalf("mkdtemp: %v", err)
-	}
-	if err := os.Chmod(d, 0o700); err != nil {
-		t.Fatalf("chmod 0700: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(d) })
-	return d
+	return testutil.ShortTempDir(t, "h22-")
 }
 
 // tempSocketPath returns a temp socket path under a 0o700 parent.

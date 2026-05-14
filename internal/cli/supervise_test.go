@@ -18,18 +18,15 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mrz1836/hush/internal/supervise"
+	"github.com/mrz1836/hush/internal/testutil"
 	"github.com/mrz1836/hush/internal/transport/sign"
 )
 
-// shortTempBase returns a temp directory under /tmp short enough to
-// fit within macOS Unix-socket length limits.
+// shortTempBase returns a temp directory short enough to fit within
+// macOS Unix-socket length limits.
 func shortTempBase(t *testing.T) string {
 	t.Helper()
-	d, err := os.MkdirTemp("/tmp", "h23-")
-	require.NoError(t, err)
-	require.NoError(t, os.Chmod(d, 0o700))
-	t.Cleanup(func() { _ = os.RemoveAll(d) })
-	return d
+	return testutil.ShortTempDir(t, "h23-")
 }
 
 // writeSuperviseConfig writes a valid supervisor TOML pointing at

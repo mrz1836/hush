@@ -78,7 +78,7 @@
 | ID | Title | Package | Status | AC |
 |----|-------|---------|--------|-----|
 | SDD-27 | Log-pattern watchdog (alert-only) | `internal/supervise/watchdog` | done | AC-10 |
-| SDD-26 | 5 builtin validators (anthropic, anthropic-oauth, openai, google-ai, github) | `internal/supervise/validators` | pending | AC-10 |
+| SDD-26 | 5 builtin validators (anthropic, anthropic-oauth, openai, google-ai, github) | `internal/supervise/validators` | done | AC-10 |
 | SDD-28 | 8 alert classes + tiered routing + DM rate limit | `internal/discord/alerts` | pending | AC-3, AC-10 |
 
 ## Phase 7 — Deployment
