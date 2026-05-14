@@ -200,7 +200,7 @@ func githubProviderCase() providerCase {
 // TestValidator_InterfaceHasOneMethod — B-V-IF-1, FR-001.
 func TestValidator_InterfaceHasOneMethod(t *testing.T) {
 	t.Parallel()
-	typ := reflect.TypeOf((*validators.Validator)(nil)).Elem()
+	typ := reflect.TypeFor[validators.Validator]()
 	if got := typ.NumMethod(); got != 1 {
 		t.Fatalf("Validator interface method count: got %d, want 1", got)
 	}

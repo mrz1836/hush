@@ -600,7 +600,7 @@ func TestAppend_ShutdownDuringRendezvous(t *testing.T) {
 	// the `<-w.shutdown` branch.
 	const N = 50
 	done := make(chan struct{}, N)
-	for i := 0; i < N; i++ {
+	for range N {
 		go func() {
 			defer func() { done <- struct{}{} }()
 			_ = w.Append(context.Background(), "x", nil)
@@ -610,7 +610,7 @@ func TestAppend_ShutdownDuringRendezvous(t *testing.T) {
 	if err := wait(); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	for i := 0; i < N; i++ {
+	for range N {
 		<-done
 	}
 }

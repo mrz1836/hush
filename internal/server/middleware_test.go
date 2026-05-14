@@ -34,7 +34,7 @@ func TestMiddleware_RequestIDStable(t *testing.T) {
 	seen := make(map[string]struct{}, N)
 	const forged = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
-	for i := 0; i < N; i++ {
+	for range N {
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil)
 		req.Header.Set("X-Request-ID", forged)
 		req.Header.Set("Request-Id", forged)

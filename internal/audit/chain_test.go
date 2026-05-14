@@ -533,7 +533,7 @@ func TestSpecFR14AuditSync(t *testing.T) {
 	// Each match is the right-hand string literal whose left-hand side is
 	// an ActionSupervisor* or ActionClientRefresh* identifier.
 	chainSet := map[string]struct{}{}
-	for _, line := range strings.Split(string(chainBytes), "\n") {
+	for line := range strings.SplitSeq(string(chainBytes), "\n") {
 		line = strings.TrimSpace(line)
 		if !(strings.HasPrefix(line, "ActionSupervisor") || strings.HasPrefix(line, "ActionClientRefresh")) {
 			continue

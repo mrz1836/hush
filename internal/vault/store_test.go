@@ -5,7 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math/rand"
+	"math/rand/v2"
 	"path/filepath"
 	"sort"
 	"sync"
@@ -195,16 +195,16 @@ func TestStore_ConcurrentGet(t *testing.T) {
 		failures []string
 	)
 
-	rng := rand.New(rand.NewSource(99)) //nolint:gosec // test-only deterministic seed; not used for crypto
+	rng := rand.New(rand.NewPCG(99, 0))
 	var rngMu sync.Mutex
 
-	for g := 0; g < goroutines; g++ {
+	for range goroutines {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for i := 0; i < getsPerGoroutine; i++ {
+			for range getsPerGoroutine {
 				rngMu.Lock()
-				idx := rng.Intn(len(names))
+				idx := rng.IntN(len(names))
 				rngMu.Unlock()
 
 				name := names[idx]

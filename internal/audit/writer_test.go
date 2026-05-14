@@ -139,7 +139,7 @@ func TestAuditWriter_BlocksOnBackpressure(t *testing.T) {
 	var wg sync.WaitGroup
 	starts := make([]time.Time, N)
 	ends := make([]time.Time, N)
-	for i := 0; i < N; i++ {
+	for i := range N {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

@@ -663,7 +663,7 @@ func TestChild_PgidIsolation_KillingPgKillsChildren(t *testing.T) {
 	for time.Now().Before(deadline) {
 		s := out.String()
 		if strings.Contains(s, "SUPERVISOR_PID=") && strings.Contains(s, "GRANDCHILD_PID=") {
-			for _, line := range strings.Split(s, "\n") {
+			for line := range strings.SplitSeq(s, "\n") {
 				if v, ok := strings.CutPrefix(line, "SUPERVISOR_PID="); ok {
 					supPID, _ = strconv.Atoi(strings.TrimSpace(v))
 				}

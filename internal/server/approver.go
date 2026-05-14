@@ -124,7 +124,7 @@ type AuditEvent struct {
 	Type      AuditEventType    `json:"type"`
 	At        time.Time         `json:"at"`
 	RequestID string            `json:"request_id,omitempty"`
-	ClientIP  netip.Addr        `json:"client_ip,omitempty"`
+	ClientIP  netip.Addr        `json:"client_ip,omitzero"`
 	Detail    map[string]string `json:"detail,omitempty"`
 }
 

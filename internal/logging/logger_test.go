@@ -439,7 +439,7 @@ func TestLogger_WithAttrsRedactionPreserved(t *testing.T) {
 // nonEmptyLines splits s by newline and returns lines with non-zero length.
 func nonEmptyLines(s string) []string {
 	var out []string
-	for _, l := range strings.Split(s, "\n") {
+	for l := range strings.SplitSeq(s, "\n") {
 		if l != "" {
 			out = append(out, l)
 		}

@@ -233,10 +233,10 @@ func TestRefreshCoalescer_SingleFlight(t *testing.T) {
 		},
 	}
 	results := make(chan error, 4)
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		go func() { results <- c.Handle(context.Background()) }()
 	}
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		if err := <-results; err == nil || err.Error() != "performed" {
 			t.Errorf("Handle: %v", err)
 		}

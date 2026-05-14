@@ -370,7 +370,7 @@ func TestSocket_NoGoroutineLeak(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 	baseline := runtime.NumGoroutine()
 
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		srv := NewStatusServer(tempSocketPath(t), nil, silentLogger())
 		stop := startServer(t, srv)
 		require.NoError(t, stop())
@@ -934,7 +934,7 @@ func splitNonEmpty(s string) []string {
 		return nil
 	}
 	out := make([]string, 0, 4)
-	for _, p := range bytes.Split([]byte(s), []byte{','}) {
+	for p := range bytes.SplitSeq([]byte(s), []byte{','}) {
 		if len(p) == 0 {
 			continue
 		}

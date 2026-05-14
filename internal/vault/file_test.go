@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math/rand"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"sync"
@@ -233,7 +233,12 @@ func TestVault_RoundTrip_500Secrets(t *testing.T) {
 	key := makeVaultKey(t, 0x04)
 	ctx := context.Background()
 
-	rng := rand.New(rand.NewSource(42)) //nolint:gosec // test-only deterministic seed; not used for crypto
+	rng := rand.New(rand.NewPCG(42, 0))
+	fillRand := func(b []byte) {
+		for i := range b {
+			b[i] = byte(rng.Uint32())
+		}
+	}
 	secrets := make([]Secret, 500)
 	values := make([][]byte, 500)
 	for i := range secrets {
@@ -244,10 +249,10 @@ func TestVault_RoundTrip_500Secrets(t *testing.T) {
 			val = []byte{byte(i)}
 		case 1:
 			val = make([]byte, 8*1024)
-			_, _ = rng.Read(val)
+			fillRand(val)
 		case 2:
 			val = make([]byte, 64*1024)
-			_, _ = rng.Read(val)
+			fillRand(val)
 		}
 		values[i] = append([]byte(nil), val...) // save copy before makeSecret zeroes val
 		secrets[i] = makeSecret(t, name, "desc", val)

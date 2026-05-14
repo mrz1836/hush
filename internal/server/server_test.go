@@ -192,7 +192,7 @@ func TestApprover_TypeShape(t *testing.T) {
 	t.Parallel()
 
 	// Approver must be a single-method interface.
-	approverType := reflect.TypeOf((*Approver)(nil)).Elem()
+	approverType := reflect.TypeFor[Approver]()
 	if approverType.NumMethod() != 1 {
 		t.Fatalf("Approver has %d methods, want 1", approverType.NumMethod())
 	}
@@ -252,7 +252,7 @@ func TestApprover_TypeShape(t *testing.T) {
 func TestAuditEvent_TypeShape(t *testing.T) {
 	t.Parallel()
 
-	w := reflect.TypeOf((*AuditWriter)(nil)).Elem()
+	w := reflect.TypeFor[AuditWriter]()
 	if w.NumMethod() != 1 || w.Method(0).Name != "Write" {
 		t.Fatalf("AuditWriter shape drifted: methods=%v", w)
 	}

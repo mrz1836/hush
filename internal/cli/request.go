@@ -281,7 +281,7 @@ func parseAndValidateFlags(cmd *cobra.Command, args []string) (requestFlags, err
 	// Cobra's StringSlice may yield comma-joined entries; split fully.
 	scope := make([]string, 0, len(scopeRaw))
 	for _, raw := range scopeRaw {
-		for _, item := range strings.Split(raw, ",") {
+		for item := range strings.SplitSeq(raw, ",") {
 			item = strings.TrimSpace(item)
 			if item == "" {
 				continue
