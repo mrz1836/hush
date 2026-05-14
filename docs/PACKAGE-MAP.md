@@ -2412,6 +2412,15 @@ usage. The Go integration test suite lives at `tests/deploy/`
   Mode `0644` (template, not directly executable). install.sh does
   NOT install this file — the operator copies it per daemon.
 
+**CI runner prerequisites.** `bash -n` is the absolute floor (FR-024
++ SC-008) and runs on every runner without setup. `shellcheck` is
+RECOMMENDED but optional — runners without it skip the shellcheck
+step with a logged note. To make the shellcheck gate load-bearing,
+add `apt-get install -y shellcheck` (Ubuntu) or
+`brew install shellcheck` (macOS) to the runner bootstrap. The
+developer workstation that authored SDD-29 lacked shellcheck;
+follow-up CI hardening should install it.
+
 **Verification harness.** Go integration tests under `tests/deploy/`
 gated by `//go:build integration`:
 `TestDeploy_InstallIdempotent` / `TestDeploy_InstallRefusesUnsupportedOS` /

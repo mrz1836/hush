@@ -150,6 +150,20 @@ A green CI run guarantees:
   `hush request --exec`.
 - No operator-specific names are committed under `deploy/`.
 
+**CI runner prerequisites (SDD-29).** `bash -n` is universally
+available; the four committed shell files MUST parse on every runner
+(this is the absolute floor — FR-024 + SC-008). `shellcheck` is
+RECOMMENDED but optional: on runners that lack it, the
+`shellcheck` step prints `shellcheck not installed — document in CI
+prerequisites` and continues. To make the CI shellcheck step
+load-bearing, add `apt-get install -y shellcheck` (Ubuntu) or
+`brew install shellcheck` (macOS) to the CI image bootstrap before
+the SDD-29 gate runs. **As of commit `22d5fdd`, the developer
+workstation that authored this chunk did not have `shellcheck`
+installed** — the gate ran the bash-n-only path. A follow-up CI
+hardening pass should install shellcheck on the GH Actions runners
+that exercise `deploy/`.
+
 ---
 
 ## 8. Anti-patterns (do NOT do these)

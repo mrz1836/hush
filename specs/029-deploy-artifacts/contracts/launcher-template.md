@@ -49,7 +49,7 @@ if grep -qE '<''NAME>|<''KEYCHAIN_ITEM>|<''CONFIG_PATH>' "${BASH_SOURCE[0]}"; th
   exit 78
 fi
 
-exec /usr/local/bin/hush supervise --config <CONFIG_PATH>
+exec /usr/local/bin/hush supervise --config '<CONFIG_PATH>'
 ```
 
 ---
@@ -79,6 +79,16 @@ grep -nE '^[[:space:]]*[^#]' supervise-launch.sh.template \
 
 (Read only lines that do NOT start with `#`, then search for the
 forbidden string.) Zero matches is the pass condition.
+
+### Exec-line placeholder quoting
+
+The `<CONFIG_PATH>` placeholder on the `exec` line is **single-quoted**
+(`'<CONFIG_PATH>'`). Bash treats unquoted `<` as an input-redirection
+token, so the unquoted form fails `bash -n` parse and would violate
+FR-023 + SC-008. Single quotes preserve the literal placeholder for
+FR-020 grep and let `sed 's|<CONFIG_PATH>|/abs/path.toml|g'`
+substitute cleanly, leaving valid bash (`--config '/abs/path.toml'`).
+See `plan.md` §Complexity Tracking row 3 for the full rationale.
 
 ### Pre-flight guard semantics
 

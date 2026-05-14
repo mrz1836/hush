@@ -162,7 +162,7 @@ symbols".
 
 The Constitution Check passes with no violations. No rows required.
 
-The two design choices that could *look* like extensions:
+The three design choices that could *look* like extensions:
 1. `HUSH_INSTALL_ROOT` env knob — test-only staging prefix
    ([research.md §R-002](research.md)). Not a spec extension because
    the spec does not address test mechanics; not a Constitution
@@ -172,9 +172,31 @@ The two design choices that could *look* like extensions:
    spec edge cases explicitly require "unmodified placeholder strings
    must cause the script to fail at startup"; the guard is the
    minimum-viable implementation of that requirement.
+3. **Launcher exec-line `<CONFIG_PATH>` placeholder is single-quoted at
+   implement-time** (deviation from chunk-doc HOW lines 181 and
+   `contracts/launcher-template.md` literal form
+   `exec /usr/local/bin/hush supervise --config <CONFIG_PATH>`). The
+   unquoted form fails `bash -n` parse because bash treats unquoted
+   `<` as an input redirection token (`syntax error near unexpected
+   token 'newline'`). Shipping the unquoted form would directly
+   violate FR-023 ("MUST be parseable by `bash -n`") and SC-008
+   ("`bash -n` exits 0 against every committed shell file"). The
+   single-quoted form `'<CONFIG_PATH>'` preserves: (a) FR-020 — the
+   literal token `<CONFIG_PATH>` still appears verbatim and
+   `TestDeploy_LauncherTemplateExecsSupervise` finds it; (b) the
+   operator-substitution UX — `sed 's|<CONFIG_PATH>|/abs/path.toml|g'`
+   strips the placeholder and leaves valid bash (`exec ...
+   --config '/abs/path.toml'`); (c) the pre-flight guard semantics —
+   the guard greps for unsubstituted tokens anywhere in the file,
+   not just the exec line. The deviation is required by FR-023 +
+   SC-008 and does not relax any Constitution principle. Recorded
+   here for reviewer awareness; the chunk-doc text and
+   `contracts/launcher-template.md` line 52 should be updated in a
+   follow-up housekeeping pass to match the shipped (and `bash -n`-clean)
+   form.
 
-Both choices are referenced in the plan body above; neither is a
-chunk-doc-API extension (no new files, no new env vars in the public
-contract beyond what FR-002/004/006 already named) and neither
-relaxes a Constitution principle. No Complexity Tracking entries
+None of the three is a chunk-doc-API extension (no new files, no
+new env vars in the public contract beyond what FR-002/004/006
+already named) and none relaxes a Constitution principle. No
+Complexity Tracking entries (in the violations-justified sense)
 needed.

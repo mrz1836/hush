@@ -4,7 +4,7 @@
 
 **Created**: 2026-05-14
 
-**Status**: Draft
+**Status**: Implemented (2026-05-14; commit `22d5fdd` on `029-deploy-artifacts`)
 
 **Input**: User description: "deploy/: launchd plist + systemd unit + install.sh (idempotent, adds macOS tmutil exclusion, sets up Keychain entries with -T binary-path ACL, non-root) + supervise-launch.sh.template (execs hush supervise, NOT hush request --exec, with clearly-marked <NAME>/<KEYCHAIN_ITEM> placeholders); zero operator-specific names hard-coded"
 
