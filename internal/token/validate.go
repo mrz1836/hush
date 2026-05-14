@@ -89,10 +89,14 @@ func Validate(
 }
 
 // checkPostParseClaims runs the deterministic post-parse validation chain:
-// session-type vocabulary → scope → client IP → store revocation →
-// use-count decrement (interactive only). Each rejection returns a distinct
-// sentinel; the order is load-bearing for security tests.
+// issuer pin → session-type vocabulary → scope → client IP → store
+// revocation → use-count decrement (interactive only). Each rejection
+// returns a distinct sentinel; the order is load-bearing for security
+// tests.
 func checkPostParseClaims(claims *Claims, requestIP, requestedSecret string, store Store) error {
+	if claims.Issuer != tokenIssuer {
+		return ErrInvalidIssuer
+	}
 	if !validSessionType(claims.SessionType) {
 		return ErrUnknownSessionType
 	}

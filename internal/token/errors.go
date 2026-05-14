@@ -53,4 +53,9 @@ var (
 	// against the supplied public key. Distinct from ErrTokenMalformed
 	// (parsing failure before verification was attempted).
 	ErrSignatureInvalid = errors.New("hush/token: signature invalid")
+	// ErrInvalidIssuer reports that the token's iss claim is not the
+	// fixed hush issuer label. Defends against key-reuse mistakes: a
+	// future protocol that signs JWTs with the same key would otherwise
+	// produce tokens this validator silently accepts.
+	ErrInvalidIssuer = errors.New("hush/token: invalid issuer")
 )
