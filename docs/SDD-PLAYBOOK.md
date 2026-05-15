@@ -86,7 +86,7 @@
 | ID | Title | Files | Status | AC |
 |----|-------|-------|--------|-----|
 | SDD-29 | Deploy artifacts (launchd plist, systemd unit, install.sh, generic launcher template) | `deploy/*` | done | AC-1, AC-6, AC-10 |
-| SDD-30 | Generic example supervisor TOML + Tailscale ACL spec + clean-machine checklist | `deploy/examples/*` + `docs/TAILSCALE-ACLS.md` + `docs/CLEAN-MACHINE.md` | partial (docs done; example TOML pending SDD-18) | AC-6, AC-8, AC-10 |
+| SDD-30 | Generic example supervisor TOML + Tailscale ACL spec + clean-machine checklist | `deploy/examples/*` + `docs/TAILSCALE-ACLS.md` + `docs/CLEAN-MACHINE.md` | done | AC-6, AC-8, AC-10 |
 
 ## Phase 8 — Release
 

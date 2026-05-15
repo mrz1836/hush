@@ -24,20 +24,27 @@ defence-in-depth (signed-request verification, IP allowlist, JWT validation).
 
 ## The pattern
 
-Two tags:
+The constitution names the canonical pair as `tag:trusted → tag:sandbox:7743`.
+Many operators prefer more descriptive tags such as
+`tag:hush-agent → tag:hush-vault`. The **pattern** is the
+load-bearing part — one source tag, one destination tag, port 7743
+only — not the specific names.
 
-- **`tag:hush-agent`** — applied to machines that run `hush request`,
-  `hush supervise`, or `hush client`. These are the legitimate clients.
-- **`tag:hush-vault`** — applied to the single vault host that runs
-  `hush serve`.
+Two tags (substitute names that fit your existing tailnet
+conventions):
 
-The grant: `tag:hush-agent → tag:hush-vault:7743` (and nothing else for
-port 7743).
+- **source tag** (canonical: `tag:trusted`; descriptive alternative
+  shown in examples below: `tag:hush-agent`) — applied to machines
+  that run `hush request`, `hush supervise`, or `hush client`. These
+  are the legitimate clients.
+- **destination tag** (canonical: `tag:sandbox`; descriptive
+  alternative: `tag:hush-vault`) — applied to the single vault host
+  that runs `hush serve`.
 
-Operators are free to substitute names that fit their existing
-conventions (e.g. `tag:trusted-dev` and `tag:secrets-host`). The pattern
-holds regardless: a narrow tag-to-tag grant on port 7743, denied by
-default to everything else.
+The grant pattern: `<source-tag> → <destination-tag>:7743` (and
+nothing else for port 7743). Either tag-pair satisfies Constitution
+Principle VI as long as the grant is scoped to port 7743 and the
+source-tagged set is exactly the set of authorised agents.
 
 ---
 
@@ -50,8 +57,11 @@ hush-relevant grants. Drop it into your existing `tailnet/policy.hujson`
 ```hujson
 {
   "tagOwners": {
-    "tag:hush-agent":  ["autogroup:admin"],   // adjust to your owner mapping
-    "tag:hush-vault":  ["autogroup:admin"],
+    "tag:trusted":  ["autogroup:admin"],   // canonical per Constitution VI
+    "tag:sandbox":  ["autogroup:admin"],
+    // Descriptive alternative — pick one pair, not both:
+    // "tag:hush-agent": ["autogroup:admin"],
+    // "tag:hush-vault": ["autogroup:admin"],
   },
 
   "acls": [
@@ -60,8 +70,8 @@ hush-relevant grants. Drop it into your existing `tailnet/policy.hujson`
     // hush — vault access for tagged agents only
     {
       "action": "accept",
-      "src":    ["tag:hush-agent"],
-      "dst":    ["tag:hush-vault:7743"]
+      "src":    ["tag:trusted"],
+      "dst":    ["tag:sandbox:7743"]
     }
   ],
 
@@ -87,8 +97,8 @@ the change looks like:
      },
 +    {
 +      "action": "accept",
-+      "src":    ["tag:hush-agent"],
-+      "dst":    ["tag:hush-vault:7743"]
++      "src":    ["tag:trusted"],
++      "dst":    ["tag:sandbox:7743"]
 +    }
    ]
 ```
@@ -101,8 +111,8 @@ the only thing granting port 7743 across the mesh:
      // (existing tag-scoped grants...)
 +    {
 +      "action": "accept",
-+      "src":    ["tag:hush-agent"],
-+      "dst":    ["tag:hush-vault:7743"]
++      "src":    ["tag:trusted"],
++      "dst":    ["tag:sandbox:7743"]
 +    }
    ]
 ```
@@ -114,9 +124,10 @@ the only thing granting port 7743 across the mesh:
 In the Tailscale admin console (`https://login.tailscale.com/admin/machines`),
 edit each machine and set the appropriate tag:
 
-- The vault host: tag `hush-vault`.
-- Each agent machine that runs `hush request` or `hush supervise`: tag
-  `hush-agent`.
+- The vault host: tag `sandbox` (canonical) or `hush-vault`
+  (descriptive alternative).
+- Each agent machine that runs `hush request` or `hush supervise`:
+  tag `trusted` (canonical) or `hush-agent` (descriptive alternative).
 
 Untagged machines continue to use whatever your default ACL specifies
 (typically: full access between members, or default-deny if you've moved
@@ -145,10 +156,11 @@ After applying the ACL:
 
 For higher-security environments:
 
-- **Per-agent restriction:** Replace `tag:hush-agent` with one tag per
-  agent machine (`tag:hush-agent-<machine-name>`). Combined with the
-  per-machine client key (`m/44'/7743'/3'/{machine_index}` BIP32 path),
-  this gives two independent authorisation factors at the network layer
+- **Per-agent restriction:** Replace the canonical source tag with
+  one tag per agent machine (e.g., `tag:trusted-<machine-name>` or
+  `tag:hush-agent-<machine-name>`). Combined with the per-machine
+  client key (`m/44'/7743'/3'/{machine_index}` BIP32 path), this
+  gives two independent authorisation factors at the network layer
   alone.
 - **Time-of-day grants:** Tailscale supports time-based ACLs. If your
   agents only need vault access during business hours, narrow the grant
