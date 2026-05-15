@@ -178,10 +178,22 @@ as out of scope unless your threat model demands it.
 Two cases:
 
 - **hush-managed entries** — keep these. They are ACL-restricted to
-  `/usr/local/bin/hush` and used to derive client keys at runtime.
-- **Tool-specific entries** (e.g. `gh-cli`, `git`, AWS CLI) — these may
-  bypass the file-based credential stores you just cleaned up. If a tool
-  caches a token in Keychain at login time, decide whether to:
+  `/usr/local/bin/hush` (per `-T /usr/local/bin/hush` on
+  `security add-generic-password`; see `deploy/install.sh`'s
+  next-steps banner for the exact invocation). The three canonical
+  entries are:
+  - `hush-vault-passphrase` — vault passphrase, on the **vault host**
+    only. Created by the operator with
+    `security add-generic-password -a <hush-user> -s hush-vault-passphrase -T /usr/local/bin/hush -U -w '<passphrase>'`
+    after `deploy/install.sh` completes (the installer prints the
+    exact command in its banner).
+  - `hush-discord` — Discord bot token, on the **vault host** only.
+    Referenced by server config `[discord].bot_token_keychain_item`.
+  - `hush-client` — per-machine client-key derivation marker, on
+    each **agent host**. Created by `hush init --client --machine-index N`.
+- **Tool-specific entries** (e.g. `gh-cli`, `git`, AWS CLI) — these
+  may bypass the file-based credential stores you just cleaned up. If
+  a tool caches a token in Keychain at login time, decide whether to:
   - Disable the tool's Keychain integration (preferred for hush model).
   - Leave it (acceptable if the Keychain ACL prevents non-tool processes
     reading it; verify with `security dump-keychain` and Access Control

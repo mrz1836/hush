@@ -2448,6 +2448,35 @@ contract violation. `${HUSH_STATE_DIR}` is never backed up
 supervisor TOMLs) is SDD-30 territory and out of SDD-29's
 operator-agnostic scope.
 
+### Exported API — locked at SDD-30
+
+- `deploy/examples/supervisors/example-daemon.toml` — the canonical
+  operator-facing supervisor template. Fully commented, fully generic;
+  every field documented in
+  [`docs/CONFIG-SCHEMA.md`](CONFIG-SCHEMA.md) §Supervisor-config
+  appears as an active example value with an inline
+  `# <purpose>. Required.` or `# <purpose>. Default: <loader-default>.`
+  comment. Top-of-file comment block links to
+  [`docs/TAILSCALE-ACLS.md`](TAILSCALE-ACLS.md) (Constitution VI —
+  network-layer hardening) and
+  [`docs/CLEAN-MACHINE.md`](CLEAN-MACHINE.md) (Constitution I —
+  agent-host hygiene), plus the per-binary Keychain ACL contract
+  (AC-6) and the `[child].command[0]`-as-ACL-bound-path callout.
+  Placeholder taxonomy: human-readable slugs (`example-daemon`,
+  `your-daemon-binary`, `Example Daemon`), scoped secret names
+  (`EXAMPLE_API_KEY_1`, `EXAMPLE_API_KEY_2`), and a single
+  `REPLACE_ME` marker for `[discord].alert_channel_id`.
+  `server_url = "http://100.64.0.1:7743/h/example"` — first usable
+  CGNAT address inside `100.64.0.0/10`, canonical hush port. Validated
+  by `TestExamples_GenericTOMLValidates` (loader round-trip) +
+  `TestExamples_NoOperatorSpecificNames` (FR-007 grep gate, seed list
+  empty at SDD-30 author time), both in
+  `internal/supervise/config/example_test.go`. SDD-30 also re-verified
+  [`docs/TAILSCALE-ACLS.md`](TAILSCALE-ACLS.md) and
+  [`docs/CLEAN-MACHINE.md`](CLEAN-MACHINE.md) against the current
+  spec/config/install.sh and applied patch-level alignment (R-002,
+  R-003).
+
 ---
 
 ## `internal/logging/`

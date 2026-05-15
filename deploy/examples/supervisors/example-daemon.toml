@@ -1,0 +1,61 @@
+# This file is the canonical operator-facing template for hush's
+# per-daemon supervisor config. Every field below is documented at:
+#   docs/CONFIG-SCHEMA.md#supervisor-config
+#
+# Companion docs:
+#   docs/TAILSCALE-ACLS.md   - network-layer hardening (Constitution VI)
+#   docs/CLEAN-MACHINE.md    - agent-host hygiene (Constitution I)
+#
+# Per-binary Keychain ACL contract (AC-6):
+#   [child].command[0] is the binary path the operator ACL-binds in
+#   Keychain. See docs/CLEAN-MACHINE.md section 8 (macOS Keychain) for
+#   the `security add-generic-password -T <path>` invocation.
+#
+# Operator workflow:
+#   1. Copy this file to ~/.hush/supervisors/<your-daemon>.toml
+#   2. Find/replace every REPLACE_ME and EXAMPLE_* placeholder
+#   3. Run: hush supervise --config ~/.hush/supervisors/<your-daemon>.toml
+
+name = "example-daemon"                                       # Unique daemon slug - URL/path-safe; appears in DM labels, status socket path, and pid file. Required.
+reason = "Example long-running daemon"                        # One-line human reason shown in Discord approval DMs. Required.
+server_url = "http://100.64.0.1:7743/h/example"               # Tailscale CGNAT vault IP + canonical hush port + URL prefix - REPLACE the IP and prefix with values from your vault host's hush init output before first boot. Required.
+client_machine_index = 2                                      # BIP32 client-key path index - match the index used at hush init --client on this host. Required.
+session_type = "supervisor"                                   # Fixed for supervisor configs - the loader refuses any other value. Required.
+requested_ttl = "20h"                                         # Discord-approved session lifetime - capped server-side at max_supervisor_ttl. Default: 20h.
+refresh_window = "09:00-10:00"                                # Local-time window in which the supervisor DMs you the daily refresh prompt. Default: 09:00-10:00.
+refresh_nudge_before = "30m"                                  # How long before refresh_window the supervisor sends its T-N reminder DM. Default: 30m.
+boot_retry_timeout = "10m"                                    # Cap on supervisor's exponential-backoff retries when vault or Tailscale is unreachable at boot. Default: 10m.
+cache_secrets_for_restart = true                              # Hold the last good secrets in mlocked memory during the grace window so a crash within cache_grace_ttl does not re-prompt. Default: false; set true to opt into grace cache.
+cache_grace_ttl = "60m"                                       # Lifetime of the grace cache after first arming - capped at 4h. Default: 60m.
+status_socket = "/tmp/hush/supervise-example-daemon.sock"     # Unix-socket path hush client status reads - file mode 0600, parent dir 0700. Required.
+pid_file = "/tmp/hush/supervise-example-daemon.pid"           # Pid-file path used for flock split-brain guard; audit_log defaults to <dirname>/<name>-audit.jsonl. Required.
+log_level = "info"                                            # Supervisor log verbosity - one of debug, info, warn, error. Default: info.
+
+scope = [                                                     # Exact secret names this daemon may fetch - substitute your real secret names (e.g., ANTHROPIC_API_KEY). Required, non-empty.
+  "EXAMPLE_API_KEY_1",
+  "EXAMPLE_API_KEY_2",
+]
+
+[child]
+command = ["/usr/local/bin/your-daemon-binary", "start"]      # Daemon process invocation - element [0] must be an absolute path (ACL-bound binary per AC-6); no shell parsing. Required.
+working_dir = "/tmp"                                          # Working directory the child runs in - operator's choice; expands ~/. Default: process default if absent.
+env_passthrough = ["PATH", "HOME", "SHELL"]                   # Non-secret env vars to inherit into the child - NEVER list secret names here, those flow through scope above. Default: [].
+restart_on_clean_exit = true                                  # Whether to restart the child after a clean exit (code 0). Default: true.
+restart_on_exit_78 = false                                    # Whether to restart on exit code 78 (EX_CONFIG = stale credentials) - keep false; flipping causes silent stale-cred loops. Default: false.
+
+[discord]
+daemon_label = "Example Daemon"                               # Nicer label shown in Discord DMs and alerts - replace with whatever you want to see in your phone. Default: empty (falls back to name).
+alert_channel_id = "REPLACE_ME"                               # Discord channel snowflake for non-DM operational alerts - substitute your alerts channel ID before first boot. Default: empty (alerts go to DM only).
+
+# Per-secret pre-injection validator names - allow-list: anthropic,
+# anthropic-oauth, openai, google-ai, github. Required (map must be
+# present, but entries may be empty if you accept the staleness
+# contract via exit 78 only).
+[validators]
+EXAMPLE_API_KEY_1 = "anthropic"                               # Validator type for EXAMPLE_API_KEY_1 - replace key with your secret name.
+EXAMPLE_API_KEY_2 = "openai"                                  # Validator type for EXAMPLE_API_KEY_2 - replace key with your secret name (or delete this entry).
+
+[watchdog]
+enabled = true                                                # Whether the log-pattern watchdog is on - alert-only; never drives restart policy. Default: true.
+patterns = ["401 Unauthorized", "No API key found", "invalid x-api-key"]  # Literal log-fragment strings to grep for; matches trigger a Discord alert, not a child restart. Default: [].
+max_alerts_per_hour = 6                                       # Cap on watchdog Discord alerts per hour - operator typo guard. Default: 6.
