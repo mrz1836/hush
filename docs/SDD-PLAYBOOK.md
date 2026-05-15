@@ -71,7 +71,7 @@
 | SDD-22 | PID file + flock + Unix status socket | `internal/supervise` | done | AC-10 |
 | SDD-23 | `hush supervise` + `hush client status` + `hush client refresh` | `internal/cli` | done | AC-10 |
 | SDD-24 | Supervisor orchestration glue (activated 2026-05-12 by SDD-25 — see `docs/sdd/SDD-24.md`) | `internal/supervise/` (`lifecycle.go` + 4 siblings — Plan Option C) | done | AC-10 |
-| SDD-25 | Lifecycle integration harness (15 scenarios — explicit AC-10 owner) | `tests/integration/` | in-progress (chunk 1: harness scaffolding + Scenario 14 green under `-race`, 5/5 flake-free; remaining 16 scenarios fail loudly per FR-001 until upstream wiring lands in subsequent chunks) | AC-9, AC-10 |
+| SDD-25 | Lifecycle integration harness (15 scenarios — explicit AC-10 owner) | `tests/integration/` | in-progress (chunk 1: harness scaffolding + Scenario 14 green under `-race`, 5/5 flake-free; chunk 2: scenarios 11a/11b/12 (sentinels 12-14) wired green via real-server harness + Lifecycle test seams — see commits 9f8e04d + 378abb9 + 59a7789; remaining 13 scenarios — sentinels 1-11 + 15 + 17 — still fail loudly via `scenarioPendingHarness` per FR-001 until subsequent chunks land their upstream wiring) | AC-9, AC-10 |
 
 ## Phase 6 — Validators + alerts
 
@@ -96,7 +96,7 @@
 | ID | Title | Files | Status | AC |
 |----|-------|-------|--------|-----|
 | SDD-31 | Release gates (coverage + 6 fuzz + magex + go-pre-commit + govulncheck + gitleaks + CGO=0 + no /vendor) | `.github/workflows/*` | code-complete (gates green locally; PR #38 awaits Actions-enable + green checks) | AC-9 |
-| SDD-33 | Final repo + docs overhaul (drift reconciliation, dead-code sweep, README rewrite) | repo-wide | pending | AC-1 (+ tightens every other AC) |
+| SDD-33 | Final repo + docs overhaul (drift reconciliation, dead-code sweep, README rewrite) | repo-wide | done | AC-1 (+ tightens every other AC) |
 | SDD-32 | OSS-grade README + DAEMONS.md + repo-level OSS files + docs polish + GoReleaser + v0.1.0 tag | `README.md` + repo root + `docs/*` + `.goreleaser.yml` | partial (DAEMONS.md done; README + supporting files done; tag pending SDD-31 + SDD-33) | AC-1 |
 
 ---

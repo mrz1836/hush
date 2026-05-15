@@ -84,14 +84,22 @@ without re-verifying.
 | **Key hierarchy** | `internal/keys` | BIP32 derivation from passphrase. **No key files on disk.** |
 | **JWT/session** | `internal/token` | ES256K signing/verification, multi-use tracking, IP binding, cleanup goroutine, revocation table. |
 | **Transport crypto** | `internal/transport` | ECIES encrypt/decrypt for secret responses; ECDSA request signing; nonce + timestamp replay protection. |
-| **Discord bot** | `internal/discord` | `Approver` interface, DM dispatch, button handling, audit channel posting, disconnect monitoring. |
+| **Discord bot** | `internal/discord`, `internal/discord/alerts` | `Approver` interface, DM dispatch, button handling, disconnect monitoring; tiered operator alerting. The audit log writes _to_ Discord via the `audit.MirrorSession` seam (one-way: `internal/audit` → `internal/discord`); Discord does not import `internal/audit`. |
 | **Vault client** (`hush request`) | `internal/cli/request.go` | ECDSA-sign request; ephemeral keypair; ECIES-decrypt secrets; env-inject into child via `--exec`. |
-| **Supervisor** (`hush supervise`) | `internal/supervise` | Daemon-mode state machine; child lifecycle; validators; status socket; refresh scheduler; log-pattern watchdog. |
+| **Supervisor** (`hush supervise`) | `internal/supervise`, `internal/supervise/config`, `internal/supervise/validators`, `internal/supervise/watchdog` | Daemon-mode state machine; child lifecycle; refresh scheduler; PID flock + Unix status socket. Validators (peer package) are invoked by the supervisor; the watchdog imports the supervisor (reverse direction) for log-pattern alerting on running children. |
 | **Status client** (`hush client`) | `internal/cli/client_status.go` | Talks to local supervisor socket. |
 | **Management CLI** (`hush secret`, `init`, `revoke`, `health`, `version`) | `internal/cli` | Vault management; client/server bootstrap; ad-hoc operations. |
-| **Audit log** | `internal/discord/audit.go` + server hooks | Hash-chained, ECDSA-signed `~/.hush/audit.jsonl`; mirrored to optional Discord channel. |
+| **Audit log** | `internal/audit` (top-level package) | Hash-chained, ECDSA-signed `~/.hush/audit.jsonl`; flock-guarded single-writer goroutine; optionally mirrored to a Discord channel via the `MirrorSession` seam. Imported by `internal/server`, `internal/cli`, and `internal/supervise`. |
 
-See `docs/PACKAGE-MAP.md` for file-level responsibilities.
+See `docs/PACKAGE-MAP.md` for file-level responsibilities — the table
+above names the load-bearing components only. Eleven additional
+internal packages provide supporting concerns: `internal/audit`,
+`internal/config`, `internal/keychain`, `internal/logging`,
+`internal/supervise/config`, `internal/supervise/validators`,
+`internal/supervise/watchdog`, `internal/testutil`,
+`internal/vault/securebytes`, and `internal/discord/alerts` (`audit`
+is now its own row above; the rest are listed for completeness — each
+has its own `## \`internal/<pkg>\`` section in PACKAGE-MAP.md).
 
 ---
 
