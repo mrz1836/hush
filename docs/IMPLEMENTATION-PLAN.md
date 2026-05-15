@@ -7,6 +7,47 @@ It is the in-repo implementation roadmap an execution agent should follow once c
 
 ---
 
+## Actuals (post-SDD-33 reconciliation, 2026-05-15)
+
+The phase order described below was followed as written, with one
+notable mid-cycle activation and one explicit reorder:
+
+- **SDD-24 (supervisor orchestration glue)** was originally documented
+  as "scaffolding-only" but was **activated mid-cycle on 2026-05-12 by
+  SDD-25** when the lifecycle harness needed a real orchestrator to
+  drive. The activation is captured in `docs/sdd/SDD-24.md` and the
+  SDD-PLAYBOOK row for SDD-24 marks the date.
+- **SDD-26 (validators)** and **SDD-27 (watchdog)** landed in reverse
+  numerical order vs the plan (SDD-27 merged before SDD-26 — see
+  commits `3af8337` then `ee4a2b9`). The plan's dependency arrows do
+  not require SDD-26 before SDD-27; the reorder was a scheduling
+  choice, not a contract change.
+- **SDD-25 (lifecycle harness)** is incremental rather than atomic:
+  chunk 1 landed scenario 14 only; chunk 2 added scenarios 11a/11b/12
+  (sentinels 12-14) via the real-server harness wiring; sentinels
+  1-11, 15, and 17 remain `scenarioPendingHarness` and fail loudly per
+  FR-001 until subsequent chunks complete the wiring. SDD-PLAYBOOK
+  row tracks the current chunk count.
+- **SDD-31 (CI gates)** is code-complete but the workflow runs are
+  awaiting GitHub Actions enablement on PR #38; the gates are green
+  when invoked locally via `magex`.
+- **SDD-33 (this chunk)** runs second-to-last in Phase 8 by design
+  (after SDD-31, before SDD-32). The 32+ historical chunk directories
+  under `specs/` were migrated to `specs-archive/` during this chunk
+  via `git mv` per FR-012; only `specs/033-final-overhaul/` remains
+  in-place and will be migrated by SDD-32.
+- **SDD-32 (release tag)** is still pending — DAEMONS.md and parts of
+  the README were delivered early as needed, but the v0.1.0 tag is
+  reserved for SDD-32 after SDD-33 merges per the locked Phase 8
+  ordering.
+
+All other chunks (SDD-01 through SDD-23, plus SDD-28 through SDD-30)
+landed in planned order without deviation. The per-phase narrative
+below remains accurate for the as-planned design intent; the bullets
+above are the only observed deviations between plan and actual.
+
+---
+
 ## SDD chunk catalog
 
 The phase-by-phase narrative below is paired with a concrete **32-chunk
