@@ -61,3 +61,5 @@ node_modules/
 # Hush
 /hush
 coverage_integration.txt
+cmd/hush/hush
+.mage-cache/builds/418d8a31dad56084.json
