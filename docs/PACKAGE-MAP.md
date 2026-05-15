@@ -2551,3 +2551,61 @@ This file is sufficient when an implementation agent can answer all of these wit
 - where does vault reload and zeroization live?
 
 If any of those answers is fuzzy, Phase 0 is still incomplete.
+
+---
+
+## `.github/workflows/` — Exported API — locked at SDD-31
+
+The three workflows below own AC-9 (release gates). Their step lists,
+required check names, and matrix shape are fixed by SDD-31 contracts —
+do not rename a job without coordinating a branch-protection update.
+
+- **`.github/workflows/ci.yml`** — per-PR matrix gates (FR-004…FR-019).
+  Runs on `pull_request → main`, `push → main`, and `workflow_dispatch`
+  across macos-arm64 + linux-amd64 on the Go toolchain pinned in
+  `go.mod`. Eleven gates per leg: no-vendor (FR-017), no-CGO (FR-018),
+  format-check (FR-004), lint (FR-005), pre-commit (FR-007), test:race
+  with coverprofile (FR-006), govulncheck filtered through
+  `.govulncheck-allow.yml` (FR-008), gitleaks (FR-009), 30 s smoke
+  across the six canonical fuzz targets (FR-010), coverage artefact
+  upload (FR-011, linux leg). Two downstream jobs: `coverage-threshold`
+  (linux-only — runs `.github/scripts/coverage-threshold/...` against
+  the artefact, FR-012/013/014/015/016) and `coverage-upload`
+  (codecov/codecov-action@v4 with `fail_ci_if_error: true`, FR-011).
+  Required branch-protection checks: `ci / gates (macos-arm64)`,
+  `ci / gates (linux-amd64)`, `ci / coverage-threshold`,
+  `ci / coverage-upload`.
+- **`.github/workflows/fuzz-cron.yml`** — nightly deep-fuzz cron
+  (FR-020/021/022). Schedule `0 7 * * *` UTC plus `workflow_dispatch`
+  with `seconds_per_target` input (default `300`). Linux-amd64
+  matrix-by-target (six legs in parallel — wall-clock ~ matrix-budget
+  not 6 × budget) across the same six canonical targets ci.yml smokes
+  (FR-029 lockstep — never edit one list without the other). Failing
+  legs preserve `testdata/fuzz/<Target>/` as a 30-day `corpus-<Target>`
+  artefact for local repro.
+- **`.github/workflows/release.yml`** — tag-driven GoReleaser + cosign
+  keyless via Sigstore Fulcio OIDC (FR-023…FR-027). Triggers on
+  `push.tags: ['v*']` + `workflow_dispatch`. Permissions include the
+  load-bearing `id-token: write` so cosign can mint a Fulcio cert
+  whose Subject Alternative Name binds to the release tag ref. Inherits
+  `CGO_ENABLED=0` at the job env and via `.goreleaser.yml`'s top-level
+  env (FR-023 belt-and-braces). Produces four binaries
+  (darwin/linux × amd64/arm64) plus a SHA-256 checksums manifest plus
+  the manifest's `.sig` + `.pem` (manifest-only signing per FR-025 —
+  never per-binary).
+
+Supporting Go tooling under `.github/scripts/`:
+
+- **`.github/scripts/coverage-threshold/`** — the FR-016 byte-equality
+  enforcer. `main.go` (≤ 40 lines: flag parse + exit codes 0/1/2/3),
+  `compute.go` (pure-fn parser + threshold checker, stdlib-only,
+  sentinel errors `ErrMalformedCoverOut` / `ErrCoverageBelowThreshold`
+  / `ErrConstitutionMismatch`), `compute_test.go` (table-driven; one
+  case asserts byte-equality with the security-critical fenced block in
+  `.specify/memory/constitution.md`). Invoked by ci.yml's
+  `coverage-threshold` job.
+- **`.github/scripts/govulncheck-filter/`** — FR-008 waiver authority.
+  Reads `.govulncheck-allow.yml` (single source of truth — PR
+  descriptions are non-authoritative), filters out findings whose OSV
+  ID has an unexpired waiver, exits non-zero on any remainder. Invoked
+  by ci.yml's `govulncheck` step.

@@ -95,7 +95,7 @@
 
 | ID | Title | Files | Status | AC |
 |----|-------|-------|--------|-----|
-| SDD-31 | Release gates (coverage + 6 fuzz + magex + go-pre-commit + govulncheck + gitleaks + CGO=0 + no /vendor) | `.github/workflows/*` | pending | AC-9 |
+| SDD-31 | Release gates (coverage + 6 fuzz + magex + go-pre-commit + govulncheck + gitleaks + CGO=0 + no /vendor) | `.github/workflows/*` | done | AC-9 |
 | SDD-33 | Final repo + docs overhaul (drift reconciliation, dead-code sweep, README rewrite) | repo-wide | pending | AC-1 (+ tightens every other AC) |
 | SDD-32 | OSS-grade README + DAEMONS.md + repo-level OSS files + docs polish + GoReleaser + v0.1.0 tag | `README.md` + repo root + `docs/*` + `.goreleaser.yml` | partial (DAEMONS.md done; README + supporting files done; tag pending SDD-31 + SDD-33) | AC-1 |
 

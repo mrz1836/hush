@@ -1,0 +1,13 @@
+# Govulncheck waiver file (FR-008 single source of truth — PR descriptions are non-authoritative).
+#
+# Schema:
+#   version: 1
+#   vulns:
+#     - id: GO-YYYY-NNNN          # OSV identifier from govulncheck output
+#       justification: "free-form reason a maintainer accepted this finding"
+#       expires: "YYYY-MM-DD"     # waiver auto-expires; CI re-fails after this date
+#
+# An empty `vulns` list means no waivers — every finding from `govulncheck -format=json ./...`
+# blocks merge. To waive, add an entry with a future `expires` date and a written justification.
+version: 1
+vulns: []

@@ -1,0 +1,65 @@
+# Nightly deep-fuzz cron (SDD-31 FR-020 / FR-021 / FR-022).
+#
+# Each of the six canonical fuzz targets runs in its own matrix leg on
+# linux-amd64 for `seconds_per_target` seconds (default 300 s). Crashing
+# inputs are preserved as 30-day artefacts so a maintainer can
+# reproduce them locally with `go test -run <Target>/<seed>`.
+#
+# To extend per-target budget for a one-off deep search, dispatch with
+# a larger `seconds_per_target` input — DO NOT shorten the matrix to
+# fit a time budget (FR-021 anti-contract).
+name: fuzz-cron
+
+on:
+  schedule:
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+    inputs:
+      seconds_per_target:
+        description: "Per-target fuzz budget in seconds (default 300)"
+        required: false
+        default: "300"
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: fuzz-cron
+  cancel-in-progress: false
+
+jobs:
+  fuzz:
+    name: fuzz-${{ matrix.fuzz_target.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        fuzz_target:
+          - {name: FuzzVaultDecode, pkg: ./internal/vault}
+          - {name: FuzzJWTValidate, pkg: ./internal/token}
+          - {name: FuzzECIESDecrypt, pkg: ./internal/transport/ecies}
+          - {name: FuzzVerifyRequest, pkg: ./internal/transport/sign}
+          - {name: FuzzSuperviseTOML, pkg: ./internal/supervise/config}
+          - {name: FuzzStatusJSON_Encode, pkg: ./internal/supervise}
+    runs-on: ubuntu-24.04
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: fuzz
+        shell: bash
+        run: |
+          BUDGET="${{ github.event.inputs.seconds_per_target || '300' }}s"
+          go test -run=^$ -fuzz=^${{ matrix.fuzz_target.name }}$ -fuzztime="$BUDGET" ${{ matrix.fuzz_target.pkg }}
+      - name: preserve crash corpus
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: corpus-${{ matrix.fuzz_target.name }}
+          path: ${{ matrix.fuzz_target.pkg }}/testdata/fuzz/${{ matrix.fuzz_target.name }}/
+          retention-days: 30
+          if-no-files-found: warn
