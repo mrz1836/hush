@@ -201,7 +201,7 @@ artifacts off disk.
 
 | ID | Title | Files | Blocked by | Chunk file |
 |----|-------|-------|------------|------------|
-| SDD-31 | Release gates (coverage + 6 fuzz + magex + go-pre-commit + govulncheck + gitleaks + CGO=0 + no /vendor) | `.github/workflows/*` | SDD-25 + every prior chunk | [docs/sdd/SDD-31.md](sdd/SDD-31.md) |
+| ✅ SDD-31 | Release gates (coverage + 6 fuzz + magex + go-pre-commit + govulncheck + gitleaks + CGO=0 + no /vendor) | `.github/workflows/*` | SDD-25 + every prior chunk | [docs/sdd/SDD-31.md](sdd/SDD-31.md) |
 | SDD-33 | Final repo + docs overhaul (drift reconciliation, dead-code sweep, README rewrite) | repo-wide | SDD-25, SDD-31 | [docs/sdd/SDD-33.md](sdd/SDD-33.md) |
 | SDD-32 | Open-source release: README + DAEMONS + repo-level OSS files + docs polish + GoReleaser + v0.1.0 tag | `README.md` + repo root + `docs/*` + `.goreleaser.yml` | SDD-31, SDD-33 | [docs/sdd/SDD-32.md](sdd/SDD-32.md) |
 
