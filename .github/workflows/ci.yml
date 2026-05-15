@@ -1,0 +1,168 @@
+# Per-PR release gates (SDD-31, AC-9).
+#
+# Wires every gate from Constitution VIII / XI into a matrix that runs
+# on both supported OS legs (macOS-arm64 + linux-amd64) on the Go
+# toolchain pinned by go.mod (1.26.1).
+#
+# Required branch-protection check names:
+#   - ci / gates (macos-arm64)
+#   - ci / gates (linux-amd64)
+#   - ci / coverage-threshold
+#   - ci / coverage-upload
+name: ci
+
+on:
+  pull_request:
+    branches: [master, main]
+  push:
+    branches: [master, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+  checks: write
+  id-token: write
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    name: gates (${{ matrix.os_label }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os_label: macos-arm64
+            runs-on: macos-14
+            goos: darwin
+            goarch: arm64
+          - os_label: linux-amd64
+            runs-on: ubuntu-24.04
+            goos: linux
+            goarch: amd64
+    runs-on: ${{ matrix.runs-on }}
+    env:
+      CGO_ENABLED: "0"
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: install magex
+        run: go install github.com/mrz1836/magex/cmd/magex@latest
+      - name: install go-pre-commit
+        run: go install github.com/mrz1836/go-pre-commit/cmd/go-pre-commit@latest
+      - name: install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      # ── Gate: no-vendor (FR-017) ─────────────────────────────
+      - name: no-vendor
+        shell: bash
+        run: |
+          if [ -d vendor ]; then
+            echo "::error::/vendor directory forbidden (Principle XI)"
+            exit 1
+          fi
+
+      # ── Gate: no-cgo (FR-018) ─────────────────────────────────
+      - name: no-cgo
+        shell: bash
+        run: |
+          if grep -rn 'import "C"' --include='*.go' --exclude='*_test.go' .; then
+            echo "::error::CGO import forbidden in non-test files (Principle XI)"
+            exit 1
+          fi
+
+      # ── Gate: format-check (FR-004) ───────────────────────────
+      - name: format-check
+        run: magex format:fix --check
+
+      # ── Gate: lint (FR-005) ───────────────────────────────────
+      - name: lint
+        run: magex lint
+
+      # ── Gate: pre-commit (FR-007) ─────────────────────────────
+      - name: pre-commit
+        run: go-pre-commit run --all
+
+      # ── Gate: test-race (FR-006) — produces cover.out ─────────
+      - name: test-race
+        run: magex test:race -- -coverprofile=cover.out -covermode=atomic ./...
+
+      # ── Gate: govulncheck (FR-008) ────────────────────────────
+      - name: govulncheck
+        shell: bash
+        run: |
+          govulncheck -format=json ./... > vulns.json
+          go run ./.github/scripts/govulncheck-filter \
+            -input vulns.json \
+            -allow .govulncheck-allow.yml
+
+      # ── Gate: gitleaks (FR-009) ───────────────────────────────
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITLEAKS_CONFIG: .gitleaks.toml
+
+      # ── Gate: fuzz-smoke (FR-010) — six targets × 30 s ────────
+      - name: fuzz-smoke
+        shell: bash
+        run: |
+          set -e
+          go test -run=^$ -fuzz=^FuzzVaultDecode$       -fuzztime=30s ./internal/vault
+          go test -run=^$ -fuzz=^FuzzJWTValidate$       -fuzztime=30s ./internal/token
+          go test -run=^$ -fuzz=^FuzzECIESDecrypt$      -fuzztime=30s ./internal/transport/ecies
+          go test -run=^$ -fuzz=^FuzzVerifyRequest$     -fuzztime=30s ./internal/transport/sign
+          go test -run=^$ -fuzz=^FuzzSuperviseTOML$     -fuzztime=30s ./internal/supervise/config
+          go test -run=^$ -fuzz=^FuzzStatusJSON_Encode$ -fuzztime=30s ./internal/supervise
+
+      # ── Upload cover.out for downstream jobs (linux leg only is canonical) ──
+      - if: matrix.os_label == 'linux-amd64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: cover.out
+          retention-days: 7
+
+  coverage-threshold:
+    name: coverage-threshold
+    needs: gates
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage
+      - name: self-test
+        run: go test ./.github/scripts/coverage-threshold/...
+      - name: threshold
+        run: |
+          go run ./.github/scripts/coverage-threshold \
+            -cover cover.out \
+            -min-project 90 \
+            -constitution .specify/memory/constitution.md
+
+  coverage-upload:
+    name: coverage-upload
+    needs: gates
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage
+      - uses: codecov/codecov-action@v4
+        with:
+          files: ./cover.out
+          fail_ci_if_error: true

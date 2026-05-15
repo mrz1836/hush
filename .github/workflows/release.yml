@@ -1,0 +1,65 @@
+# Tagged release workflow (SDD-31 FR-023…FR-027).
+#
+# Tag push (v*) → GoReleaser builds darwin/linux × amd64/arm64 with
+# CGO_ENABLED=0 → cosign-keyless signs the SHA-256 checksums manifest
+# via Sigstore Fulcio OIDC → GitHub Release publishes the four
+# archives + the signed manifest + Fulcio certificate.
+#
+# Consumer verification:
+#   cosign verify-blob \
+#     --certificate hush_<ver>_checksums.txt.pem \
+#     --signature   hush_<ver>_checksums.txt.sig \
+#     --certificate-identity-regexp '^https://github.com/<org>/hush/\.github/workflows/release\.yml@refs/tags/v.*$' \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+#     hush_<ver>_checksums.txt
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (must already exist)"
+        required: true
+
+permissions:
+  contents: write
+  id-token: write
+  packages: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: release
+    runs-on: ubuntu-24.04
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v2.4.0'
+
+      - name: install magex
+        run: go install github.com/mrz1836/magex/cmd/magex@latest
+
+      - name: GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

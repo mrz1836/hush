@@ -4,6 +4,12 @@
 # ---------------------------
 version: 2
 
+# Top-level env (FR-023 belt-and-braces): every builds/archives/signs
+# block inherits CGO_ENABLED=0 so cosign and archive packagers also
+# obey the constitutional no-CGO rule (Principle XI).
+env:
+  - CGO_ENABLED=0
+
 before:
   hooks:
     - |
@@ -49,6 +55,7 @@ builds:
       - CGO_ENABLED=0
     goos:
       - darwin
+      - linux
     goarch:
       - amd64
       - arm64
@@ -75,6 +82,24 @@ archives:
 checksum:
   name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
   algorithm: sha256
+
+# ---------------------------
+# Signatures (FR-025 — cosign keyless via Sigstore Fulcio OIDC)
+# ---------------------------
+# Manifest-only signing: cosign signs the SHA-256 checksums file, never
+# the individual binaries (FR-025 spec lock). Consumers verify with
+# `cosign verify-blob` then `sha256sum -c` against the verified manifest.
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sig"
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--yes"
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+      - "${artifact}"
+    artifacts: checksum
 
 # ---------------------------
 # Github Release

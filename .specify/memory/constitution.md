@@ -1,35 +1,21 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version Change: 1.0.0 → 1.1.0 (MINOR amendment)
+Version Change: 1.1.0 → 1.1.1 (PATCH amendment — SDD-31 FR-016)
 Modified Principles:
-  - VIII (Testing Discipline) — expanded with AC→test mapping, mandatory fuzz
-    target list, and revised coverage bar (≥80% overall, 100% security-critical)
-    to align with the gate enforced by codecov.yml
-Added Principles:
-  - IX. Idiomatic Go Discipline
-  - X. Observability & Redaction
-  - XI. Native-First, Minimal Dependencies, Ephemeral Vault
+  - VIII (Testing Discipline) — codifies the existing security-critical
+    package set as a machine-readable fenced block so the
+    `.github/scripts/coverage-threshold/` tool can byte-equality-assert
+    against it (FR-016). No policy change; clarification only.
+Added Principles: N/A (PATCH)
 Added Sections: N/A
 Removed Sections: N/A
 Templates Requiring Updates:
-  - ✅ docs/SPEC.md (AC-10 scenario count corrected: 11 → 15, aligned with
-    docs/LIFECYCLE-SCENARIOS.md)
-  - ✅ docs/MVP.md (aligned, no change required)
-  - ✅ docs/SECURITY.md (aligned, no change required)
-  - ✅ docs/ARCHITECTURE.md (aligned, no change required)
-  - ✅ docs/API.md (aligned, no change required)
-  - ✅ docs/OPERATIONS.md (aligned, no change required)
-  - ✅ docs/CONFIG-SCHEMA.md (aligned, no change required)
-  - ✅ docs/PACKAGE-MAP.md (aligned, no change required)
-  - ✅ docs/LIFECYCLE-SCENARIOS.md (15 scenarios — source of truth)
-  - ✅ docs/IMPLEMENTATION-PLAN.md (aligned, no change required)
-  - ✅ docs/TESTING-STRATEGY.md (aligned with new AC→test mapping)
-  - ✅ docs/SDD-GUIDE.md (aligned, no change required)
-  - ✅ .specify/templates/constitution-template.md (structure unchanged)
-Follow-up TODOs:
-  - Instantiate .specify/templates/tasks-template.md → tasks.md when
-    implementation execution starts
+  - ✅ docs/SPEC.md (no change — AC-9 owner is now SDD-31 workflow files)
+  - ✅ docs/AC-MATRIX.md (AC-9 row updated by SDD-31)
+  - ✅ docs/PACKAGE-MAP.md (.github/workflows/ entry added by SDD-31)
+  - ✅ docs/TESTING-STRATEGY.md (aligned, no change required)
+Follow-up TODOs: N/A
 -->
 
 # hush Constitution
@@ -260,6 +246,20 @@ explicit errors, no partial secret exposure in error messages.
 **Authoritative references:** `.github/tech-conventions/testing-standards.md`,
 `docs/TESTING-STRATEGY.md`.
 
+**Security-critical packages** (FR-016 byte-equality anchor — the
+`.github/scripts/coverage-threshold/` tool reads the block below verbatim
+and fails CI on divergence):
+
+<!-- security-critical-packages: BEGIN (FR-016 anchor — DO NOT EDIT without amending coverage-threshold/compute.go) -->
+internal/keys
+internal/vault
+internal/vault/securebytes
+internal/token
+internal/transport/sign
+internal/transport/ecies
+internal/audit
+<!-- security-critical-packages: END -->
+
 **Rationale:** Bugs in a secrets broker leak secrets. Testing is not optional.
 Coverage gates are aligned with `codecov.yml` so the policy and the tooling
 agree — a green CI must mean the constitutional bar was met, not a softer one.
@@ -487,4 +487,4 @@ after:
 - `go-pre-commit` zero gitleaks findings
 - README, ARCHITECTURE, SECURITY docs polished
 
-**Version:** 1.1.0 | **Ratified:** 2026-04-26 | **Last Amended:** 2026-04-26
+**Version:** 1.1.1 | **Ratified:** 2026-04-26 | **Last Amended:** 2026-05-14
