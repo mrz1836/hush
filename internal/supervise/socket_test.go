@@ -442,6 +442,10 @@ func TestSocket_ParentLooseRefuses(t *testing.T) {
 	root := shortTempDir(t)
 	parent := filepath.Join(root, "loose")
 	require.NoError(t, os.MkdirAll(parent, 0o755))
+	// Re-chmod explicitly because umask (e.g. 0o077 on hardened macOS
+	// hosts) silently masks MkdirAll's perm bits down to 0o700, which is
+	// exactly the tight mode this test is trying to NOT use.
+	require.NoError(t, os.Chmod(parent, 0o755))
 	path := filepath.Join(parent, "s.sock")
 
 	srv := NewStatusServer(path, nil, silentLogger())
