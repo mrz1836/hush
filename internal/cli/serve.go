@@ -402,7 +402,7 @@ func expandTilde(p string) (string, error) {
 
 // errBotTokenMissing is returned by loadBotToken when the keychain
 // helper reports no item with the configured name.
-var errBotTokenMissing = errors.New("bot token missing in OS keychain")
+var errBotTokenMissing = errors.New("bot token unavailable from OS keychain; approve Keychain access or set HUSH_DISCORD_BOT_TOKEN")
 
 // errBotTokenSubprocess is returned by loadBotToken on any other
 // helper failure (helper not installed, helper errored, etc.).
