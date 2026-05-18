@@ -66,15 +66,10 @@ func TestKeychainDarwin_ConstructedSecurityCommand(t *testing.T) {
 	k := newDarwinForTest()
 
 	var captured []string
-	var stdinBytes []byte
 	k.runFn = func(cmd *exec.Cmd) error {
 		captured = append([]string(nil), cmd.Args...)
 		require.Equal(t, "/usr/bin/security", cmd.Path)
-		if cmd.Stdin != nil {
-			b, err := io.ReadAll(cmd.Stdin)
-			require.NoError(t, err)
-			stdinBytes = b
-		}
+		require.Nil(t, cmd.Stdin, "security -w requires an argv value; stdin would trigger Apple's raw prompt")
 		return nil
 	}
 
@@ -90,10 +85,9 @@ func TestKeychainDarwin_ConstructedSecurityCommand(t *testing.T) {
 		"-s", "svc",
 		"-a", "acct",
 		"-T", "/abs/hush",
-		"-w",
+		"-w", "payload-bytes",
 	}, captured)
 
-	require.Equal(t, []byte("payload-bytes"), stdinBytes)
 	require.NotContains(t, captured, "-A", "no allow-all flag")
 }
 
@@ -183,18 +177,14 @@ func TestKeychainDarwin_DeleteSucceedsAndIsNotIdempotent(t *testing.T) {
 	require.True(t, errors.Is(err, ErrKeychainItemNotFound))
 }
 
-func TestKeychainDarwin_StoreSecretViaStdinNotArgv(t *testing.T) {
+func TestKeychainDarwin_StoreUsesPasswordArgToAvoidRawPrompt(t *testing.T) {
 	t.Parallel()
 	k := newDarwinForTest()
-	const sentinel = "PROC_LISTING_LEAK"
+	const sentinel = "TOKEN_FOR_SECURITY_W_FLAG"
 	var args []string
-	var stdin string
 	k.runFn = func(cmd *exec.Cmd) error {
 		args = append([]string(nil), cmd.Args...)
-		if cmd.Stdin != nil {
-			b, _ := io.ReadAll(cmd.Stdin)
-			stdin = string(b)
-		}
+		require.Nil(t, cmd.Stdin, "stdin is ignored by security add-generic-password -w and triggers raw prompts")
 		return nil
 	}
 
@@ -203,10 +193,8 @@ func TestKeychainDarwin_StoreSecretViaStdinNotArgv(t *testing.T) {
 	defer val.Destroy()
 
 	require.NoError(t, k.Store(context.Background(), "svc", "acct", val, "/abs/hush"))
-	for _, a := range args {
-		require.NotContains(t, a, sentinel, "secret leaked into argv")
-	}
-	require.Equal(t, sentinel, stdin)
+	require.Contains(t, args, "-w")
+	require.Contains(t, args, sentinel)
 }
 
 func TestPerBinaryACLSupported_Darwin(t *testing.T) {

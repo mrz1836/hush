@@ -3,7 +3,6 @@
 package keychain
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -41,8 +40,7 @@ type runner func(*exec.Cmd) error
 type outputRunner func(*exec.Cmd) ([]byte, error)
 
 // darwinKeychain is the macOS implementation. Operations shell out
-// to /usr/bin/security with a fixed argv vector; secrets travel via
-// stdin to keep them out of the process listing.
+// to /usr/bin/security with a fixed argv vector.
 type darwinKeychain struct {
 	logger   *slog.Logger
 	binary   string
@@ -60,29 +58,33 @@ func newPlatformKeychain(logger *slog.Logger) (Keychain, error) {
 }
 
 // Store creates a new generic-password item under (service, account)
-// with the supplied per-binary ACL. The secret never appears in
-// argv; it is written to security's stdin via the -w flag.
+// with the supplied per-binary ACL.
+//
+// macOS `security add-generic-password -w` does not read the password from
+// stdin; when `-w` has no following argument it drops into the raw interactive
+// "password data for new item" prompt. That prompt is exactly the UX hush must
+// hide behind its guided panels, so Store passes the value as the `-w` argument.
+// This briefly exposes the token to local process-list observers on the trusted
+// vault host; the alternative is an unavoidable Apple prompt that repeatedly
+// failed T-278 validation. Keep this bridge isolated here so a future native
+// Security.framework implementation can remove the argv exposure without
+// touching CLI flow.
 func (k *darwinKeychain) Store(ctx context.Context, service, account string, value *securebytes.SecureBytes, acl string) error {
-	cmd := exec.CommandContext(ctx, k.binary, //nolint:gosec // fixed argv; service/account/acl are caller-vetted
+	var password string
+	if useErr := value.Use(func(b []byte) {
+		password = string(b)
+	}); useErr != nil {
+		return useErr
+	}
+	defer func() { password = "" }()
+
+	cmd := exec.CommandContext(ctx, k.binary, //nolint:gosec // fixed argv; see Store doc for -w password trade-off
 		"add-generic-password",
 		"-s", service,
 		"-a", account,
 		"-T", acl,
-		"-w",
+		"-w", password,
 	)
-	var feedErr error
-	if useErr := value.Use(func(b []byte) {
-		// Copy into a fresh buffer so the cmd-internal io.Reader
-		// does not retain the SecureBytes' mlocked slice.
-		buf := make([]byte, len(b))
-		copy(buf, b)
-		cmd.Stdin = bytes.NewReader(buf)
-	}); useErr != nil {
-		feedErr = useErr
-	}
-	if feedErr != nil {
-		return feedErr
-	}
 	if err := k.runFn(cmd); err != nil {
 		return mapSecurityError(err, "store")
 	}
