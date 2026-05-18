@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"strings"
 
 	"github.com/mrz1836/hush/internal/vault/securebytes"
 )
@@ -35,8 +36,8 @@ const (
 // stdin without launching the real binary.
 type runner func(*exec.Cmd) error
 
-// outputRunner runs cmd and returns its stdout; tests inject a
-// recorder that returns programmed bytes.
+// outputRunner runs cmd and returns its stdout/stderr as configured by the
+// caller; tests inject a recorder that returns programmed bytes.
 type outputRunner func(*exec.Cmd) ([]byte, error)
 
 // darwinKeychain is the macOS implementation. Operations shell out
@@ -53,7 +54,7 @@ func newPlatformKeychain(logger *slog.Logger) (Keychain, error) {
 		logger:   logger,
 		binary:   securityBin,
 		runFn:    (*exec.Cmd).Run,
-		outputFn: (*exec.Cmd).Output,
+		outputFn: (*exec.Cmd).CombinedOutput,
 	}, nil
 }
 
@@ -85,8 +86,9 @@ func (k *darwinKeychain) Store(ctx context.Context, service, account string, val
 		"-T", acl,
 		"-w", password,
 	)
-	if err := k.runFn(cmd); err != nil {
-		return mapSecurityError(err, "store")
+	out, err := k.outputFn(cmd)
+	if err != nil {
+		return mapSecurityError(err, "store", string(out))
 	}
 	return nil
 }
@@ -101,7 +103,7 @@ func (k *darwinKeychain) Retrieve(ctx context.Context, service, account string) 
 	)
 	out, err := k.outputFn(cmd)
 	if err != nil {
-		return nil, mapSecurityError(err, "retrieve")
+		return nil, mapSecurityError(err, "retrieve", string(out))
 	}
 	out = stripTrailingNewline(out)
 	if len(out) == 0 {
@@ -117,8 +119,9 @@ func (k *darwinKeychain) Delete(ctx context.Context, service, account string) er
 		"-s", service,
 		"-a", account,
 	)
-	if err := k.runFn(cmd); err != nil {
-		return mapSecurityError(err, "delete")
+	out, err := k.outputFn(cmd)
+	if err != nil {
+		return mapSecurityError(err, "delete", string(out))
 	}
 	return nil
 }
@@ -130,17 +133,30 @@ func (k *darwinKeychain) Delete(ctx context.Context, service, account string) er
 // recovery flow re-translates that sentinel into
 // [setup.ErrTokenDenied] when the read targets the bot-token item
 // (Plan AC-5 / Task 3.1).
-func mapSecurityError(err error, op string) error {
+func mapSecurityError(err error, op string, output ...string) error {
+	detail := strings.TrimSpace(strings.Join(output, "\n"))
+	wrap := func(base error) error {
+		if detail == "" {
+			return base
+		}
+		return fmt.Errorf("%w: %s", base, detail)
+	}
+	if strings.Contains(strings.ToLower(detail), "passphrase") || strings.Contains(strings.ToLower(detail), "keychain is locked") {
+		return wrap(ErrKeychainLocked)
+	}
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
 		switch ee.ExitCode() {
 		case exitItemNotFound:
-			return ErrKeychainItemNotFound
+			return wrap(ErrKeychainItemNotFound)
 		case exitDuplicateItem:
-			return ErrKeychainItemExists
+			return wrap(ErrKeychainItemExists)
 		case exitInteractionNotAllowed, exitAuthFailed, exitUserCanceled:
-			return ErrKeychainPermissionDenied
+			return wrap(ErrKeychainPermissionDenied)
 		}
+	}
+	if detail != "" {
+		return fmt.Errorf("hush/keychain: security %s: %w: %s", op, err, detail)
 	}
 	return fmt.Errorf("hush/keychain: security %s: %w", op, err)
 }

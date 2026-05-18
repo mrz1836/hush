@@ -66,11 +66,11 @@ func TestKeychainDarwin_ConstructedSecurityCommand(t *testing.T) {
 	k := newDarwinForTest()
 
 	var captured []string
-	k.runFn = func(cmd *exec.Cmd) error {
+	k.outputFn = func(cmd *exec.Cmd) ([]byte, error) {
 		captured = append([]string(nil), cmd.Args...)
 		require.Equal(t, "/usr/bin/security", cmd.Path)
 		require.Nil(t, cmd.Stdin, "security -w requires an argv value; stdin would trigger Apple's raw prompt")
-		return nil
+		return nil, nil
 	}
 
 	val, err := securebytes.New([]byte("payload-bytes"))
@@ -94,7 +94,7 @@ func TestKeychainDarwin_ConstructedSecurityCommand(t *testing.T) {
 func TestKeychainDarwin_StoreReturnsItemExistsOn45(t *testing.T) {
 	t.Parallel()
 	k := newDarwinForTest()
-	k.runFn = func(*exec.Cmd) error { return fakeExitErr(t, exitDuplicateItem) }
+	k.outputFn = func(*exec.Cmd) ([]byte, error) { return nil, fakeExitErr(t, exitDuplicateItem) }
 
 	val, err := securebytes.New([]byte("bytes"))
 	require.NoError(t, err)
@@ -164,12 +164,12 @@ func TestKeychainDarwin_DeleteSucceedsAndIsNotIdempotent(t *testing.T) {
 	t.Parallel()
 	k := newDarwinForTest()
 	calls := 0
-	k.runFn = func(*exec.Cmd) error {
+	k.outputFn = func(*exec.Cmd) ([]byte, error) {
 		calls++
 		if calls == 1 {
-			return nil
+			return nil, nil
 		}
-		return fakeExitErr(t, exitItemNotFound)
+		return nil, fakeExitErr(t, exitItemNotFound)
 	}
 
 	require.NoError(t, k.Delete(context.Background(), "svc", "acct"))
@@ -182,10 +182,10 @@ func TestKeychainDarwin_StoreUsesPasswordArgToAvoidRawPrompt(t *testing.T) {
 	k := newDarwinForTest()
 	const sentinel = "TOKEN_FOR_SECURITY_W_FLAG"
 	var args []string
-	k.runFn = func(cmd *exec.Cmd) error {
+	k.outputFn = func(cmd *exec.Cmd) ([]byte, error) {
 		args = append([]string(nil), cmd.Args...)
 		require.Nil(t, cmd.Stdin, "stdin is ignored by security add-generic-password -w and triggers raw prompts")
-		return nil
+		return nil, nil
 	}
 
 	val, err := securebytes.New([]byte(sentinel))

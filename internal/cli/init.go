@@ -81,20 +81,21 @@ const keychainDeleteConfirmation = "delete"
 // Locked literal-text strings (contracts/cli-init.md §2.3 / §3.3).
 // Tests assert byte-equal on these messages.
 const (
-	initMsgNoTTY                 = "hush: init: stdin must be an interactive terminal"
-	initMsgPassphraseTooShort    = "hush: init: passphrase must be at least 12 characters"
-	initMsgPassphraseMismatch    = "hush: init: passphrase confirmation does not match"
-	initMsgVaultExistsFmt        = "hush: init: vault already exists at %s"
-	initMsgConfigExistsFmt       = "hush: init: config already exists at %s"
-	initMsgKeychainExistsFmt     = "hush: init: keychain item already exists for service=%s account=%s"
-	initMsgPlatformUnsupported   = "hush: init: platform %s has no per-binary keychain ACL; init refuses to run"
-	initMsgMissingMachineIndex   = "hush: init: missing required flag: --machine-index"
-	initMsgMachineIndexInvalid   = "hush: init: --machine-index must be a non-negative integer"
-	initMsgFieldRequiredFmt      = "hush: init: %s is required"
-	initMsgKeychainStoreFailFmt  = "hush: init: keychain store failed: %v"
-	initMsgExplicitStateKeychain = "hush: init: --state-dir set; storing Discord bot token in macOS Keychain for serve. Vault passphrase is not stored for this learning/smoke path."
-	initMsgWriteFailFmt          = "hush: init: write %s: %v"
-	initMsgServerComplete        = "hush: init: server bootstrap complete"
+	initMsgNoTTY                  = "hush: init: stdin must be an interactive terminal"
+	initMsgPassphraseTooShort     = "hush: init: passphrase must be at least 12 characters"
+	initMsgPassphraseMismatch     = "hush: init: passphrase confirmation does not match"
+	initMsgVaultExistsFmt         = "hush: init: vault already exists at %s"
+	initMsgConfigExistsFmt        = "hush: init: config already exists at %s"
+	initMsgKeychainExistsFmt      = "hush: init: keychain item already exists for service=%s account=%s"
+	initMsgPlatformUnsupported    = "hush: init: platform %s has no per-binary keychain ACL; init refuses to run"
+	initMsgMissingMachineIndex    = "hush: init: missing required flag: --machine-index"
+	initMsgMachineIndexInvalid    = "hush: init: --machine-index must be a non-negative integer"
+	initMsgFieldRequiredFmt       = "hush: init: %s is required"
+	initMsgKeychainStoreFailFmt   = "hush: init: keychain store failed: %v"
+	initMsgKeychainLockedStoreFmt = "hush: init: macOS login Keychain appears locked or refused the write: %v\n  next: run `security unlock-keychain ~/Library/Keychains/login.keychain-db`, then re-run `hush init server`."
+	initMsgExplicitStateKeychain  = "hush: init: --state-dir set; storing Discord bot token in macOS Keychain for serve. Vault passphrase is not stored for this learning/smoke path."
+	initMsgWriteFailFmt           = "hush: init: write %s: %v"
+	initMsgServerComplete         = "hush: init: server bootstrap complete"
 
 	// initMsgKeychainPreExplainFmt is the hush-authored explanation
 	// printed before every Keychain write call. The placeholders are
@@ -835,7 +836,11 @@ func storeBotTokenForDecision(
 	default:
 		emitKeychainPreExplain(stderr, "Discord bot token", keychainItems.discordService, kcAccountServer)
 		if err := deps.keychain.Store(ctx, keychainItems.discordService, kcAccountServer, botToken, binPath); err != nil {
-			_ = stderr.WriteText(initMsgKeychainStoreFailFmt, err)
+			if errors.Is(err, keychain.ErrKeychainLocked) {
+				_ = stderr.WriteText(initMsgKeychainLockedStoreFmt, err)
+			} else {
+				_ = stderr.WriteText(initMsgKeychainStoreFailFmt, err)
+			}
 			return err
 		}
 		return nil

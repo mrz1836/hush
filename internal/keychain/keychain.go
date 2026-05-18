@@ -42,10 +42,14 @@ var (
 	// already exists for (service, account).
 	ErrKeychainItemExists = errors.New("hush/keychain: item already exists")
 
-	// ErrKeychainPermissionDenied is returned by Retrieve when the
-	// OS keychain service denied access (typically because the
-	// caller is not the binary named in the item's ACL).
+	// ErrKeychainPermissionDenied is returned when the OS keychain service
+	// denied access (typically because the caller is not the binary named in
+	// the item's ACL, or the user denied an access prompt).
 	ErrKeychainPermissionDenied = errors.New("hush/keychain: permission denied")
+
+	// ErrKeychainLocked is returned when the login keychain is locked or macOS
+	// reports that the keychain passphrase was not accepted.
+	ErrKeychainLocked = errors.New("hush/keychain: keychain locked")
 
 	// ErrKeychainUnsupportedPlatform is returned by Store on
 	// platforms without per-binary ACL semantics.
