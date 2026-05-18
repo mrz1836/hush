@@ -162,6 +162,28 @@ var (
 	}
 )
 
+// TokenErrorFromKeychain translates a low-level [keychain] sentinel
+// returned by a bot-token Retrieve into the token-specific setup
+// sentinel the guided flow branches on. The mapping is:
+//
+//   - [keychain.ErrKeychainItemNotFound] → [ErrTokenAbsent]
+//   - [keychain.ErrKeychainPermissionDenied] → [ErrTokenDenied]
+//   - anything else → unchanged (callers retain the underlying detail)
+//
+// nil maps to nil so callers can chain it without a guard.
+func TokenErrorFromKeychain(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, keychain.ErrKeychainItemNotFound):
+		return ErrTokenAbsent
+	case errors.Is(err, keychain.ErrKeychainPermissionDenied):
+		return ErrTokenDenied
+	default:
+		return err
+	}
+}
+
 // ClockSyncRemedy returns the exact, copy-pasteable command that
 // resynchronises the system clock on the supplied GOOS. The string
 // is the value used in [ErrClockUnsynchronised]'s remedy hint and

@@ -121,15 +121,35 @@ func TestKeychainDarwin_RetrieveExitCode44IsNotFound(t *testing.T) {
 	require.True(t, errors.Is(err, ErrKeychainItemNotFound))
 }
 
-func TestKeychainDarwin_RetrieveExitCode51IsPermissionDenied(t *testing.T) {
+// TestKeychainDarwin_RetrieveDenialCodes asserts every Darwin exit
+// code the OS returns for "item exists but the read was refused"
+// collapses to [ErrKeychainPermissionDenied]. Plan AC-5 / Task 3.1:
+// init's ACL-aware recovery flow branches on this single sentinel.
+func TestKeychainDarwin_RetrieveDenialCodes(t *testing.T) {
 	t.Parallel()
-	k := newDarwinForTest()
-	k.outputFn = func(*exec.Cmd) ([]byte, error) {
-		return nil, fakeExitErr(t, exitUserCancelled)
-	}
 
-	_, err := k.Retrieve(context.Background(), "svc", "acct")
-	require.True(t, errors.Is(err, ErrKeychainPermissionDenied))
+	cases := []struct {
+		name string
+		exit int
+	}{
+		{"errSecInteractionNotAllowed", exitInteractionNotAllowed},
+		{"errSecAuthFailed", exitAuthFailed},
+		{"errSecUserCanceled", exitUserCanceled},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			k := newDarwinForTest()
+			k.outputFn = func(*exec.Cmd) ([]byte, error) {
+				return nil, fakeExitErr(t, tc.exit)
+			}
+
+			_, err := k.Retrieve(context.Background(), "svc", "acct")
+			require.True(t, errors.Is(err, ErrKeychainPermissionDenied),
+				"exit %d (%s) must map to ErrKeychainPermissionDenied; got %v",
+				tc.exit, tc.name, err)
+		})
+	}
 }
 
 func TestKeychainDarwin_RetrieveParsesStdoutPayload(t *testing.T) {

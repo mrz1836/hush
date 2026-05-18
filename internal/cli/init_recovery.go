@@ -152,6 +152,19 @@ func recoverExistingArtifacts(
 			decisions.byKind[a.Kind] = onExistingReuse
 			continue
 		}
+		// ACL-denied bot-token Keychain item gets the specialised
+		// recovery panel (Plan AC-5 / AC-6 / Task 3.2-3.4). The panel
+		// returns one of the legal decisions (reuse / recreate /
+		// env-token) and handles destructive deletes inline so the
+		// caller's Store call lands on a clean slot.
+		if isKeychainTokenACLDenial(a) {
+			mode, err := resolveKeychainACL(ctx, in, stderr, deps, keychainItems.discordService, kcAccountServer)
+			if err != nil {
+				return decisions, err
+			}
+			decisions.byKind[a.Kind] = mode
+			continue
+		}
 		mode, err := resolveRecoveryMode(in, stderr, deps, a)
 		if err != nil {
 			return decisions, err

@@ -32,15 +32,22 @@ import (
 	"github.com/mrz1836/hush/internal/vault/securebytes"
 )
 
-// onExisting* enumerate the legal values of the `--on-existing` flag.
+// onExisting* enumerate the legal values of the `--on-existing` flag
+// and the per-artifact recovery decisions surfaced by the guided
+// flow. The flag-facing modes are prompt / reuse / repair / archive /
+// fail; the additional modes (recreate, env-token) are emitted only
+// by the ACL-aware Keychain recovery branch (Plan AC-5 / AC-6).
+//
 // "" (unset) defers to per-mode defaults: prompt in interactive,
 // fail in non-interactive.
 const (
-	onExistingPrompt  = "prompt"
-	onExistingReuse   = "reuse"
-	onExistingRepair  = "repair"
-	onExistingArchive = "archive"
-	onExistingFail    = "fail"
+	onExistingPrompt   = "prompt"
+	onExistingReuse    = "reuse"
+	onExistingRepair   = "repair"
+	onExistingArchive  = "archive"
+	onExistingFail     = "fail"
+	onExistingRecreate = "recreate"  // ACL-denied bot token: delete + restore
+	onExistingEnvToken = "env-token" // ACL-denied bot token: skip Keychain, use HUSH_DISCORD_BOT_TOKEN
 )
 
 // onExistingChoiceR/P/A/Q are the single-character return values
@@ -51,6 +58,24 @@ const (
 	recoveryChoiceArchive = 'a'
 	recoveryChoiceQuit    = 'q'
 )
+
+// keychainACLChoice* are the single-character return values for the
+// ACL-aware Keychain recovery panel (Plan AC-5 / AC-6 / Task 3.2-3.4).
+// The panel renders when the existing `hush-discord` Keychain item
+// reads back as denied (see [setup.ErrTokenDenied]); each choice
+// drives a distinct recovery branch.
+const (
+	keychainACLChoiceRepair   = '1' // ACL repair: print `security` commands + re-check
+	keychainACLChoiceRecreate = '2' // delete + recreate (requires typing "delete")
+	keychainACLChoiceEnvToken = '3' // skip Keychain, use HUSH_DISCORD_BOT_TOKEN
+	keychainACLChoiceQuit     = 'q'
+)
+
+// keychainDeleteConfirmation is the literal string the operator must
+// type to confirm the destructive delete-and-recreate branch
+// (Plan AC-5 / Task 3.3). `y` is intentionally insufficient: tests
+// assert this gate refuses anything that is not exact-byte equal.
+const keychainDeleteConfirmation = "delete"
 
 // Locked literal-text strings (contracts/cli-init.md §2.3 / §3.3).
 // Tests assert byte-equal on these messages.
@@ -114,6 +139,65 @@ const (
 	// supplied AND the clock-sync preflight returned warn/fail. Phase 2
 	// just records the override; Phase 4 wires the audit pipeline.
 	initMsgClockSkewOverrideFmt = "hush: init: --allow-clock-skew override active; clock-sync check downgraded for %s"
+
+	// initMsgKeychainACLPanelFmt renders the ACL-denial panel
+	// (Plan AC-5 / AC-6 / Task 3.2). Placeholders are
+	// (service, account, keychainPath). The panel intentionally
+	// embeds shell snippets that are zsh-safe (no `read -p` / `read -s`
+	// — see AC-7).
+	initMsgKeychainACLPanelFmt = "hush: init: macOS Keychain is denying hush access to the existing '%s' item.\n" +
+		"  why:  the OS refused the read (errSecAuthFailed / errSecInteractionNotAllowed / errSecUserCanceled).\n" +
+		"  item: service=%s account=%s keychain=%s\n" +
+		"\n" +
+		"Choose how to proceed:\n" +
+		"  [1] ACL repair — fix the partition-list, then re-check. Run this in another terminal:\n" +
+		"        security set-generic-password-partition-list \\\n" +
+		"          -S apple-tool:,apple: \\\n" +
+		"          -s %s -a %s \\\n" +
+		"          %s\n" +
+		"      Then return here and pick [1] again to re-check the Keychain.\n" +
+		"  [2] Delete + recreate — destructive: removes the existing item and stores a new one.\n" +
+		"      Requires typing '%s' to confirm.\n" +
+		"  [3] Use HUSH_DISCORD_BOT_TOKEN env-var instead (recommended only if Keychain is unavailable).\n" +
+		"      Hush will skip the Keychain write for the bot token; you supply the token at serve time via:\n" +
+		"        export HUSH_DISCORD_BOT_TOKEN='<your-discord-bot-token>'\n" +
+		"      Keep using Keychain when possible — env-token mode loses the per-binary ACL.\n" +
+		"  [q] Quit without changes."
+
+	// initMsgKeychainACLChoicePrompt is the trailing choice label after
+	// the panel renders. Tests assert exact text.
+	initMsgKeychainACLChoicePrompt = "Choose [1/2/3/q]: "
+
+	// initMsgKeychainACLRecheckFmt prints the result of a re-check
+	// attempt after the operator claims the ACL was repaired.
+	initMsgKeychainACLRecheckOK     = "hush: init: Keychain re-check succeeded; reusing the existing '%s' item."
+	initMsgKeychainACLRecheckFailed = "hush: init: Keychain re-check still denied; re-displaying the recovery panel."
+
+	// initMsgKeychainDeleteConfirmPrompt is the literal confirmation
+	// prompt for the destructive delete-and-recreate branch. The
+	// operator must type the locked confirmation string (see
+	// [keychainDeleteConfirmation]) to proceed.
+	initMsgKeychainDeleteConfirmPrompt = "Type 'delete' to confirm destructive removal of the existing Keychain item, or anything else to cancel: "
+
+	// initMsgKeychainDeleteCancelled fires when the operator does not
+	// type the locked confirmation string at the delete prompt.
+	initMsgKeychainDeleteCancelled = "hush: init: delete-and-recreate cancelled (confirmation string not matched)."
+
+	// initMsgKeychainDeletedFmt records a successful destructive
+	// removal of an existing Keychain item. Audit-grade: the
+	// service+account pair is captured so the operator can correlate
+	// against external Keychain Access UI activity. Plan AC-5 / Task 3.3.
+	initMsgKeychainDeletedFmt = "hush: init: deleted existing Keychain item service=%s account=%s (recreating next)."
+
+	// initMsgKeychainEnvTokenFallbackFmt explains the env-token
+	// fallback decision. Plan AC-6 / Task 3.4.
+	initMsgKeychainEnvTokenFallbackFmt = "hush: init: env-token fallback selected; skipping Keychain write for the bot token.\n" +
+		"  next: export HUSH_DISCORD_BOT_TOKEN='<your-discord-bot-token>' before running 'hush serve'.\n" +
+		"  note: env-token mode is supported but loses the per-binary ACL — use Keychain when possible."
+
+	// initMsgKeychainACLInvalidChoiceFmt fires when the operator's
+	// choice rune is not one of [1/2/3/q] on the ACL panel.
+	initMsgKeychainACLInvalidChoiceFmt = "hush: init: invalid choice %q; pick one of [1/2/3/q]."
 )
 
 // Locked prompt labels (contracts/cli-init.md §2.2 / §3.2).
@@ -699,18 +783,47 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 		_ = stderr.WriteText(initMsgKeychainStoreFailFmt, err)
 		return err
 	}
-	if reuseArtifact(decisions, setup.ArtifactKeychainToken) {
-		// Operator chose reuse/repair for the existing Discord
-		// bot-token item — keep the OS Keychain item untouched.
-	} else {
+	if err := storeBotTokenForDecision(ctx, deps, stderr, keychainItems, botToken, binPath, decisions); err != nil {
+		return err
+	}
+	_ = stderr.WriteText(initMsgServerComplete)
+	return nil
+}
+
+// storeBotTokenForDecision honors the per-artifact recovery decision
+// for the Discord bot-token Keychain slot (Plan AC-5 / AC-6 /
+// Task 3.2-3.4). The decision modes drive distinct branches:
+//
+//   - [onExistingReuse] / [onExistingRepair] — leave the existing
+//     Keychain item untouched; the operator either had a working item
+//     already (reuse) or repaired the ACL (repair).
+//   - [onExistingEnvToken] — env-token fallback: skip the Keychain
+//     write entirely and let `hush serve` read HUSH_DISCORD_BOT_TOKEN.
+//   - default (including [onExistingRecreate] after an inline delete)
+//     — emit the hush-authored pre-explanation and Store the supplied
+//     token under the configured ACL.
+func storeBotTokenForDecision(
+	ctx context.Context,
+	deps *initDeps,
+	stderr *Stream,
+	keychainItems serverKeychainItemNames,
+	botToken *securebytes.SecureBytes,
+	binPath string,
+	decisions recoveryDecisions,
+) error {
+	switch decisions.modeFor(setup.ArtifactKeychainToken) {
+	case onExistingReuse, onExistingRepair:
+		return nil
+	case onExistingEnvToken:
+		return nil
+	default:
 		emitKeychainPreExplain(stderr, "Discord bot token", keychainItems.discordService, kcAccountServer)
 		if err := deps.keychain.Store(ctx, keychainItems.discordService, kcAccountServer, botToken, binPath); err != nil {
 			_ = stderr.WriteText(initMsgKeychainStoreFailFmt, err)
 			return err
 		}
+		return nil
 	}
-	_ = stderr.WriteText(initMsgServerComplete)
-	return nil
 }
 
 // emitKeychainPreExplain writes the hush-authored multi-line

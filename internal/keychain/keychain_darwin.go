@@ -17,9 +17,18 @@ const (
 	securityBin = "/usr/bin/security"
 
 	// Apple SecKeychain error codes; see SecBase.h.
-	exitItemNotFound  = 44
-	exitDuplicateItem = 45
-	exitUserCancelled = 51
+	//
+	// /usr/bin/security returns the low byte of the OSStatus value as
+	// its process exit code. Each constant below names the symbolic
+	// OSStatus and pins the truncated exit code we observe in tests
+	// and at runtime. Renaming or reordering changes ABI for the
+	// guided flow; see [mapSecurityError] for the mapping into the
+	// public keychain sentinels.
+	exitInteractionNotAllowed = 36  // errSecInteractionNotAllowed (-25308)
+	exitItemNotFound          = 44  // errSecItemNotFound (-25300)
+	exitDuplicateItem         = 45  // errSecDuplicateItem (-25299)
+	exitAuthFailed            = 51  // errSecAuthFailed (-25293)
+	exitUserCanceled          = 128 // errSecUserCanceled (-128)
 )
 
 // runner is the test seam for executing /usr/bin/security. Production
@@ -113,7 +122,12 @@ func (k *darwinKeychain) Delete(ctx context.Context, service, account string) er
 }
 
 // mapSecurityError maps the exit code from /usr/bin/security to a
-// keychain sentinel.
+// keychain sentinel. The three denial codes
+// ([exitInteractionNotAllowed], [exitAuthFailed], [exitUserCanceled])
+// collapse to [ErrKeychainPermissionDenied]; init's ACL-aware
+// recovery flow re-translates that sentinel into
+// [setup.ErrTokenDenied] when the read targets the bot-token item
+// (Plan AC-5 / Task 3.1).
 func mapSecurityError(err error, op string) error {
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
@@ -122,7 +136,7 @@ func mapSecurityError(err error, op string) error {
 			return ErrKeychainItemNotFound
 		case exitDuplicateItem:
 			return ErrKeychainItemExists
-		case exitUserCancelled:
+		case exitInteractionNotAllowed, exitAuthFailed, exitUserCanceled:
 			return ErrKeychainPermissionDenied
 		}
 	}

@@ -149,6 +149,45 @@ func TestSetupErrors_KeychainReExportMatchesPackage(t *testing.T) {
 	require.ErrorIs(t, wrapped, keychain.ErrKeychainPermissionDenied)
 }
 
+// TestTokenErrorFromKeychain_Translates asserts the bot-token
+// specific translation surface (Plan AC-5 / Task 3.1): low-level
+// Keychain sentinels map 1:1 onto the token-shaped setup sentinels
+// the guided flow renders. Unknown errors pass through unchanged so
+// callers retain the underlying detail line.
+func TestTokenErrorFromKeychain_Translates(t *testing.T) {
+	t.Parallel()
+
+	other := fmt.Errorf("wrapped: %w", errors.New("some other failure"))
+
+	cases := []struct {
+		name string
+		in   error
+		want error
+	}{
+		{"nil passthrough", nil, nil},
+		{"item-not-found maps to absent", keychain.ErrKeychainItemNotFound, setup.ErrTokenAbsent},
+		{"perm-denied maps to denied", keychain.ErrKeychainPermissionDenied, setup.ErrTokenDenied},
+		{
+			"wrapped item-not-found maps to absent",
+			fmt.Errorf("hush/keychain: probe: %w", keychain.ErrKeychainItemNotFound),
+			setup.ErrTokenAbsent,
+		},
+		{
+			"wrapped perm-denied maps to denied",
+			fmt.Errorf("hush/keychain: probe: %w", keychain.ErrKeychainPermissionDenied),
+			setup.ErrTokenDenied,
+		},
+		{"unrelated error passes through", other, other},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := setup.TokenErrorFromKeychain(tc.in)
+			require.Equal(t, tc.want, got)
+		})
+	}
+}
+
 // TestClockSyncRemedy_PerPlatform asserts the platform-aware
 // helper returns the exact command string each supported GOOS is
 // documented to receive. Locked text — AC-8's "exact remediation

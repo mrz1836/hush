@@ -437,10 +437,14 @@ var botTokenItemRe = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,128}$`)
 // Darwin: `security find-generic-password -s <item> -w`. On Linux:
 // `secret-tool lookup service hush attribute <item>`. Returns the
 // token wrapped in *securebytes.SecureBytes.
+//
+// Env-token mode: HUSH_DISCORD_BOT_TOKEN is the supported fallback
+// shown by `hush init server` after the Keychain ACL-recovery panel
+// (Plan AC-6). When the env var is set, serve uses it without
+// touching Keychain — this is the explicit operator opt-in for hosts
+// where Keychain ACLs are unrepairable. Keychain remains the default
+// when the env var is unset.
 func loadBotToken(ctx context.Context, item string) (*securebytes.SecureBytes, error) {
-	// Smoke bootstrap fallback for non-interactive hosts where macOS
-	// Keychain writes require a SecurityAgent prompt. Production
-	// deploys should keep using the configured Keychain item below.
 	if envToken, ok := os.LookupEnv("HUSH_DISCORD_BOT_TOKEN"); ok && envToken != "" {
 		return securebytes.New([]byte(envToken))
 	}
