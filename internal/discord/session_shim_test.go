@@ -43,11 +43,12 @@ type sessionShim struct {
 	mu sync.Mutex
 
 	// Recorded outbound calls.
-	openCalls   int
-	closeCalls  int
-	dms         []dmRecord
-	created     []string
-	allMessages []sentMessage
+	openCalls            int
+	closeCalls           int
+	dms                  []dmRecord
+	created              []string
+	allMessages          []sentMessage
+	interactionResponses []interactionResponseRecord
 
 	// Programmable behaviour.
 	openErr   error
@@ -72,6 +73,11 @@ type dmRecord struct {
 type sentMessage struct {
 	ChannelID string
 	Send      *discordgo.MessageSend
+}
+
+type interactionResponseRecord struct {
+	Interaction *discordgo.Interaction
+	Response    *discordgo.InteractionResponse
 }
 
 func newSessionShim() *sessionShim {
@@ -127,6 +133,16 @@ func (s *sessionShim) ChannelMessageSendComplex(channelID string, data *discordg
 	}
 	s.mu.Unlock()
 	return &discordgo.Message{ID: "msg:" + channelID}, nil
+}
+
+func (s *sessionShim) InteractionRespond(interaction *discordgo.Interaction, resp *discordgo.InteractionResponse, _ ...discordgo.RequestOption) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.interactionResponses = append(s.interactionResponses, interactionResponseRecord{
+		Interaction: interaction,
+		Response:    resp,
+	})
+	return nil
 }
 
 func (s *sessionShim) AddHandler(handler interface{}) func() {
@@ -262,6 +278,14 @@ func (s *sessionShim) AllSentMessages() []sentMessage {
 	defer s.mu.Unlock()
 	out := make([]sentMessage, len(s.allMessages))
 	copy(out, s.allMessages)
+	return out
+}
+
+func (s *sessionShim) InteractionResponses() []interactionResponseRecord {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]interactionResponseRecord, len(s.interactionResponses))
+	copy(out, s.interactionResponses)
 	return out
 }
 

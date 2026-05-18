@@ -13,12 +13,15 @@ import (
 const (
 	colorInteractive = 0x57F287 // green
 	colorDaemon      = 0xFEE75C // yellow
+	colorDenied      = 0xED4245 // red
 )
 
 // Header glyphs and labels.
 const (
 	headerInteractive = "✅ **Interactive secret request**"
 	headerDaemon      = "⚠ **[DAEMON] Supervisor secret request**"
+	headerApproved    = "✅ **Approved — request consumed**"
+	headerDenied      = "❌ **Denied — request consumed**"
 )
 
 // auditEventType is the catalog of mirror event names emitted to
@@ -99,6 +102,37 @@ func approvalButtons(customID string) []discordgo.MessageComponent {
 				},
 			},
 		},
+	}
+}
+
+func renderResolvedApproval(req ApprovalRequest, approved bool) *discordgo.InteractionResponseData {
+	header := headerApproved
+	color := colorInteractive
+	if !approved {
+		header = headerDenied
+		color = colorDenied
+	}
+
+	lines := []string{
+		header,
+		"",
+		fmt.Sprintf("Machine: %s", req.MachineName),
+	}
+	if req.SessionType == token.SessionSupervisor {
+		lines = append(lines, fmt.Sprintf("Supervisor: %s", req.SupervisorName))
+	}
+	lines = append(lines,
+		fmt.Sprintf("Mesh IP: %s", req.ClientIP),
+		fmt.Sprintf("Scope:   %s", strings.Join(req.Scope, ", ")),
+		fmt.Sprintf("Reason:  %s", req.Reason),
+		fmt.Sprintf("TTL:     %s", req.RequestedTTL),
+	)
+	return &discordgo.InteractionResponseData{
+		Embeds: []*discordgo.MessageEmbed{{
+			Description: strings.Join(lines, "\n"),
+			Color:       color,
+		}},
+		Components: []discordgo.MessageComponent{},
 	}
 }
 

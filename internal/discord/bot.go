@@ -24,6 +24,7 @@ type sessionAPI interface {
 	Close() error
 	UserChannelCreate(recipientID string, options ...discordgo.RequestOption) (*discordgo.Channel, error)
 	ChannelMessageSendComplex(channelID string, data *discordgo.MessageSend, options ...discordgo.RequestOption) (*discordgo.Message, error)
+	InteractionRespond(interaction *discordgo.Interaction, resp *discordgo.InteractionResponse, options ...discordgo.RequestOption) error
 	AddHandler(handler interface{}) func()
 }
 
@@ -360,28 +361,66 @@ func (a *BotApprover) onInteractionCreate(i *discordgo.InteractionCreate) {
 	if !ok {
 		return
 	}
+
+	var ev decisionEvent
+	var approved bool
+	switch action {
+	case "approve":
+		ev.kind = decisionApprove
+		approved = true
+	case "deny":
+		ev.kind = decisionDeny
+	default:
+		a.respondInteractionNotice(i, "Unknown approval action. No secret was released.")
+		return
+	}
+
 	// First-action-wins: remove the entry BEFORE sending so a
 	// concurrent second click finds nothing (FR-017).
 	raw, found := a.pending.LoadAndDelete(uuid)
 	if !found {
+		a.respondInteractionNotice(i, "This request is no longer active. It was already handled, expired, or the bot restarted; check the audit message for the final decision.")
 		return
 	}
 	entry, _ := raw.(*pendingEntry)
 	if entry == nil {
+		a.respondInteractionNotice(i, "This request is no longer active. No secret was released by this click.")
 		return
 	}
-	var ev decisionEvent
-	switch action {
-	case "approve":
-		ev.kind = decisionApprove
-	case "deny":
-		ev.kind = decisionDeny
-	default:
-		return
-	}
+
+	a.respondInteractionUpdate(i, renderResolvedApproval(entry.req, approved))
 	select {
 	case entry.ch <- ev:
 	default:
+	}
+}
+
+func (a *BotApprover) respondInteractionUpdate(i *discordgo.InteractionCreate, data *discordgo.InteractionResponseData) {
+	if i == nil || i.Interaction == nil {
+		return
+	}
+	if err := a.session.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseUpdateMessage,
+		Data: data,
+	}); err != nil {
+		a.logger.Warn("hush/discord: failed to update approval interaction",
+			slog.String("err_class", "discord_unavailable"))
+	}
+}
+
+func (a *BotApprover) respondInteractionNotice(i *discordgo.InteractionCreate, content string) {
+	if i == nil || i.Interaction == nil {
+		return
+	}
+	if err := a.session.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content: content,
+			Flags:   discordgo.MessageFlagsEphemeral,
+		},
+	}); err != nil {
+		a.logger.Warn("hush/discord: failed to acknowledge stale approval interaction",
+			slog.String("err_class", "discord_unavailable"))
 	}
 }
 

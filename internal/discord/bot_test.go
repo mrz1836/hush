@@ -163,6 +163,79 @@ func TestDecisionRouting_Approve(t *testing.T) {
 	}
 }
 
+func TestDecisionRouting_ApproveConsumesRequestMessage(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	shim := newSessionShim()
+	cfg := BotConfig{
+		Token:   mustSecureBytes(t, []byte("tok")),
+		OwnerID: "owner",
+		AppID:   "app",
+	}
+	a := newTestApprover(ctx, shim, cfg, testutil.NewSilentLogger())
+	shim.TriggerReady()
+
+	go func() {
+		uuid := waitForCustomID(t, shim)
+		shim.TriggerInteractionCreate(uuid + ":approve")
+	}()
+	dec, err := a.RequestApproval(ctx, interactiveSampleRequest())
+	if err != nil {
+		t.Fatalf("err = %v; want nil", err)
+	}
+	if !dec.Approved {
+		t.Fatal("expected Approved=true")
+	}
+
+	responses := shim.InteractionResponses()
+	if len(responses) != 1 {
+		t.Fatalf("interaction responses = %d; want 1", len(responses))
+	}
+	resp := responses[0].Response
+	if resp.Type != discordgo.InteractionResponseUpdateMessage {
+		t.Fatalf("response type = %v; want InteractionResponseUpdateMessage", resp.Type)
+	}
+	if resp.Data == nil {
+		t.Fatal("response data is nil")
+	}
+	if len(resp.Data.Components) != 0 {
+		t.Fatalf("components = %d; want 0 so stale buttons disappear", len(resp.Data.Components))
+	}
+	if len(resp.Data.Embeds) != 1 || !strings.Contains(resp.Data.Embeds[0].Description, "Approved") {
+		t.Fatalf("resolved embed = %#v; want approved marker", resp.Data.Embeds)
+	}
+}
+
+func TestInteractionHandler_StaleRequestGetsEphemeralNotice(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	shim := newSessionShim()
+	cfg := BotConfig{
+		Token:   mustSecureBytes(t, []byte("tok")),
+		OwnerID: "owner",
+		AppID:   "app",
+	}
+	a := newTestApprover(ctx, shim, cfg, testutil.NewSilentLogger())
+	a.onInteractionCreate(buildButtonInteraction("missing:approve"))
+
+	responses := shim.InteractionResponses()
+	if len(responses) != 1 {
+		t.Fatalf("interaction responses = %d; want 1", len(responses))
+	}
+	resp := responses[0].Response
+	if resp.Type != discordgo.InteractionResponseChannelMessageWithSource {
+		t.Fatalf("response type = %v; want ephemeral channel message", resp.Type)
+	}
+	if resp.Data == nil || resp.Data.Flags&discordgo.MessageFlagsEphemeral == 0 {
+		t.Fatalf("response data = %#v; want ephemeral notice", resp.Data)
+	}
+	if !strings.Contains(resp.Data.Content, "no longer active") {
+		t.Fatalf("content = %q; want stale explanation", resp.Data.Content)
+	}
+}
+
 func TestDecisionRouting_Deny(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
