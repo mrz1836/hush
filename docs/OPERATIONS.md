@@ -19,6 +19,7 @@ If you are already serving, jump to §2 ("Day-to-day modes") or §4
 
 ```bash
 hush init server          # guided / interactive (default)
+hush secret add OPENAI_API_KEY
 hush serve                # binds Tailscale interface, brokers approvals
 ```
 
@@ -76,13 +77,18 @@ The minimum prerequisites are:
    hush-authored explanation panel that names the item, says what is
    being stored, and tells you what to click in the Apple prompt that
    follows. The bare Apple "password data for new item" prompt never
-   appears without that explanation immediately above it.
-6. **Bootstrap completion.** `config.toml`, `secrets.vault`, the state
-   dir, and (on macOS) the `hush-discord` Keychain item all exist with
-   the required modes.
+   appears without that explanation immediately above it. If the login
+   Keychain is locked or refuses the bot-token write, hush offers the
+   env-token fallback so setup can continue.
+6. **Bootstrap completion.** `config.toml`, `secrets.vault`, and the state
+   dir exist with the required modes. On macOS, the `hush-discord`
+   Keychain item exists unless you explicitly chose env-token fallback.
 
-When it finishes, run `hush serve` and you are ready to enroll an agent
-host (`hush init client …`).
+When it finishes, add any initial secrets with `hush secret add …`, then run
+`hush serve`. The server loads the vault into memory at startup; if you add
+secrets after `serve` is already running, restart `serve` or send SIGHUP to
+reload before requesting those secrets. Then enroll an agent host
+(`hush init client …`).
 
 ### Keychain ACL denial during setup
 
@@ -103,9 +109,12 @@ storage") so the security trade-offs are kept next to the threat model.
 
 ### Clock-sync failure during setup
 
-If the preflight clock-sync check fails, hush prints the platform-aware
-fix command (e.g. `sudo sntp -sS time.apple.com` on macOS) and exits
-non-zero. Hush will **never** run `sudo` on your behalf.
+If the preflight clock-sync check proves the clock is unsynchronised or
+outside the drift budget, hush prints the platform-aware fix command (e.g.
+`sudo sntp -sS time.apple.com` on macOS) and exits non-zero. Hush will
+**never** run `sudo` on your behalf. If the read-only probe itself is killed
+or unavailable during setup, hush warns and continues; `hush serve` remains
+stricter.
 
 If you have knowingly accepted clock skew (e.g. a deliberately air-gapped
 test host), pass `--allow-clock-skew` to `hush init server` (and to
@@ -121,7 +130,8 @@ emits an audit event `clock_skew_override`.
 Approve a session, wrap a shell, work inside it.
 
 Primary path:
-- `hush request --exec "zsh"`
+- `hush request --exec zsh`
+- for a one-shot check with args: `hush request --scope OPENAI_API_KEY --exec printenv -- OPENAI_API_KEY`
 
 Intent:
 - one approval covers a bounded human work session
@@ -181,6 +191,20 @@ The guided flow is the default. `--non-interactive` is the explicit
 opt-out for scripted / test / CI callers. In non-interactive mode every
 input must come from flags or `--input-file` (a `0600` JSON document with
 the same field set the prompts populate).
+
+Client enrollment with a fallback key file:
+
+```bash
+hush init client \
+  --machine-index 1 \
+  --client-registry ~/.hush/clients.json \
+  --client-key-file ~/.hush/client-machine-1.key
+```
+
+On macOS, hush first tries to store the client key in Keychain. If Keychain
+is locked but `--client-key-file` is present, hush writes the key file and
+prints an explicit fallback message. Use the same `--client-key-file` on
+`hush request`.
 
 Relevant flags for `hush init server`:
 

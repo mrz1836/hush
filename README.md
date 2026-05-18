@@ -43,28 +43,34 @@ git clone https://github.com/mrz1836/hush.git && cd hush
 magex build && sudo install -m 0755 cmd/hush/hush /usr/local/bin/hush
 ```
 
-Bootstrap the vault host — **one command, then follow the prompts**:
+Bootstrap the vault host — **one guided command, then add secrets before serve**:
 
 ```bash
 hush init server          # guided / interactive; preflight + prompts
 hush secret add OPENAI_API_KEY
-hush serve
+hush serve                # binds Tailscale interface, brokers approvals
 ```
+
+During `hush init server`, set `discord_approval_channel_id` if you want
+approvals in a Discord channel instead of owner DMs. On macOS, if the login
+Keychain is locked or unavailable, choose the env-token fallback and run
+`hush serve` with `HUSH_DISCORD_BOT_TOKEN` exported in that terminal.
 
 Enrol the agent host:
 
 ```bash
 hush init client --machine-index 1
 hush request \
-  --server "https://<vault-host-tailscale-ip>:7743" \
+  --server "http://<vault-host-tailscale-ip>:7743/h/<path-prefix>" \
   --machine-index 1 --scope OPENAI_API_KEY \
   --max-uses 1 --ttl 5m --reason "smoke test" \
-  --exec "env | grep OPENAI_API_KEY"
+  --exec printenv -- OPENAI_API_KEY
 ```
 
-Approve the Discord DM on your phone; the child process you named in
-`--exec` runs with `OPENAI_API_KEY` in its environment — and only there.
-Nothing is written to disk on the agent host.
+Approve on Discord; the child process you named in `--exec` runs with
+`OPENAI_API_KEY` in its environment — and only there. `--exec` names a
+program, not a shell string; pass child arguments after `--`. Nothing is
+written to disk on the agent host.
 
 `hush init server` is the canonical first-run entry point. It runs a
 diagnostic-first preflight, prompts for the inputs it actually needs,
