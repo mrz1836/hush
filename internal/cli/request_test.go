@@ -389,7 +389,8 @@ func TestRequest_FlagSetMatchesContract(t *testing.T) {
 	cmd := newRequestCmd()
 	want := map[string]bool{
 		flagReqServer: true, flagReqScope: true, flagReqReason: true, flagReqTTL: true,
-		flagReqMaxUses: true, flagReqMachineIndex: true, flagReqExec: true, flagReqFormat: true,
+		flagReqMaxUses: true, flagReqMachineIndex: true, flagReqClientKeyFile: true,
+		flagReqExec: true, flagReqFormat: true,
 	}
 	got := map[string]bool{}
 	cmd.Flags().VisitAll(func(f *pflag.Flag) { got[f.Name] = true })
@@ -1593,5 +1594,29 @@ func TestRequest_RefusesBeforeKeychainAccess(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&rec.calls); got != 0 {
 		t.Errorf("keychain.Retrieve calls=%d want 0", got)
+	}
+}
+
+func TestRetrieveClientKey_UsesSmokeKeyFileOverride(t *testing.T) {
+	priv := makeClientKey(t)
+	scalar := make([]byte, 32)
+	//nolint:staticcheck // secp256k1 unsupported by crypto/ecdh; .D access intentional
+	priv.D.FillBytes(scalar)
+	path := filepath.Join(t.TempDir(), "client.key")
+	if err := os.WriteFile(path, []byte(hex.EncodeToString(scalar)+"\n"), 0o600); err != nil {
+		t.Fatalf("write key file: %v", err)
+	}
+
+	rec := &recordingKeychain{}
+	got, err := retrieveClientKey(context.Background(), requestDeps{keychain: rec}, 0, path, newStream(io.Discard, true, true))
+	if err != nil {
+		t.Fatalf("retrieveClientKey: %v", err)
+	}
+	//nolint:staticcheck // secp256k1 unsupported by crypto/ecdh; .D read-only comparison
+	if got.D.Cmp(priv.D) != 0 {
+		t.Fatalf("loaded scalar does not match key file")
+	}
+	if calls := atomic.LoadInt32(&rec.calls); calls != 0 {
+		t.Fatalf("keychain retrieve calls=%d, want 0", calls)
 	}
 }

@@ -324,7 +324,7 @@ func TestRequest_RetrieveClientKey_PermissionDenied(t *testing.T) {
 	denyKC := &denyKeychain{}
 	stderr := newStream(io.Discard, false, true)
 	deps := requestDeps{keychain: denyKC}
-	_, err := retrieveClientKey(context.Background(), deps, 0, stderr)
+	_, err := retrieveClientKey(context.Background(), deps, 0, "", stderr)
 	if !errors.Is(err, keychain.ErrKeychainPermissionDenied) {
 		t.Errorf("err=%v want ErrKeychainPermissionDenied", err)
 	}
@@ -355,7 +355,7 @@ func TestRequest_RetrieveClientKey_BadLength(t *testing.T) {
 	}
 	stderr := newStream(io.Discard, false, true)
 	deps := requestDeps{keychain: fake}
-	_, err = retrieveClientKey(t.Context(), deps, 0, stderr)
+	_, err = retrieveClientKey(t.Context(), deps, 0, "", stderr)
 	if err == nil {
 		t.Errorf("want length-validation error")
 	}

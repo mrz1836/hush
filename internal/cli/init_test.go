@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -489,6 +490,37 @@ func TestInitClient_StoresInKeychainViaFake(t *testing.T) {
 	defer got.Destroy()
 	require.Equal(t, 32, got.Len())
 	require.Equal(t, testInitBinaryPath, fx.keychain.RecordedACL(kcServiceClient, "machine-3"))
+}
+
+func TestInitClient_NonInteractiveRegistersClient(t *testing.T) {
+	t.Parallel()
+	fx := newInitFixture(t)
+	fx.deps.clientNonInteractive = true
+	fx.deps.clientPassphrase = testGoodPassphrase
+	registry := filepath.Join(fx.tempDir, "clients.json")
+	fx.deps.clientRegistry = registry
+	keyFile := filepath.Join(fx.tempDir, "client-machine-1.key")
+	fx.deps.clientKeyFile = keyFile
+
+	err := runClientWithFlags(context.Background(), fx, "1")
+	require.NoError(t, err)
+
+	got, err := fx.keychain.Retrieve(context.Background(), kcServiceClient, "machine-1")
+	require.NoError(t, err)
+	defer got.Destroy()
+	require.Equal(t, 32, got.Len())
+
+	raw, err := os.ReadFile(registry)
+	require.NoError(t, err)
+	var entries []clientRegistryJSONEntry
+	require.NoError(t, json.Unmarshal(raw, &entries))
+	require.Len(t, entries, 1)
+	require.Regexp(t, `^[0-9a-f]{16}$`, entries[0].Fingerprint)
+	require.Regexp(t, `^0[23][0-9a-f]{64}$`, entries[0].PublicKey)
+
+	keyRaw, err := os.ReadFile(keyFile)
+	require.NoError(t, err)
+	require.Regexp(t, `^[0-9a-f]{64}\n$`, string(keyRaw))
 }
 
 func TestInitClient_PrintsFingerprintOneLine(t *testing.T) {

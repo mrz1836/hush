@@ -62,14 +62,15 @@ const (
 
 // Flag-name constants used by the request subcommand.
 const (
-	flagReqServer       = "server"
-	flagReqScope        = "scope"
-	flagReqReason       = "reason"
-	flagReqTTL          = "ttl"
-	flagReqMaxUses      = "max-uses"
-	flagReqMachineIndex = "machine-index"
-	flagReqExec         = "exec"
-	flagReqFormat       = "format"
+	flagReqServer        = "server"
+	flagReqScope         = "scope"
+	flagReqReason        = "reason"
+	flagReqTTL           = "ttl"
+	flagReqMaxUses       = "max-uses"
+	flagReqMachineIndex  = "machine-index"
+	flagReqExec          = "exec"
+	flagReqFormat        = "format"
+	flagReqClientKeyFile = "client-key-file"
 )
 
 // hostnameSanitiseRe matches characters allowed in machine_name per
@@ -111,15 +112,16 @@ var (
 
 // requestFlags is the parsed-and-validated flag-layer state.
 type requestFlags struct {
-	server       string
-	scope        []string
-	reason       string
-	ttl          time.Duration
-	maxUses      int
-	machineIndex uint32
-	execProgram  string
-	formatMode   string
-	childArgs    []string
+	server        string
+	scope         []string
+	reason        string
+	ttl           time.Duration
+	maxUses       int
+	machineIndex  uint32
+	clientKeyFile string
+	execProgram   string
+	formatMode    string
+	childArgs     []string
 }
 
 // modeOf reports which delivery mode the validated flags select. One
@@ -239,6 +241,7 @@ func newRequestCmd() *cobra.Command {
 	cmd.Flags().Duration(flagReqTTL, 0, "Approval-wait deadline AND issued JWT TTL (required)")
 	cmd.Flags().Int(flagReqMaxUses, 0, "Max times the issued JWT can fetch a secret (required, ≥ len(scope))")
 	cmd.Flags().Uint32(flagReqMachineIndex, 0, "Per-machine identifier matching `hush init client --machine-index <N>` (required)")
+	cmd.Flags().String(flagReqClientKeyFile, "", "Optional 0600 smoke-test client key file used when macOS Keychain reads are unavailable")
 	cmd.Flags().String(flagReqExec, "", "Program to exec with secrets injected as env vars (mutually exclusive with --format)")
 	cmd.Flags().String(flagReqFormat, "", "Delivery format; only literal value `eval` accepted (mutually exclusive with --exec)")
 
@@ -275,6 +278,7 @@ func parseAndValidateFlags(cmd *cobra.Command, args []string) (requestFlags, err
 	ttl, _ := cmd.Flags().GetDuration(flagReqTTL)
 	maxUses, _ := cmd.Flags().GetInt(flagReqMaxUses)
 	machineIndex, _ := cmd.Flags().GetUint32(flagReqMachineIndex)
+	clientKeyFile, _ := cmd.Flags().GetString(flagReqClientKeyFile)
 	execProgram, _ := cmd.Flags().GetString(flagReqExec)
 	formatMode, _ := cmd.Flags().GetString(flagReqFormat)
 
@@ -291,14 +295,15 @@ func parseAndValidateFlags(cmd *cobra.Command, args []string) (requestFlags, err
 	}
 
 	flags := requestFlags{
-		server:       strings.TrimSpace(server),
-		scope:        scope,
-		reason:       reason,
-		ttl:          ttl,
-		maxUses:      maxUses,
-		machineIndex: machineIndex,
-		execProgram:  execProgram,
-		formatMode:   formatMode,
+		server:        strings.TrimSpace(server),
+		scope:         scope,
+		reason:        reason,
+		ttl:           ttl,
+		maxUses:       maxUses,
+		machineIndex:  machineIndex,
+		clientKeyFile: strings.TrimSpace(clientKeyFile),
+		execProgram:   execProgram,
+		formatMode:    formatMode,
 	}
 
 	// Mutual exclusion comes first — neither vs both. No I/O on any
@@ -342,7 +347,7 @@ func parseAndValidateFlags(cmd *cobra.Command, args []string) (requestFlags, err
 //nolint:gocognit,gocyclo,cyclop,funlen // sequential pipeline; complexity is structural (data-model.md §7)
 func runRequest(parentCtx context.Context, stdout, stderr *Stream, deps requestDeps, flags requestFlags) error {
 	// 1. Client signing key.
-	clientKey, err := retrieveClientKey(parentCtx, deps, flags.machineIndex, stderr)
+	clientKey, err := retrieveClientKey(parentCtx, deps, flags.machineIndex, flags.clientKeyFile, stderr)
 	if err != nil {
 		return err
 	}
@@ -416,7 +421,10 @@ func runRequest(parentCtx context.Context, stdout, stderr *Stream, deps requestD
 // the OS keychain and reconstitutes an *ecdsa.PrivateKey. The
 // sanitized SecureBytes handle is Destroyed inside the same call; the
 // reconstituted key is zeroed by the caller's defer chain.
-func retrieveClientKey(ctx context.Context, deps requestDeps, machineIndex uint32, stderr *Stream) (*ecdsa.PrivateKey, error) {
+func retrieveClientKey(ctx context.Context, deps requestDeps, machineIndex uint32, clientKeyFile string, stderr *Stream) (*ecdsa.PrivateKey, error) {
+	if path := strings.TrimSpace(clientKeyFile); path != "" {
+		return retrieveClientKeyFromFile(path)
+	}
 	account := fmt.Sprintf("machine-%d", machineIndex)
 	sb, err := deps.keychain.Retrieve(ctx, kcServiceClient, account)
 	if err != nil {
@@ -455,6 +463,30 @@ func retrieveClientKey(ctx context.Context, deps requestDeps, machineIndex uint3
 		return nil, useEr
 	}
 	return priv, nil
+}
+
+func retrieveClientKeyFromFile(path string) (*ecdsa.PrivateKey, error) {
+	raw, err := os.ReadFile(path) //nolint:gosec // operator-supplied smoke-test key path
+	if err != nil {
+		return nil, fmt.Errorf("hush/cli: request: read client key file: %w", err)
+	}
+	decoded, err := hex.DecodeString(strings.TrimSpace(string(raw)))
+	if err != nil {
+		return nil, fmt.Errorf("hush/cli: request: decode client key file: %w", err)
+	}
+	if len(decoded) != 32 {
+		return nil, fmt.Errorf("%w: %d, want 32", errClientKeyLength, len(decoded))
+	}
+	scalar := make([]byte, 32)
+	copy(scalar, decoded)
+	k := secp256k1.PrivKeyFromBytes(scalar)
+	for i := range scalar {
+		scalar[i] = 0
+	}
+	for i := range decoded {
+		decoded[i] = 0
+	}
+	return k.ToECDSA(), nil
 }
 
 // generateEphemeralKey produces a fresh secp256k1 keypair used for

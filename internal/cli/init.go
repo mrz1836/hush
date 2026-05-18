@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -82,6 +83,10 @@ type initDeps struct {
 	serverPassphrase     string
 	serverBotToken       string
 	serverInputs         serverInputs
+	clientNonInteractive bool
+	clientPassphrase     string
+	clientRegistry       string
+	clientKeyFile        string
 
 	// promptSecret reads a no-echo line from stdin in production;
 	// tests substitute a deterministic reader.
@@ -144,6 +149,10 @@ type serverBootstrapInput struct {
 	DiscordBotToken string `json:"discord_bot_token"`
 }
 
+type clientBootstrapInput struct {
+	VaultPassphrase string `json:"vault_passphrase"`
+}
+
 func readServerBootstrapInput(path string) (serverBootstrapInput, error) {
 	if strings.TrimSpace(path) == "" {
 		return serverBootstrapInput{}, fmt.Errorf("%w: --input-file", errMissingFlag)
@@ -155,6 +164,21 @@ func readServerBootstrapInput(path string) (serverBootstrapInput, error) {
 	var input serverBootstrapInput
 	if err := json.Unmarshal(body, &input); err != nil {
 		return serverBootstrapInput{}, fmt.Errorf("hush/cli: init: decode input file: %w", err)
+	}
+	return input, nil
+}
+
+func readClientBootstrapInput(path string) (clientBootstrapInput, error) {
+	if strings.TrimSpace(path) == "" {
+		return clientBootstrapInput{}, fmt.Errorf("%w: --input-file", errMissingFlag)
+	}
+	body, err := os.ReadFile(path) //nolint:gosec // operator-supplied bootstrap file path
+	if err != nil {
+		return clientBootstrapInput{}, fmt.Errorf("hush/cli: init: read input file: %w", err)
+	}
+	var input clientBootstrapInput
+	if err := json.Unmarshal(body, &input); err != nil {
+		return clientBootstrapInput{}, fmt.Errorf("hush/cli: init: decode input file: %w", err)
 	}
 	return input, nil
 }
@@ -213,6 +237,17 @@ func newInitClientCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if nonInteractive, _ := cmd.Flags().GetBool("non-interactive"); nonInteractive {
+				deps.clientNonInteractive = true
+				inputFile, _ := cmd.Flags().GetString("input-file")
+				input, inputErr := readClientBootstrapInput(inputFile)
+				if inputErr != nil {
+					return inputErr
+				}
+				deps.clientPassphrase = input.VaultPassphrase
+			}
+			deps.clientRegistry, _ = cmd.Flags().GetString("client-registry")
+			deps.clientKeyFile, _ = cmd.Flags().GetString("client-key-file")
 			out := outputFromCmd(cmd)
 			return runInitClient(cmd.Context(), out.stdout, out.stderr, os.Stdin, cmd, deps)
 		},
@@ -221,6 +256,10 @@ func newInitClientCmd() *cobra.Command {
 	// flag parsing returns. Cobra does not distinguish unset from
 	// zero on numeric types.
 	cmd.Flags().String("machine-index", "", "Per-machine identifier (uint32) for the client key derivation")
+	cmd.Flags().Bool("non-interactive", false, "Read client bootstrap inputs from a 0600 JSON file instead of TTY prompts")
+	cmd.Flags().String("input-file", "", "0600 JSON bootstrap input for --non-interactive")
+	cmd.Flags().String("client-registry", "", "Optional server client registry JSON file to append/update with this client's public key")
+	cmd.Flags().String("client-key-file", "", "Optional 0600 smoke-test client key file used when macOS Keychain writes are unavailable")
 	return cmd
 }
 
@@ -458,32 +497,48 @@ func runInitClient(ctx context.Context, stdout, stderr *Stream, in *os.File, cmd
 		return fmt.Errorf("%w: --machine-index value %q", errMissingFlag, rawIdx)
 	}
 
-	if !deps.isTTY(in) {
-		_ = stderr.WriteText(initMsgNoTTY)
-		return errNoTTY
-	}
+	var pass *securebytes.SecureBytes
+	if deps.clientNonInteractive {
+		pass, err = securebytes.New([]byte(deps.clientPassphrase))
+		if err != nil {
+			return err
+		}
+	} else {
+		if !deps.isTTY(in) {
+			_ = stderr.WriteText(initMsgNoTTY)
+			return errNoTTY
+		}
 
-	pass, err := deps.promptSecret(in, stderr.w, promptVaultPassphrase)
-	if err != nil {
-		return err
+		pass, err = deps.promptSecret(in, stderr.w, promptVaultPassphrase)
+		if err != nil {
+			return err
+		}
+		if pass.Len() < minPassphraseLen {
+			_ = pass.Destroy()
+			_ = stderr.WriteText(initMsgPassphraseTooShort)
+			return errPassphraseTooShort
+		}
+		confirm, confirmErr := deps.promptSecret(in, stderr.w, promptConfirmVault)
+		if confirmErr != nil {
+			_ = pass.Destroy()
+			return confirmErr
+		}
+		equal, cmpErr := secureBytesEqual(pass, confirm)
+		_ = confirm.Destroy()
+		if cmpErr != nil {
+			_ = pass.Destroy()
+			return cmpErr
+		}
+		if !equal {
+			_ = pass.Destroy()
+			_ = stderr.WriteText(initMsgPassphraseMismatch)
+			return errPassphraseMismatch
+		}
 	}
 	defer func() { _ = pass.Destroy() }()
 	if pass.Len() < minPassphraseLen {
 		_ = stderr.WriteText(initMsgPassphraseTooShort)
 		return errPassphraseTooShort
-	}
-	confirm, err := deps.promptSecret(in, stderr.w, promptConfirmVault)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = confirm.Destroy() }()
-	equal, cmpErr := secureBytesEqual(pass, confirm)
-	if cmpErr != nil {
-		return cmpErr
-	}
-	if !equal {
-		_ = stderr.WriteText(initMsgPassphraseMismatch)
-		return errPassphraseMismatch
 	}
 
 	account := fmt.Sprintf("machine-%d", machineIndex)
@@ -529,8 +584,22 @@ func runInitClient(ctx context.Context, stdout, stderr *Stream, in *os.File, cmd
 	defer func() { _ = priv.Destroy() }()
 
 	if err := deps.keychain.Store(ctx, kcServiceClient, account, priv, binPath); err != nil {
+		if strings.TrimSpace(deps.clientKeyFile) == "" {
+			_ = stderr.WriteText(initMsgKeychainStoreFailFmt, err)
+			return err
+		}
 		_ = stderr.WriteText(initMsgKeychainStoreFailFmt, err)
-		return err
+	}
+	if strings.TrimSpace(deps.clientKeyFile) != "" {
+		if err := writeClientKeyFile(deps.clientKeyFile, priv); err != nil {
+			return err
+		}
+	}
+
+	if strings.TrimSpace(deps.clientRegistry) != "" {
+		if err := upsertClientRegistry(deps.clientRegistry, keys.PublicKeyFingerprint(&clientKey.PublicKey), &clientKey.PublicKey); err != nil {
+			return err
+		}
 	}
 
 	fingerprint := sshStyleFingerprint(&clientKey.PublicKey)
@@ -548,6 +617,80 @@ func parseMachineIndex(s string) (uint32, error) {
 		return 0, err
 	}
 	return uint32(n), nil
+}
+
+type clientRegistryJSONEntry struct {
+	Fingerprint string `json:"fingerprint"`
+	PublicKey   string `json:"public_key"`
+}
+
+func upsertClientRegistry(path, fingerprint string, pub *ecdsa.PublicKey) error {
+	raw, err := os.ReadFile(path) //nolint:gosec // operator-supplied registry path
+	var entries []clientRegistryJSONEntry
+	switch {
+	case err == nil:
+		if len(strings.TrimSpace(string(raw))) > 0 {
+			if jerr := json.Unmarshal(raw, &entries); jerr != nil {
+				return fmt.Errorf("hush/cli: init: parse client registry: %w", jerr)
+			}
+		}
+	case errors.Is(err, os.ErrNotExist):
+		entries = nil
+	default:
+		return fmt.Errorf("hush/cli: init: read client registry: %w", err)
+	}
+
+	next := clientRegistryJSONEntry{
+		Fingerprint: fingerprint,
+		PublicKey:   compressedPublicKeyHex(pub),
+	}
+	replaced := false
+	for i := range entries {
+		if entries[i].Fingerprint == fingerprint {
+			entries[i] = next
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		entries = append(entries, next)
+	}
+	body, err := json.MarshalIndent(entries, "", "  ")
+	if err != nil {
+		return fmt.Errorf("hush/cli: init: encode client registry: %w", err)
+	}
+	body = append(body, '\n')
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		return fmt.Errorf("hush/cli: init: write client registry: %w", err)
+	}
+	return nil
+}
+
+func compressedPublicKeyHex(pub *ecdsa.PublicKey) string {
+	compressed := make([]byte, 33)
+	//nolint:staticcheck // secp256k1 unsupported by crypto/ecdh; .X/.Y are read-only
+	if pub.Y.Bit(0) == 0 {
+		compressed[0] = 0x02
+	} else {
+		compressed[0] = 0x03
+	}
+	//nolint:staticcheck // secp256k1 unsupported by crypto/ecdh; .X/.Y are read-only
+	xBytes := pub.X.Bytes()
+	copy(compressed[1+32-len(xBytes):], xBytes)
+	return hex.EncodeToString(compressed)
+}
+
+func writeClientKeyFile(path string, priv *securebytes.SecureBytes) error {
+	var encoded string
+	if err := priv.Use(func(b []byte) {
+		encoded = hex.EncodeToString(b)
+	}); err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, []byte(encoded+"\n"), 0o600); err != nil {
+		return fmt.Errorf("hush/cli: init: write client key file: %w", err)
+	}
+	return nil
 }
 
 // promptRequired re-prompts until a non-empty line is read or three
