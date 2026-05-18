@@ -13,6 +13,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,6 +21,31 @@ import (
 	"github.com/mrz1836/hush/internal/testutil"
 	"github.com/mrz1836/hush/internal/vault/securebytes"
 )
+
+// syncBuffer is a goroutine-safe wrapper around bytes.Buffer used by serve
+// integration tests that poll stderr while runServe writes to it.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func (b *syncBuffer) Bytes() []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]byte(nil), b.buf.Bytes()...)
+}
 
 // hasTailscaleAddr mirrors internal/server/integration_test.go —
 // returns the first 100.64.0.0/10 address on the host.
@@ -160,9 +186,10 @@ func TestServe_StartAndShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	var stdout, stderr bytes.Buffer
+	var stdout bytes.Buffer
+	stderr := &syncBuffer{}
 	out := newStream(&stdout, false, true)
-	errStream := newStream(&stderr, false, true)
+	errStream := newStream(stderr, false, true)
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- runServe(ctx, out, errStream, deps) }()
@@ -342,9 +369,10 @@ func TestT273_Fixture5_ServeAllowClockSkewDowngradesProbeFailure(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	var stdout, stderr bytes.Buffer
+	var stdout bytes.Buffer
+	stderr := &syncBuffer{}
 	out := newStream(&stdout, false, true)
-	errStream := newStream(&stderr, false, true)
+	errStream := newStream(stderr, false, true)
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- runServe(ctx, out, errStream, deps) }()
