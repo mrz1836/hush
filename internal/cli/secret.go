@@ -132,7 +132,7 @@ type listEntry struct {
 // secretDeps groups the testable seams threaded into every verb.
 type secretDeps struct {
 	loadSecrets func(ctx context.Context, path string, key *securebytes.SecureBytes) ([]vault.Secret, error)
-	saveVault   func(ctx context.Context, path string, key *securebytes.SecureBytes, secrets []vault.Secret) error
+	saveVault   func(ctx context.Context, path string, key *securebytes.SecureBytes, salt []byte, secrets []vault.Secret) error
 
 	promptPassphrase func(in *os.File, prompt io.Writer, label string) (*securebytes.SecureBytes, error)
 	promptSecret     func(in *os.File, prompt io.Writer, label string) (*securebytes.SecureBytes, error)
@@ -148,6 +148,7 @@ type secretDeps struct {
 	readPIDFile func(path string) ([]byte, error)
 
 	stateDirRoot string
+	configPath   string
 	logger       *slog.Logger
 	nowFn        func() time.Time
 
@@ -162,7 +163,7 @@ type secretDeps struct {
 func productionSecretDeps() *secretDeps {
 	return &secretDeps{
 		loadSecrets:      vault.LoadSecrets,
-		saveVault:        vault.Save,
+		saveVault:        vault.SaveWithSalt,
 		promptPassphrase: readPassphraseTTY,
 		promptSecret:     readPassphraseTTY,
 		promptLine:       readLineFromTTY,
@@ -221,6 +222,7 @@ func newSecretAddCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := outputFromCmd(cmd)
 			deps := productionSecretDeps()
+			deps.configPath = readGlobalFlags(cmd).configPath
 			if nonInteractive, _ := cmd.Flags().GetBool("non-interactive"); nonInteractive {
 				deps.nonInteractive = true
 				inputFile, _ := cmd.Flags().GetString("input-file")
@@ -247,7 +249,9 @@ func newSecretRemoveCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := outputFromCmd(cmd)
-			return runSecretRemove(cmd.Context(), out.stderr, os.Stdin, productionSecretDeps(), args)
+			deps := productionSecretDeps()
+			deps.configPath = readGlobalFlags(cmd).configPath
+			return runSecretRemove(cmd.Context(), out.stderr, os.Stdin, deps, args)
 		},
 	}
 }
@@ -259,7 +263,9 @@ func newSecretListCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := outputFromCmd(cmd)
-			return runSecretList(cmd.Context(), out.stdout, out.stderr, os.Stdin, os.Stdout, productionSecretDeps())
+			deps := productionSecretDeps()
+			deps.configPath = readGlobalFlags(cmd).configPath
+			return runSecretList(cmd.Context(), out.stdout, out.stderr, os.Stdin, os.Stdout, deps)
 		},
 	}
 }
@@ -271,7 +277,9 @@ func newSecretRotateCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := outputFromCmd(cmd)
-			return runSecretRotate(cmd.Context(), out.stderr, os.Stdin, productionSecretDeps())
+			deps := productionSecretDeps()
+			deps.configPath = readGlobalFlags(cmd).configPath
+			return runSecretRotate(cmd.Context(), out.stderr, os.Stdin, deps)
 		},
 	}
 }
@@ -326,11 +334,15 @@ func resolveVaultPath(ctx context.Context, deps *secretDeps) (string, error) {
 	if deps.stateDirRoot != "" {
 		return filepath.Join(deps.stateDirRoot, secretsVaultFilename), nil
 	}
-	configPath, err := expandTilde("~/.hush/config.toml")
+	configPath := deps.configPath
+	if configPath == "" {
+		configPath = "~/.hush/config.toml"
+	}
+	expanded, err := expandTilde(configPath)
 	if err != nil {
 		return "", err
 	}
-	cfg, err := config.LoadServer(ctx, configPath)
+	cfg, err := config.LoadServer(ctx, expanded)
 	if err != nil {
 		return "", err
 	}
@@ -344,11 +356,15 @@ func resolveStateDirPath(ctx context.Context, deps *secretDeps) (string, error) 
 	if deps.stateDirRoot != "" {
 		return deps.stateDirRoot, nil
 	}
-	configPath, err := expandTilde("~/.hush/config.toml")
+	configPath := deps.configPath
+	if configPath == "" {
+		configPath = "~/.hush/config.toml"
+	}
+	expanded, err := expandTilde(configPath)
 	if err != nil {
 		return "", err
 	}
-	cfg, err := config.LoadServer(ctx, configPath)
+	cfg, err := config.LoadServer(ctx, expanded)
 	if err != nil {
 		return "", err
 	}
@@ -494,7 +510,7 @@ func runSecretAdd(ctx context.Context, stderr *Stream, in *os.File, deps *secret
 	combined = append(combined, secrets...)
 	combined = append(combined, vault.Secret{Name: name, Description: description, Value: value})
 
-	if err := deps.saveVault(ctx, vaultPath, vaultKey, combined); err != nil {
+	if err := deps.saveVault(ctx, vaultPath, vaultKey, salt, combined); err != nil {
 		return err
 	}
 
@@ -579,7 +595,7 @@ func runSecretRemove(ctx context.Context, stderr *Stream, in *os.File, deps *sec
 	filtered = append(filtered, secrets[:idx]...)
 	filtered = append(filtered, secrets[idx+1:]...)
 
-	if err := deps.saveVault(ctx, vaultPath, vaultKey, filtered); err != nil {
+	if err := deps.saveVault(ctx, vaultPath, vaultKey, salt, filtered); err != nil {
 		return err
 	}
 
@@ -729,10 +745,11 @@ func runSecretRotate(ctx context.Context, stderr *Stream, in *os.File, deps *sec
 	}
 	defer destroySecrets(secrets)
 
-	// Re-save: SDD-03 mints a fresh nonce + salt every Save call, so
-	// the on-disk ciphertext bytes change while the plaintext set is
-	// preserved. (FR-009, SC-003.)
-	if err := deps.saveVault(ctx, vaultPath, vaultKey, secrets); err != nil {
+	// Re-save with the file's existing salt so the salt → KDF → vaultKey
+	// chain stays coherent across rotate. The nonce is freshly minted
+	// per call by SaveWithSalt (FR-009, SC-003); ciphertext bytes still
+	// change while the plaintext set is preserved.
+	if err := deps.saveVault(ctx, vaultPath, vaultKey, salt, secrets); err != nil {
 		return err
 	}
 

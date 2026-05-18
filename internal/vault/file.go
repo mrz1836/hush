@@ -175,12 +175,33 @@ func decryptWires(data []byte, vaultKey *securebytes.SecureBytes) ([]wireSecret,
 	return wires, nil
 }
 
-// Save encrypts secrets to the vault file at path using vaultKey.
+// Save encrypts secrets to the vault file at path using vaultKey,
+// generating a fresh random salt and nonce. Callers that need to
+// preserve the salt across saves (so the file header's salt continues
+// to drive the KDF-derived vaultKey across init → serve / secret-add
+// flows) should use SaveWithSalt instead.
+func Save(ctx context.Context, path string, vaultKey *securebytes.SecureBytes, secrets []Secret) error {
+	salt := make([]byte, saltLen)
+	if _, err := randRead(salt); err != nil {
+		return fmt.Errorf("vault: rand salt: %w", err)
+	}
+	return SaveWithSalt(ctx, path, vaultKey, salt, secrets)
+}
+
+// SaveWithSalt encrypts secrets to the vault file at path using
+// vaultKey, writing the supplied salt verbatim into the file header.
+// The salt MUST be exactly 16 bytes; nonce is generated fresh per call.
+// Init uses this so the salt that derived vaultKey lands in the file;
+// secret/rotate flows read the existing salt from the file and pass it
+// here so the file's salt → KDF → vaultKey roundtrip stays coherent.
 //
 //nolint:gocognit,gocyclo // multi-step atomic-write flow; complexity is structural
-func Save(ctx context.Context, path string, vaultKey *securebytes.SecureBytes, secrets []Secret) error {
+func SaveWithSalt(ctx context.Context, path string, vaultKey *securebytes.SecureBytes, salt []byte, secrets []Secret) error {
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if len(salt) != saltLen {
+		return fmt.Errorf("vault: salt must be %d bytes, got %d", saltLen, len(salt))
 	}
 
 	// Pre-pass: validate names/descriptions before any filesystem touch.
@@ -207,11 +228,6 @@ func Save(ctx context.Context, path string, vaultKey *securebytes.SecureBytes, s
 		return fmt.Errorf("vault: marshal: %w", err)
 	}
 
-	// Generate fresh salt and nonce.
-	salt := make([]byte, saltLen)
-	if _, err = randRead(salt); err != nil {
-		return fmt.Errorf("vault: rand salt: %w", err)
-	}
 	nonce := make([]byte, nonceLen)
 	if _, err = randRead(nonce); err != nil {
 		return fmt.Errorf("vault: rand nonce: %w", err)

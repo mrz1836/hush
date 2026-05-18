@@ -227,13 +227,16 @@ func runServe(ctx context.Context, stdout, stderr *Stream, deps serveDeps) error
 		return err
 	}
 	auditCtx, auditCancel := context.WithCancel(context.Background())
-	defer auditCancel()
 	auditDone := make(chan struct{})
 	go func() {
 		defer close(auditDone)
 		_ = auditWriter.Run(auditCtx)
 	}()
+	// Defers run LIFO, so register the wait first and the cancel last
+	// — that way on any early return the cancel fires before we block
+	// waiting for the audit goroutine to drain.
 	defer func() { <-auditDone }()
+	defer auditCancel()
 	verbose("audit: writer started at %s", cfg.Server.AuditLog)
 
 	// 8. Construct the Discord approver.

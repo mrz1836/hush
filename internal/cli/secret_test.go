@@ -86,7 +86,7 @@ func newSecretFixture(t *testing.T, entries []testutil.VaultEntry) *secretFixtur
 
 	deps := &secretDeps{
 		loadSecrets:      vault.LoadSecrets,
-		saveVault:        vault.Save,
+		saveVault:        vault.SaveWithSalt,
 		promptPassphrase: scriptedSecretReader(t, []string{"correctbatterystaple"}),
 		promptSecret:     scriptedSecretReader(t, []string{"value-typed", "value-typed"}),
 		promptLine:       scriptedLineReader(t, []string{"description"}),
@@ -1018,7 +1018,7 @@ func TestSecret_AddSaveFails(t *testing.T) {
 	fx := newSecretFixture(t, nil)
 	fx.deps.promptSecret = scriptedSecretReader(t, []string{"v", "v"})
 	fx.deps.promptLine = scriptedLineReader(t, []string{""})
-	fx.deps.saveVault = func(_ context.Context, _ string, _ *securebytes.SecureBytes, _ []vault.Secret) error {
+	fx.deps.saveVault = func(_ context.Context, _ string, _ *securebytes.SecureBytes, _ []byte, _ []vault.Secret) error {
 		return errSyntheticTest
 	}
 	err := runSecretAdd(context.Background(), fx.stderrS, fx.stdinFile, fx.deps, []string{"FOO"})
@@ -1084,7 +1084,7 @@ func TestSecret_RemoveSaveFails(t *testing.T) {
 	t.Parallel()
 	fx := newSecretFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}})
 	fx.deps.promptLine = scriptedLineReader(t, []string{"FOO"})
-	fx.deps.saveVault = func(_ context.Context, _ string, _ *securebytes.SecureBytes, _ []vault.Secret) error {
+	fx.deps.saveVault = func(_ context.Context, _ string, _ *securebytes.SecureBytes, _ []byte, _ []vault.Secret) error {
 		return errSyntheticTest
 	}
 	err := runSecretRemove(context.Background(), fx.stderrS, fx.stdinFile, fx.deps, []string{"FOO"})
@@ -1170,7 +1170,7 @@ func TestSecret_RotateAuthFailed(t *testing.T) {
 func TestSecret_RotateSaveFails(t *testing.T) {
 	t.Parallel()
 	fx := newSecretFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}})
-	fx.deps.saveVault = func(_ context.Context, _ string, _ *securebytes.SecureBytes, _ []vault.Secret) error {
+	fx.deps.saveVault = func(_ context.Context, _ string, _ *securebytes.SecureBytes, _ []byte, _ []vault.Secret) error {
 		return errSyntheticTest
 	}
 	err := runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps)

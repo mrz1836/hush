@@ -396,7 +396,7 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 	if dirErr := ensureStateDir(stateDir); dirErr != nil {
 		return dirErr
 	}
-	if saveErr := vault.Save(ctx, vaultPath, vaultEncKey, []vault.Secret{}); saveErr != nil {
+	if saveErr := vault.SaveWithSalt(ctx, vaultPath, vaultEncKey, salt, []vault.Secret{}); saveErr != nil {
 		return saveErr
 	}
 
