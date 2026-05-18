@@ -15,7 +15,32 @@ If you are already serving, jump to §2 ("Day-to-day modes") or §4
 
 ## 1. First-run setup
 
-### The one-command path
+### Built-in smoke test
+
+Before putting real credentials in the vault, prove the full path with a fake
+secret:
+
+```bash
+hush smoke --state-dir ~/.hush-smoke --reset
+```
+
+`hush smoke` prompts for the same Discord/listen-address inputs as server
+setup, creates an isolated state dir, adds `HUSH_SMOKE_TEST=hello-from-hush`,
+enrolls a client with a key-file fallback, starts a temporary `hush serve`,
+waits for you to approve in Discord, verifies the fake secret through
+`hush request`, prints one success line, and shuts the temporary server down.
+
+Useful flags:
+
+- `--state-dir` — isolated smoke state directory; default `~/.hush-smoke`.
+- `--reset` — archive an existing smoke state dir before starting.
+- `--listen-addr`, `--discord-owner-id`, `--discord-application-id`,
+  `--discord-approval-channel-id` — skip the matching prompt.
+- `--discord-audit-channel-id` — defaults to the approval channel.
+- `--strict-clock` — disables the smoke-only clock-skew override while the
+  temporary server runs.
+
+### Manual setup path
 
 ```bash
 hush init server          # guided / interactive (default)

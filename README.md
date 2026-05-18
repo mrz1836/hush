@@ -43,7 +43,18 @@ git clone https://github.com/mrz1836/hush.git && cd hush
 magex build && sudo install -m 0755 cmd/hush/hush /usr/local/bin/hush
 ```
 
-Bootstrap the vault host — **one guided command, then add secrets before serve**:
+Fast confidence check — **one command, fake secret, real Discord approval**:
+
+```bash
+hush smoke --state-dir ~/.hush-smoke --reset
+```
+
+`hush smoke` walks the setup prompts, creates an isolated test vault, adds
+`HUSH_SMOKE_TEST=hello-from-hush`, starts a temporary Tailscale-only server,
+enrolls a client, asks you to approve in Discord, verifies the fake secret,
+and then shuts the temporary server down.
+
+Bootstrap the vault host manually:
 
 ```bash
 hush init server          # guided / interactive; preflight + prompts

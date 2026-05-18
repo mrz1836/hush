@@ -1,0 +1,165 @@
+package cli
+
+import (
+	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/netip"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/mrz1836/hush/internal/config"
+	"github.com/mrz1836/hush/internal/keychain"
+	"github.com/mrz1836/hush/internal/keys"
+	"github.com/mrz1836/hush/internal/vault"
+	"github.com/mrz1836/hush/internal/vault/securebytes"
+)
+
+func TestSmokeCommand_RegisteredOnRoot(t *testing.T) {
+	t.Parallel()
+	root := newRootCmd(&outputContext{stdout: newStream(io.Discard, false, true), stderr: newStream(io.Discard, false, true)})
+	for _, cmd := range root.Commands() {
+		if cmd.Name() == "smoke" {
+			return
+		}
+	}
+	t.Fatal("smoke command not registered")
+}
+
+func TestRunSmoke_OrchestratesFakeSecretPath(t *testing.T) {
+	t.Parallel()
+	stateDir := filepath.Join(t.TempDir(), "hush-smoke")
+	kc := keychain.NewFake()
+	t.Cleanup(kc.Destroy)
+
+	health := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/h/testprefix/hz" {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(health.Close)
+
+	serveStarted := make(chan struct{}, 1)
+	requestCalled := false
+	deps := smokeTestDeps(t, stateDir, kc)
+	deps.serveRunner = func(ctx context.Context, _, _ *Stream, _ serveDeps) error {
+		serveStarted <- struct{}{}
+		<-ctx.Done()
+		return nil
+	}
+	deps.configLoader = func(ctx context.Context, path string) (*config.Server, error) {
+		cfg, err := config.LoadServer(ctx, path)
+		if err != nil {
+			return nil, err
+		}
+		cfg.Server.ListenAddr = mustAddrPortFromURL(t, health.URL)
+		cfg.Server.PathPrefix = "testprefix"
+		return cfg, nil
+	}
+	deps.requestRunner = func(_ context.Context, stdout, _ *Stream, _ requestDeps, flags requestFlags) error {
+		requestCalled = true
+		require.Equal(t, []string{smokeSecretName}, flags.scope)
+		require.Equal(t, formatModeEval, flags.formatMode)
+		require.True(t, strings.HasSuffix(flags.clientKeyFile, "client-machine-1.key"))
+		return stdout.WriteText("export %s='%s'", smokeSecretName, smokeSecretValue)
+	}
+
+	stdout, stderr := &strings.Builder{}, &strings.Builder{}
+	err := runSmoke(t.Context(), newStream(stdout, false, true), newStream(stderr, false, true), dummyTTY(t), deps, smokeOptions{
+		stateDir:          stateDir,
+		listenAddr:        testListenAddrInput,
+		ownerID:           testOwnerIDInput,
+		applicationID:     testApplicationIDIn,
+		approvalChannelID: "1505706794406772897",
+		machineIndex:      1,
+		reset:             false,
+	})
+	require.NoError(t, err)
+	require.True(t, requestCalled)
+	require.Contains(t, stdout.String(), smokeMsgSuccess[:20])
+	require.FileExists(t, filepath.Join(stateDir, "config.toml"))
+	require.FileExists(t, filepath.Join(stateDir, "secrets.vault"))
+	require.FileExists(t, filepath.Join(stateDir, "client-machine-1.key"))
+	select {
+	case <-serveStarted:
+	default:
+		t.Fatal("serve runner was not started")
+	}
+
+	secretDeps := productionSecretDeps()
+	secretDeps.configPath = filepath.Join(stateDir, "config.toml")
+	secretDeps.deriveMasterSeed = fastDeriveMasterSeed
+	salt, err := readVaultSalt(filepath.Join(stateDir, "secrets.vault"))
+	require.NoError(t, err)
+	master, err := fastDeriveMasterSeed(t.Context(), []byte(testGoodPassphrase), salt)
+	require.NoError(t, err)
+	defer zeroBytes(master)
+	vaultKeyRaw, err := keys.DeriveVaultEncKey(master)
+	require.NoError(t, err)
+	vaultKey, err := securebytes.New(vaultKeyRaw)
+	require.NoError(t, err)
+	defer vaultKey.Destroy()
+	secrets, err := vault.LoadSecrets(t.Context(), filepath.Join(stateDir, "secrets.vault"), vaultKey)
+	require.NoError(t, err)
+	require.Len(t, secrets, 1)
+	require.Equal(t, smokeSecretName, secrets[0].Name)
+}
+
+func TestArchiveSmokeStateDir(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "state")
+	require.NoError(t, os.Mkdir(dir, 0o700))
+	archived, err := archiveSmokeStateDir(dir, time.Date(2026, 5, 18, 13, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
+	require.Equal(t, dir+".bak-20260518-130000", archived)
+	require.NoDirExists(t, dir)
+	require.DirExists(t, archived)
+}
+
+func smokeTestDeps(t *testing.T, stateDir string, kc keychain.Keychain) smokeDeps {
+	t.Helper()
+	deps := productionSmokeDeps()
+	deps.initDepsFactory = func() (*initDeps, error) {
+		return &initDeps{
+			keychain:         kc,
+			binaryPath:       func() (string, error) { return testInitBinaryPath, nil },
+			randReader:       newDeterministicReader(),
+			stateDirRoot:     stateDir,
+			nowFn:            time.Now,
+			platformACL:      func() bool { return true },
+			isTTY:            func(*os.File) bool { return true },
+			deriveMasterSeed: fastDeriveMasterSeed,
+			runPreflight:     func(context.Context) setupReport { return setupReport{} },
+		}, nil
+	}
+	deps.secretDepsFactory = func() *secretDeps {
+		sd := productionSecretDeps()
+		sd.deriveMasterSeed = fastDeriveMasterSeed
+		sd.stateDirRoot = stateDir
+		return sd
+	}
+	deps.keychainFactory = func() (keychain.Keychain, error) { return kc, nil }
+	deps.promptSecret = scriptedSecretReader(t, []string{testGoodPassphrase, testGoodPassphrase, testBotTokenInput})
+	deps.promptLine = scriptedLineReader(t, []string{testListenAddrInput, testOwnerIDInput, testApplicationIDIn, "1505706794406772897"})
+	deps.isTTY = func(*os.File) bool { return true }
+	deps.nowFn = time.Now
+	return deps
+}
+
+func mustAddrPortFromURL(t *testing.T, raw string) netip.AddrPort {
+	t.Helper()
+	u, err := url.Parse(raw)
+	require.NoError(t, err)
+	ap, err := netip.ParseAddrPort(u.Host)
+	require.NoError(t, err)
+	return ap
+}
