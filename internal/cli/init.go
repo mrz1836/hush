@@ -81,21 +81,22 @@ const keychainDeleteConfirmation = "delete"
 // Locked literal-text strings (contracts/cli-init.md §2.3 / §3.3).
 // Tests assert byte-equal on these messages.
 const (
-	initMsgNoTTY                  = "hush: init: stdin must be an interactive terminal"
-	initMsgPassphraseTooShort     = "hush: init: passphrase must be at least 12 characters"
-	initMsgPassphraseMismatch     = "hush: init: passphrase confirmation does not match"
-	initMsgVaultExistsFmt         = "hush: init: vault already exists at %s"
-	initMsgConfigExistsFmt        = "hush: init: config already exists at %s"
-	initMsgKeychainExistsFmt      = "hush: init: keychain item already exists for service=%s account=%s"
-	initMsgPlatformUnsupported    = "hush: init: platform %s has no per-binary keychain ACL; init refuses to run"
-	initMsgMissingMachineIndex    = "hush: init: missing required flag: --machine-index"
-	initMsgMachineIndexInvalid    = "hush: init: --machine-index must be a non-negative integer"
-	initMsgFieldRequiredFmt       = "hush: init: %s is required"
-	initMsgKeychainStoreFailFmt   = "hush: init: keychain store failed: %v"
-	initMsgKeychainLockedStoreFmt = "hush: init: macOS login Keychain appears locked or refused the write: %v\n  next: run `security unlock-keychain ~/Library/Keychains/login.keychain-db`, then re-run `hush init server`."
-	initMsgExplicitStateKeychain  = "hush: init: --state-dir set; storing Discord bot token in macOS Keychain for serve. Vault passphrase is not stored for this learning/smoke path."
-	initMsgWriteFailFmt           = "hush: init: write %s: %v"
-	initMsgServerComplete         = "hush: init: server bootstrap complete"
+	initMsgNoTTY                    = "hush: init: stdin must be an interactive terminal"
+	initMsgPassphraseTooShort       = "hush: init: passphrase must be at least 12 characters"
+	initMsgPassphraseMismatch       = "hush: init: passphrase confirmation does not match"
+	initMsgVaultExistsFmt           = "hush: init: vault already exists at %s"
+	initMsgConfigExistsFmt          = "hush: init: config already exists at %s"
+	initMsgKeychainExistsFmt        = "hush: init: keychain item already exists for service=%s account=%s"
+	initMsgPlatformUnsupported      = "hush: init: platform %s has no per-binary keychain ACL; init refuses to run"
+	initMsgMissingMachineIndex      = "hush: init: missing required flag: --machine-index"
+	initMsgMachineIndexInvalid      = "hush: init: --machine-index must be a non-negative integer"
+	initMsgFieldRequiredFmt         = "hush: init: %s is required"
+	initMsgKeychainStoreFailFmt     = "hush: init: keychain store failed: %v"
+	initMsgClientKeyFileFallbackFmt = "hush: init: keychain store failed: %v\n  fallback: wrote client key file instead; use --client-key-file with hush request."
+	initMsgKeychainLockedStoreFmt   = "hush: init: macOS login Keychain appears locked or refused the write: %v\n  next: run `security unlock-keychain ~/Library/Keychains/login.keychain-db`, then re-run `hush init server`."
+	initMsgExplicitStateKeychain    = "hush: init: --state-dir set; storing Discord bot token in macOS Keychain for serve. Vault passphrase is not stored for this learning/smoke path."
+	initMsgWriteFailFmt             = "hush: init: write %s: %v"
+	initMsgServerComplete           = "hush: init: server bootstrap complete"
 
 	// initMsgKeychainPreExplainFmt is the hush-authored explanation
 	// printed before every Keychain write call. The placeholders are
@@ -209,6 +210,8 @@ const (
 	promptListenAddr      = "Listen address (e.g. 100.96.10.4:7743): "
 	promptOwnerID         = "Discord owner ID (snowflake): "
 	promptApplicationID   = "Discord application ID (snowflake): "
+	promptApprovalChannel = "Discord approval channel ID (optional; empty sends DMs): "
+	promptAuditChannel    = "Discord audit channel ID (optional; empty disables mirror): "
 	promptBotToken        = "Discord bot token: " //nolint:gosec // prompt label, not a credential
 )
 
@@ -249,6 +252,9 @@ type initDeps struct {
 	// promptLine reads a non-secret line from stdin in production;
 	// tests substitute a deterministic reader.
 	promptLine func(in *os.File, prompt io.Writer, label string) (string, error)
+	// promptOptionalLine reads an optional non-secret line in production.
+	// Tests leave it nil unless they specifically exercise optional prompts.
+	promptOptionalLine func(in *os.File, prompt io.Writer, label string) (string, error)
 	// promptRecovery reads a single-character recovery choice
 	// (r/p/a/q) for per-artifact existing-state recovery. Tests
 	// substitute a scripted reader; the production binding reads
@@ -276,17 +282,18 @@ func productionInitDeps() (*initDeps, error) {
 		return nil, err
 	}
 	deps := &initDeps{
-		keychain:         kc,
-		binaryPath:       os.Executable,
-		randReader:       rand.Reader,
-		stateDirRoot:     "",
-		nowFn:            time.Now,
-		platformACL:      keychain.PerBinaryACLSupported,
-		promptSecret:     readPassphraseTTY,
-		promptLine:       readLineFromTTY,
-		promptRecovery:   defaultPromptRecovery,
-		isTTY:            defaultIsTTY,
-		deriveMasterSeed: keys.DeriveMasterSeed,
+		keychain:           kc,
+		binaryPath:         os.Executable,
+		randReader:         rand.Reader,
+		stateDirRoot:       "",
+		nowFn:              time.Now,
+		platformACL:        keychain.PerBinaryACLSupported,
+		promptSecret:       readPassphraseTTY,
+		promptLine:         readLineFromTTY,
+		promptOptionalLine: readLineFromTTY,
+		promptRecovery:     defaultPromptRecovery,
+		isTTY:              defaultIsTTY,
+		deriveMasterSeed:   keys.DeriveMasterSeed,
 	}
 	deps.runPreflight = defaultRunPreflightFor(deps)
 	return deps, nil
@@ -631,6 +638,20 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 			_ = pass.Destroy()
 			_ = stderr.WriteText(initMsgFieldRequiredFmt, "application_id")
 			return err
+		}
+		if approvalChannelID == "" && deps.promptOptionalLine != nil {
+			approvalChannelID, err = promptOptional(deps.promptOptionalLine, in, stderr.w, promptApprovalChannel)
+			if err != nil {
+				_ = pass.Destroy()
+				return err
+			}
+		}
+		if auditChannelID == "" && deps.promptOptionalLine != nil {
+			auditChannelID, err = promptOptional(deps.promptOptionalLine, in, stderr.w, promptAuditChannel)
+			if err != nil {
+				_ = pass.Destroy()
+				return err
+			}
 		}
 		botToken, err = deps.promptSecret(in, stderr.w, promptBotToken)
 		if err != nil {
@@ -987,7 +1008,7 @@ func runInitClient(ctx context.Context, stdout, stderr *Stream, in *os.File, cmd
 			_ = stderr.WriteText(initMsgKeychainStoreFailFmt, err)
 			return err
 		}
-		_ = stderr.WriteText(initMsgKeychainStoreFailFmt, err)
+		_ = stderr.WriteText(initMsgClientKeyFileFallbackFmt, err)
 	}
 	if strings.TrimSpace(deps.clientKeyFile) != "" {
 		if err := writeClientKeyFile(deps.clientKeyFile, priv); err != nil {
@@ -1094,6 +1115,14 @@ func writeClientKeyFile(path string, priv *securebytes.SecureBytes) error {
 
 // promptRequired re-prompts until a non-empty line is read or three
 // attempts fail.
+func promptOptional(reader func(*os.File, io.Writer, string) (string, error), in *os.File, prompt io.Writer, label string) (string, error) {
+	v, err := reader(in, prompt, label)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(v), nil
+}
+
 func promptRequired(reader func(*os.File, io.Writer, string) (string, error), in *os.File, prompt io.Writer, label, fieldName string) (string, error) {
 	for attempt := 0; attempt < 3; attempt++ {
 		v, err := reader(in, prompt, label)

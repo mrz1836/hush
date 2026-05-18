@@ -457,6 +457,20 @@ func TestInitServer_ExplicitStateDirStoresBotTokenButNotVaultPassphrase(t *testi
 	require.NoError(t, err)
 }
 
+func TestInitServer_InteractivePromptsOptionalDiscordChannels(t *testing.T) {
+	t.Parallel()
+	fx := newInitFixture(t)
+	fx.deps.promptOptionalLine = scriptedLineReader(t, []string{"111111111111111111", "222222222222222222"})
+
+	err := runInitServer(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, fx.deps)
+	require.NoError(t, err)
+
+	cfg, err := config.LoadServer(context.Background(), filepath.Join(fx.tempDir, "config.toml"))
+	require.NoError(t, err)
+	require.Equal(t, "111111111111111111", cfg.Server.DiscordApprovalChannelID)
+	require.Equal(t, "222222222222222222", cfg.Server.DiscordAuditChannelID)
+}
+
 func TestInitServer_ExplicitStateDirAllowsExistingDefaultKeychainItems(t *testing.T) {
 	t.Parallel()
 	fx := newInitFixture(t)
@@ -676,6 +690,24 @@ func TestInitClient_StoresInKeychainViaFake(t *testing.T) {
 	defer got.Destroy()
 	require.Equal(t, 32, got.Len())
 	require.Equal(t, testInitBinaryPath, fx.keychain.RecordedACL(kcServiceClient, "machine-3"))
+}
+
+func TestInitClient_KeyFileFallbackWhenKeychainDenied(t *testing.T) {
+	t.Parallel()
+	fx := newInitFixture(t)
+	fx.deps.clientNonInteractive = true
+	fx.deps.clientPassphrase = testGoodPassphrase
+	fx.deps.keychain = denyStoreKeychain{}
+	keyFile := filepath.Join(fx.tempDir, "client-machine-1.key")
+	fx.deps.clientKeyFile = keyFile
+
+	err := runClientWithFlags(context.Background(), fx, "1")
+	require.NoError(t, err)
+	require.Contains(t, fx.stderr.String(), "fallback: wrote client key file instead")
+
+	raw, err := os.ReadFile(keyFile)
+	require.NoError(t, err)
+	require.Regexp(t, `^[0-9a-f]{64}\n$`, string(raw))
 }
 
 func TestInitClient_NonInteractiveRegistersClient(t *testing.T) {

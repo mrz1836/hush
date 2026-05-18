@@ -50,7 +50,7 @@ const (
 	requestMsgServerTimeout      = "hush: request: server reported approval timeout"
 	requestMsgClientDeadline     = "hush: request: approval wait exceeded --ttl"
 	requestMsgDiscordUnavailable = "hush: request: Discord bot unavailable; vault server returned 503"
-	requestMsgPartialFetchFmt    = "hush: request: secret %q not present in vault; aborting before child start"
+	requestMsgPartialFetchFmt    = "hush: request: secret %q not present in vault; aborting before child start\n  if you added it after hush serve started, restart serve or send SIGHUP to reload the vault."
 	requestMsgInterrupted        = "hush: request: interrupted; pending request will expire server-side at --ttl"
 	requestMsgRateLimited        = "hush: request: rate limited; retry shortly"
 	requestMsgBadSignature       = "hush: request: server rejected client key signature"
