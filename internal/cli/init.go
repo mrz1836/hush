@@ -45,7 +45,7 @@ const (
 	initMsgMachineIndexInvalid  = "hush: init: --machine-index must be a non-negative integer"
 	initMsgFieldRequiredFmt     = "hush: init: %s is required"
 	initMsgKeychainStoreFailFmt = "hush: init: keychain store failed: %v"
-	initMsgKeychainSkipped      = "hush: init: explicit state dir set; skipped Keychain writes. Set HUSH_DISCORD_BOT_TOKEN when running serve."
+	initMsgKeychainSkipped      = "hush: init: explicit state dir set; skipped Keychain writes. Serve will use the configured bot token Keychain item, or HUSH_DISCORD_BOT_TOKEN if you choose to override it."
 	initMsgWriteFailFmt         = "hush: init: write %s: %v"
 	initMsgServerComplete       = "hush: init: server bootstrap complete"
 )
