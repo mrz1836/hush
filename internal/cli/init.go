@@ -785,7 +785,7 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 	if explicitStateDir {
 		_ = stderr.WriteText(initMsgExplicitStateKeychain)
 		if botToken != nil {
-			if err := storeBotTokenForDecision(ctx, deps, stderr, keychainItems, botToken, binPath, decisions); err != nil {
+			if err := storeBotTokenForDecision(ctx, deps, stderr, in, keychainItems, botToken, binPath, decisions); err != nil {
 				return err
 			}
 		}
@@ -800,7 +800,7 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 		_ = stderr.WriteText(initMsgKeychainStoreFailFmt, err)
 		return err
 	}
-	if err := storeBotTokenForDecision(ctx, deps, stderr, keychainItems, botToken, binPath, decisions); err != nil {
+	if err := storeBotTokenForDecision(ctx, deps, stderr, in, keychainItems, botToken, binPath, decisions); err != nil {
 		return err
 	}
 	_ = stderr.WriteText(initMsgServerComplete)
@@ -823,6 +823,7 @@ func storeBotTokenForDecision(
 	ctx context.Context,
 	deps *initDeps,
 	stderr *Stream,
+	in *os.File,
 	keychainItems serverKeychainItemNames,
 	botToken *securebytes.SecureBytes,
 	binPath string,
@@ -836,15 +837,34 @@ func storeBotTokenForDecision(
 	default:
 		emitKeychainPreExplain(stderr, "Discord bot token", keychainItems.discordService, kcAccountServer)
 		if err := deps.keychain.Store(ctx, keychainItems.discordService, kcAccountServer, botToken, binPath); err != nil {
+			if !isRecoverableBotTokenStoreError(err) {
+				_ = stderr.WriteText(initMsgKeychainStoreFailFmt, err)
+				return err
+			}
 			if errors.Is(err, keychain.ErrKeychainLocked) {
 				_ = stderr.WriteText(initMsgKeychainLockedStoreFmt, err)
 			} else {
 				_ = stderr.WriteText(initMsgKeychainStoreFailFmt, err)
 			}
-			return err
+
+			decision, recoverErr := resolveKeychainACL(ctx, in, stderr, deps, keychainItems.discordService, kcAccountServer)
+			if recoverErr != nil {
+				return recoverErr
+			}
+			if decision == onExistingEnvToken || decision == onExistingReuse || decision == onExistingRepair {
+				return nil
+			}
+			if retryErr := deps.keychain.Store(ctx, keychainItems.discordService, kcAccountServer, botToken, binPath); retryErr != nil {
+				_ = stderr.WriteText(initMsgKeychainStoreFailFmt, retryErr)
+				return retryErr
+			}
 		}
 		return nil
 	}
+}
+
+func isRecoverableBotTokenStoreError(err error) bool {
+	return errors.Is(err, keychain.ErrKeychainLocked) || errors.Is(err, keychain.ErrKeychainPermissionDenied)
 }
 
 // emitKeychainPreExplain writes the hush-authored multi-line

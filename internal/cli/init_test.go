@@ -488,6 +488,23 @@ func TestInitServer_DefaultStateStillFailsWhenKeychainDenied(t *testing.T) {
 	require.Contains(t, fx.stderr.String(), "keychain store failed")
 }
 
+func TestInitServer_ExplicitStateKeychainStoreDeniedCanUseEnvFallback(t *testing.T) {
+	t.Parallel()
+	fx := newInitFixture(t)
+	explicitDir := filepath.Join(fx.tempDir, "denied-store-env-fallback")
+	fx.deps.stateDirRoot = explicitDir
+	fx.deps.serverInputs.stateDir = explicitDir
+	fx.deps.keychain = denyStoreKeychain{}
+	fx.deps.promptSecret = scriptedSecretReader(t, []string{testGoodPassphrase, testGoodPassphrase, testBotTokenInput})
+	fx.deps.promptRecovery = scriptedRecoveryReader(t, []rune{keychainACLChoiceEnvToken})
+
+	err := runInitServer(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, fx.deps)
+	require.NoError(t, err)
+	require.Contains(t, fx.stderr.String(), "Use HUSH_DISCORD_BOT_TOKEN env-var instead")
+	require.Contains(t, fx.stderr.String(), initMsgKeychainEnvTokenFallbackFmt)
+	require.Contains(t, fx.stderr.String(), initMsgServerComplete)
+}
+
 func TestInitServer_RefusesPreExistingVault(t *testing.T) {
 	t.Parallel()
 	fx := newInitFixture(t)
