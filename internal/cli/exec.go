@@ -70,11 +70,19 @@ func buildChildEnv(scope []string, secrets []*securebytes.SecureBytes, parentEnv
 // exec.CommandContext with the supplied env, wires stdin/stdout/stderr
 // to the parent's, and returns the child's exit code wrapped in
 // *errChildExitCode for mapErr propagation.
-func runChild(ctx context.Context, deps requestDeps, program string, childArgs, env []string, stderr *Stream) error {
+func preflightExecProgram(deps requestDeps, program string, stderr *Stream) (string, error) {
 	resolved, err := deps.looker(program)
 	if err != nil {
 		_ = stderr.WriteText("hush: request: --exec program %q not found: %s", program, err)
-		return fmt.Errorf("hush/cli: request: lookup %q: %w", program, err)
+		return "", fmt.Errorf("hush/cli: request: lookup %q: %w", program, err)
+	}
+	return resolved, nil
+}
+
+func runChild(ctx context.Context, deps requestDeps, program string, childArgs, env []string, stderr *Stream) error {
+	resolved, err := preflightExecProgram(deps, program, stderr)
+	if err != nil {
+		return err
 	}
 	cmd := exec.CommandContext(ctx, resolved, childArgs...) //nolint:gosec // operator-supplied program path; LookPath-resolved
 	cmd.Path = resolved

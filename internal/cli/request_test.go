@@ -909,6 +909,32 @@ func TestRequest_NeverWritesSecretToDisk(t *testing.T) {
 	})
 }
 
+func TestRequest_BadExecProgramFailsBeforeApproval(t *testing.T) {
+	r := newRequestRunner(t)
+	r.flags.execProgram = "printenv HUSH_SMOKE_TEST"
+	claimCalls := int32(0)
+	r.fakeSrv.claimMu.Lock()
+	r.fakeSrv.claimResponse = func(_ claimWireRequest) (int, []byte) {
+		atomic.AddInt32(&claimCalls, 1)
+		return http.StatusInternalServerError, nil
+	}
+	r.fakeSrv.claimMu.Unlock()
+
+	err := r.run(t.Context())
+	if err == nil {
+		t.Fatalf("want exec lookup error, got nil")
+	}
+	if got := atomic.LoadInt32(&claimCalls); got != 0 {
+		t.Fatalf("claim calls = %d; want 0 before Discord approval", got)
+	}
+	if got := atomic.LoadInt32(r.runnerCalls); got != 0 {
+		t.Fatalf("runner calls = %d; want 0", got)
+	}
+	if !strings.Contains(r.stderrBuf.String(), "--exec program") {
+		t.Fatalf("stderr did not explain exec lookup: %q", r.stderrBuf.String())
+	}
+}
+
 func TestRequest_PartialFetchFailureAbortsBeforeChild(t *testing.T) {
 	r := newRequestRunner(t)
 	r.flags.scope = []string{"SCOPE_A", "SCOPE_B"}
