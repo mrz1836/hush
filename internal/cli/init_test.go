@@ -421,8 +421,10 @@ func TestInitServer_ExplicitStateDirUsesDefaultConfiguredKeychainItem(t *testing
 
 	_, err = fx.keychain.Retrieve(context.Background(), kcServiceVaultPassphrase, kcAccountServer)
 	require.True(t, errors.Is(err, keychain.ErrKeychainItemNotFound))
-	_, err = fx.keychain.Retrieve(context.Background(), "hush-discord", kcAccountServer)
-	require.True(t, errors.Is(err, keychain.ErrKeychainItemNotFound))
+	tok, err := fx.keychain.Retrieve(context.Background(), "hush-discord", kcAccountServer)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tok.Destroy() })
+	require.NoError(t, tok.Use(func(b []byte) { require.Equal(t, testBotTokenInput, string(b)) }))
 
 	loaded, err := config.LoadServer(context.Background(), filepath.Join(explicitDir, "config.toml"))
 	require.NoError(t, err)
@@ -430,19 +432,24 @@ func TestInitServer_ExplicitStateDirUsesDefaultConfiguredKeychainItem(t *testing
 	require.Equal(t, "hush-discord", loaded.Discord.BotTokenKeychainItem)
 }
 
-func TestInitServer_ExplicitStateDirSkipsKeychainWritesAndBotTokenPrompt(t *testing.T) {
+func TestInitServer_ExplicitStateDirStoresBotTokenButNotVaultPassphrase(t *testing.T) {
 	t.Parallel()
 	fx := newInitFixture(t)
 	explicitDir := filepath.Join(fx.tempDir, "keychain-denied-vault")
 	fx.deps.stateDirRoot = explicitDir
 	fx.deps.serverInputs.stateDir = explicitDir
-	fx.deps.keychain = panicStoreKeychain{}
-	fx.deps.promptSecret = scriptedSecretReader(t, []string{testGoodPassphrase, testGoodPassphrase})
+	fx.deps.promptSecret = scriptedSecretReader(t, []string{testGoodPassphrase, testGoodPassphrase, testBotTokenInput})
 
 	err := runInitServer(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, fx.deps)
 	require.NoError(t, err)
-	require.Contains(t, fx.stderr.String(), initMsgKeychainSkipped)
+	require.Contains(t, fx.stderr.String(), initMsgExplicitStateKeychain)
 	require.Contains(t, fx.stderr.String(), initMsgServerComplete)
+	_, err = fx.keychain.Retrieve(context.Background(), kcServiceVaultPassphrase, kcAccountServer)
+	require.True(t, errors.Is(err, keychain.ErrKeychainItemNotFound))
+	tok, err := fx.keychain.Retrieve(context.Background(), "hush-discord", kcAccountServer)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tok.Destroy() })
+	require.NoError(t, tok.Use(func(b []byte) { require.Equal(t, testBotTokenInput, string(b)) }))
 
 	_, err = os.Stat(filepath.Join(explicitDir, "secrets.vault"))
 	require.NoError(t, err)
@@ -456,12 +463,15 @@ func TestInitServer_ExplicitStateDirAllowsExistingDefaultKeychainItems(t *testin
 	explicitDir := filepath.Join(fx.tempDir, "existing-keychain-vault")
 	fx.deps.stateDirRoot = explicitDir
 	fx.deps.serverInputs.stateDir = explicitDir
-	fx.deps.promptSecret = scriptedSecretReader(t, []string{testGoodPassphrase, testGoodPassphrase})
+	fx.deps.promptSecret = scriptedSecretReader(t, []string{testGoodPassphrase, testGoodPassphrase, testBotTokenInput})
 
 	prep, err := securebytes.New([]byte("preexisting-token"))
 	require.NoError(t, err)
 	require.NoError(t, fx.keychain.Store(context.Background(), "hush-discord", kcAccountServer, prep, "/abs/other"))
 	require.NoError(t, prep.Destroy())
+	fx.deps.promptRecovery = func(*os.File, io.Writer, string) (rune, error) {
+		return recoveryChoiceReuse, nil
+	}
 
 	err = runInitServer(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, fx.deps)
 	require.NoError(t, err)

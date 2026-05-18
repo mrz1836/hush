@@ -81,20 +81,20 @@ const keychainDeleteConfirmation = "delete"
 // Locked literal-text strings (contracts/cli-init.md §2.3 / §3.3).
 // Tests assert byte-equal on these messages.
 const (
-	initMsgNoTTY                = "hush: init: stdin must be an interactive terminal"
-	initMsgPassphraseTooShort   = "hush: init: passphrase must be at least 12 characters"
-	initMsgPassphraseMismatch   = "hush: init: passphrase confirmation does not match"
-	initMsgVaultExistsFmt       = "hush: init: vault already exists at %s"
-	initMsgConfigExistsFmt      = "hush: init: config already exists at %s"
-	initMsgKeychainExistsFmt    = "hush: init: keychain item already exists for service=%s account=%s"
-	initMsgPlatformUnsupported  = "hush: init: platform %s has no per-binary keychain ACL; init refuses to run"
-	initMsgMissingMachineIndex  = "hush: init: missing required flag: --machine-index"
-	initMsgMachineIndexInvalid  = "hush: init: --machine-index must be a non-negative integer"
-	initMsgFieldRequiredFmt     = "hush: init: %s is required"
-	initMsgKeychainStoreFailFmt = "hush: init: keychain store failed: %v"
-	initMsgKeychainSkipped      = "hush: init: --state-dir set; macOS Keychain writes are skipped for this learning/smoke path. Run hush serve with HUSH_DISCORD_BOT_TOKEN exported, or re-run hush init server without --state-dir to populate the default Keychain items."
-	initMsgWriteFailFmt         = "hush: init: write %s: %v"
-	initMsgServerComplete       = "hush: init: server bootstrap complete"
+	initMsgNoTTY                 = "hush: init: stdin must be an interactive terminal"
+	initMsgPassphraseTooShort    = "hush: init: passphrase must be at least 12 characters"
+	initMsgPassphraseMismatch    = "hush: init: passphrase confirmation does not match"
+	initMsgVaultExistsFmt        = "hush: init: vault already exists at %s"
+	initMsgConfigExistsFmt       = "hush: init: config already exists at %s"
+	initMsgKeychainExistsFmt     = "hush: init: keychain item already exists for service=%s account=%s"
+	initMsgPlatformUnsupported   = "hush: init: platform %s has no per-binary keychain ACL; init refuses to run"
+	initMsgMissingMachineIndex   = "hush: init: missing required flag: --machine-index"
+	initMsgMachineIndexInvalid   = "hush: init: --machine-index must be a non-negative integer"
+	initMsgFieldRequiredFmt      = "hush: init: %s is required"
+	initMsgKeychainStoreFailFmt  = "hush: init: keychain store failed: %v"
+	initMsgExplicitStateKeychain = "hush: init: --state-dir set; storing Discord bot token in macOS Keychain for serve. Vault passphrase is not stored for this learning/smoke path."
+	initMsgWriteFailFmt          = "hush: init: write %s: %v"
+	initMsgServerComplete        = "hush: init: server bootstrap complete"
 
 	// initMsgKeychainPreExplainFmt is the hush-authored explanation
 	// printed before every Keychain write call. The placeholders are
@@ -630,12 +630,10 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 			_ = stderr.WriteText(initMsgFieldRequiredFmt, "application_id")
 			return err
 		}
-		if !explicitStateDir {
-			botToken, err = deps.promptSecret(in, stderr.w, promptBotToken)
-			if err != nil {
-				_ = pass.Destroy()
-				return err
-			}
+		botToken, err = deps.promptSecret(in, stderr.w, promptBotToken)
+		if err != nil {
+			_ = pass.Destroy()
+			return err
 		}
 	}
 	defer func() { _ = pass.Destroy() }()
@@ -648,7 +646,7 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 		_ = stderr.WriteText(initMsgPassphraseTooShort)
 		return errPassphraseTooShort
 	}
-	if !explicitStateDir && (botToken == nil || botToken.Len() == 0) {
+	if (botToken == nil || botToken.Len() == 0) && (!explicitStateDir || !deps.serverNonInteractive) {
 		_ = stderr.WriteText(initMsgFieldRequiredFmt, "discord_bot_token")
 		return errMissingFlag
 	}
@@ -779,14 +777,17 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 		return fmt.Errorf("hush/cli: init: round-trip-validate config: %w", err)
 	}
 
-	// 10. Store the keychain items. Explicit-state bootstrap is the
-	// learning/smoke path, so skip Keychain writes entirely: macOS
-	// security prompts for "password data for new item" in some terminal
-	// contexts, which is confusing and unnecessary because serve already
-	// supports HUSH_DISCORD_BOT_TOKEN and the operator keeps the vault
-	// passphrase. Default-state bootstrap remains strict.
+	// 10. Store the keychain items. For explicit-state learning/smoke paths,
+	// store only the Discord bot token so `hush serve` works without a second
+	// manual token export. Keep the vault passphrase out of Keychain for this
+	// isolated path; the operator supplies it at serve time.
 	if explicitStateDir {
-		_ = stderr.WriteText(initMsgKeychainSkipped)
+		_ = stderr.WriteText(initMsgExplicitStateKeychain)
+		if botToken != nil {
+			if err := storeBotTokenForDecision(ctx, deps, stderr, keychainItems, botToken, binPath, decisions); err != nil {
+				return err
+			}
+		}
 		_ = stderr.WriteText(initMsgServerComplete)
 		return nil
 	}

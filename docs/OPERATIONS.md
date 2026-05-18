@@ -191,7 +191,9 @@ Relevant flags for `hush init server`:
   `--non-interactive`; `--discord-approval-channel-id` /
   `--discord-audit-channel-id` are optional.
 - `--state-dir <path>` — override the default `~/.hush` state dir
-  (smoke / learning path; Keychain writes are skipped).
+  (smoke / learning path). Interactive setup still stores the Discord
+  bot token in Keychain so `hush serve` does not require a second token
+  paste; the vault passphrase is not stored for explicit-state runs.
 - `--on-existing prompt|reuse|repair|archive|fail` — recovery mode for
   pre-existing artifacts. Default is `prompt` interactively / `fail`
   non-interactively. `archive` renames colliding artifacts to

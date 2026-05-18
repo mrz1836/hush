@@ -79,7 +79,7 @@ func TestT273_Fixture2_ExplicitStateDirTreatsDefaultTokenAsExternal(t *testing.T
 	explicitDir := filepath.Join(fx.tempDir, "explicit-learning-dir")
 	fx.deps.stateDirRoot = explicitDir
 	fx.deps.serverInputs.stateDir = explicitDir
-	fx.deps.promptSecret = scriptedSecretReader(t, []string{testGoodPassphrase, testGoodPassphrase})
+	fx.deps.promptSecret = scriptedSecretReader(t, []string{testGoodPassphrase, testGoodPassphrase, testBotTokenInput})
 
 	// Pre-populate the default-location bot-token item with arbitrary
 	// bytes so a Delete or Store would corrupt it. securebytes.New
@@ -91,11 +91,10 @@ func TestT273_Fixture2_ExplicitStateDirTreatsDefaultTokenAsExternal(t *testing.T
 	require.NoError(t, fx.keychain.Store(context.Background(), "hush-discord", kcAccountServer, prep, "/abs/external"))
 	require.NoError(t, prep.Destroy())
 
-	// promptRecovery must NOT fire — the explicit-state-dir flow skips
-	// the Keychain probe entirely so no per-artifact prompt is issued
-	// for the bot-token slot.
+	// Existing readable token is offered as a reusable artifact; choose reuse so
+	// the explicit-state-dir flow does not corrupt an existing default token.
 	fx.deps.promptRecovery = func(*os.File, io.Writer, string) (rune, error) {
-		return 0, errors.New("explicit-state-dir flow must not prompt for the default-location Keychain item")
+		return recoveryChoiceReuse, nil
 	}
 
 	require.NoError(t, runInitServer(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, fx.deps))
@@ -110,9 +109,9 @@ func TestT273_Fixture2_ExplicitStateDirTreatsDefaultTokenAsExternal(t *testing.T
 	require.Equal(t, "/abs/external", fx.keychain.RecordedACL("hush-discord", kcAccountServer),
 		"pre-existing ACL must survive explicit-state-dir init")
 
-	// Init completes with the documented learning/smoke-path banner.
+	// Init completes and does not require a second serve-time token paste.
 	transcript := fx.stderr.String()
-	require.Contains(t, transcript, initMsgKeychainSkipped)
+	require.Contains(t, transcript, initMsgExplicitStateKeychain)
 	require.Contains(t, transcript, initMsgServerComplete)
 
 	// The classifier, when explicitly invoked against the same target,

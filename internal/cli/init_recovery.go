@@ -116,19 +116,17 @@ func recoverExistingArtifacts(
 ) (recoveryDecisions, error) {
 	decisions := newRecoveryDecisions()
 
-	// Drop the Keychain probe when --state-dir is explicit: that
-	// flow skips Keychain writes entirely, so a pre-existing
-	// bot-token item is neither read nor written.
+	// Always classify the Discord bot-token Keychain item. Explicit --state-dir
+	// flows still need `hush serve` to read the bot token without making the
+	// operator paste it a second time.
 	inputs := setup.StateInputs{
 		ConfigPath: configPath,
 		VaultPath:  vaultPath,
 		StateDir:   stateDir,
-	}
-	if !explicitStateDir {
-		inputs.KeychainItem = setup.KeychainTarget{
+		KeychainItem: setup.KeychainTarget{
 			Service: keychainItems.discordService,
 			Account: kcAccountServer,
-		}
+		},
 	}
 
 	classifier := &setup.Classifier{
@@ -247,7 +245,10 @@ func applyLegacyKeychainGuards(
 	explicitStateDir bool,
 ) error {
 	if explicitStateDir {
-		return nil
+		if decisions.modeFor(setup.ArtifactKeychainToken) != onExistingFail {
+			return nil
+		}
+		return guardKeychainAbsent(ctx, deps.keychain, keychainItems.discordService, kcAccountServer, stderr)
 	}
 	if err := guardKeychainAbsent(ctx, deps.keychain, keychainItems.vaultPassphraseService, kcAccountServer, stderr); err != nil {
 		return err
