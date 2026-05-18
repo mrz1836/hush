@@ -581,6 +581,7 @@ func TestGuardFileAbsent_ReturnsNilOnAbsent(t *testing.T) {
 func TestRunInitServer_VaultExistsRefuses(t *testing.T) {
 	t.Parallel()
 	fx := newInitFixture(t)
+	fx.deps.serverOnExisting = onExistingFail
 	require.NoError(t, os.WriteFile(filepath.Join(fx.tempDir, "secrets.vault"), []byte("x"), 0o600))
 
 	err := runInitServer(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, fx.deps)

@@ -56,6 +56,11 @@ func (s *Server) runStartupChecks(ctx context.Context) error {
 // probe per request. When RequireNTPSync is false the cache is also
 // flagged true (the operator opted out of the gate; reporting "in sync"
 // matches the gate's verdict).
+//
+// When [Deps.AllowClockSkew] is set, a would-be failure is downgraded to
+// a logged warning and a single [AuditClockSkewOverride] event; the
+// chassis continues startup. /hz still reports clock_in_sync=false so
+// downstream tooling can see the truth (T-278 Plan AC-8 / Task 4.2).
 func (s *Server) checkClockSync(ctx context.Context) error {
 	if !s.cfg.Security.RequireNTPSync {
 		s.clockInSync.Store(true)
@@ -65,17 +70,47 @@ func (s *Server) checkClockSync(ctx context.Context) error {
 	defer cancel()
 
 	synced, drift, err := s.clockProbe(probeCtx)
-	if err != nil {
-		return fmt.Errorf("server: clock_sync: probe failed: %w", ErrClockUnsynchronised)
-	}
-	if !synced {
-		return fmt.Errorf("server: clock_sync: host clock not NTP-synchronised: %w", ErrClockUnsynchronised)
+	switch {
+	case err != nil:
+		return s.handleClockFailure(ctx,
+			"probe failed",
+			fmt.Errorf("server: clock_sync: probe failed: %w", ErrClockUnsynchronised))
+	case !synced:
+		return s.handleClockFailure(ctx,
+			"not_synchronised",
+			fmt.Errorf("server: clock_sync: host clock not NTP-synchronised: %w", ErrClockUnsynchronised))
 	}
 	if abs := absDuration(drift); abs > s.cfg.Security.MaxClockDrift {
-		return fmt.Errorf("server: clock_sync: drift %v exceeds %v: %w",
-			drift, s.cfg.Security.MaxClockDrift, ErrClockUnsynchronised)
+		return s.handleClockFailure(ctx,
+			fmt.Sprintf("drift %v exceeds %v", drift, s.cfg.Security.MaxClockDrift),
+			fmt.Errorf("server: clock_sync: drift %v exceeds %v: %w",
+				drift, s.cfg.Security.MaxClockDrift, ErrClockUnsynchronised))
 	}
 	s.clockInSync.Store(true)
+	return nil
+}
+
+// handleClockFailure converts a clock-sync failure into either the
+// historical hard-error return (default) or a logged warning + audit
+// override (when --allow-clock-skew is set). Returning nil from the
+// override branch lets the rest of the startup-check sequence run.
+func (s *Server) handleClockFailure(ctx context.Context, reason string, err error) error {
+	if !s.allowClockSkew {
+		return err
+	}
+	if writeErr := s.audit.Write(ctx, AuditEvent{
+		Type: AuditClockSkewOverride,
+		At:   s.clock(),
+		Detail: map[string]string{
+			"reason": reason,
+		},
+	}); writeErr != nil {
+		s.logger.WarnContext(ctx, "audit write clock_skew_override failed", "err", writeErr.Error())
+	}
+	s.logger.WarnContext(ctx, "clock-sync override active",
+		"reason", reason,
+		"err", err.Error(),
+	)
 	return nil
 }
 

@@ -69,7 +69,7 @@ find ~ -name "signing.key" -o -name "*.pem" -o -name "*.key"
 | Audit trail tampered with | Every event ECDSA-signed and hash-chained. Modification breaks the chain. |
 | Port scanner discovers vault API | Random API path prefix. Standard probes get 404. |
 | Malware reads Keychain for vault passphrase | **Mitigated.** Keychain items created with `-T /usr/local/bin/hush` ACL. Other processes trigger a system Keychain prompt. Management commands require interactive TTY passphrase. |
-| Discord bot token stolen → auto-approve sessions | **Mitigated.** Bot token in Keychain (not env var). Server monitors WebSocket disconnect — unexpected disconnect → WARN log + audit + refusal of new `/claim`. Attacker's competing bot would have to keep displacing the real one, which is detectable. |
+| Discord bot token stolen → auto-approve sessions | **Mitigated.** Bot token in Keychain by default (see §2.4 for the env-token fallback positioning). Server monitors WebSocket disconnect — unexpected disconnect → WARN log + audit + refusal of new `/claim`. Attacker's competing bot would have to keep displacing the real one, which is detectable. |
 | Discord API outage → no new sessions | **Accepted.** Existing sessions continue. New sessions blocked with 503. Plan TTLs for full-day coverage. |
 | Rogue process runs `hush secret add` on vault host | **Mitigated.** Management commands refuse piped stdin and Keychain reads. Only an interactive TTY can modify secrets. |
 
@@ -98,6 +98,62 @@ find ~ -name "signing.key" -o -name "*.pem" -o -name "*.key"
 - Vault server bound to the Tailscale interface IP, never `0.0.0.0`.
 - Tailscale ACLs restrict port 7743 to `tag:trusted → tag:sandbox`.
 - Vault server never reachable from the public internet.
+
+### 2.4 Bot token storage (macOS Keychain default, env-token fallback)
+
+On macOS the Discord bot token is stored in the **OS Keychain by default**,
+under service `hush-discord`, ACL-restricted to the hush binary via
+`-T /usr/local/bin/hush`. This is the recommended posture and the path
+`hush init server` takes when no Keychain failure is detected.
+
+`HUSH_DISCORD_BOT_TOKEN` (env-var mode) is a **supported fallback**, not a
+peer default. Use Keychain when possible. The env-token path exists for two
+documented situations:
+
+- The host has no Keychain available (e.g. Linux vault host).
+- The Keychain item exists but the OS denies the read (ACL drift, exit 51 /
+  `errSecAuthFailed` / `errSecInteractionNotAllowed`) and the operator
+  consciously picks the env-token branch from the guided flow's recovery
+  menu.
+
+Why Keychain is preferred:
+
+| Property | Keychain | `HUSH_DISCORD_BOT_TOKEN` env-var |
+|----------|----------|----------------------------------|
+| Per-binary ACL | Yes — only `/usr/local/bin/hush` can read it without a system prompt. | No — any process running as the same user can read the env. |
+| Visibility in `ps eww` / `/proc/{pid}/environ` | Not exposed. | Exposed for the lifetime of the serving process. |
+| Survives reboot | Yes. | Only if exported from a login profile (which we explicitly avoid — secrets on disk are the threat we are eliminating). |
+| Bootstrap UX | One-time `security` ACL prompt. | Must be exported in the operator's terminal before every `hush serve`. |
+
+`hush init server` enforces this positioning: env-token mode is offered
+only as a labelled menu item (`[3] Use HUSH_DISCORD_BOT_TOKEN env-var
+instead (recommended only if Keychain is unavailable)`) after a Keychain
+failure, never as a silent default.
+
+#### Keychain ACL repair reference
+
+When the existing `hush-discord` Keychain item is unreadable, the guided
+flow renders an ACL-denial panel and offers ACL repair as choice `[1]`.
+The exact `security` command the panel emits is:
+
+```bash
+security set-generic-password-partition-list \
+  -S apple-tool:,apple: \
+  -s hush-discord -a "$USER" \
+  ~/Library/Keychains/login.keychain-db
+```
+
+Substitute the `-a` account for whatever the original item was created
+with (the panel prints the exact pair). After running it, return to the
+guided flow and pick `[1]` again to re-check the Keychain — hush re-runs
+only the Keychain readability check from the preflight registry.
+
+If repair is not feasible, choice `[2]` (delete-and-recreate, requires
+typing `delete` to confirm; audit-logged) and choice `[3]` (env-token
+fallback per the table above) remain available.
+
+For the operational walkthrough, see `docs/OPERATIONS.md` §1
+("First-run setup") and §4 ("Structured error reference").
 
 ---
 

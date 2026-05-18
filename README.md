@@ -29,78 +29,74 @@ files not exist.
 
 ## Quick start
 
-> **Status:** v0.1.0 is a private MVP. The end-to-end flow has been
-> validated piecewise via the SDD-25 lifecycle harness; a freshly-built
-> hush install on a clean operator setup has not yet been independently
-> verified end-to-end. Treat the steps below as the documented happy
-> path, not a guarantee.
+> **Status:** v0.1.0 is a private MVP. Treat the steps below as the
+> documented happy path, not a guarantee.
 
-Hush is a two-host system. You'll need:
+Prerequisites: a vault host and an agent host on the same Tailscale
+tailnet, plus a Discord bot you control
+(<https://discord.com/developers/applications>) for the approval channel.
 
-1. **Vault host** — a machine you trust to hold the encrypted vault and
-   the operator's master key (your laptop, a home-lab box, or a small
-   always-on machine on Tailscale). macOS or Linux.
-2. **Agent host** — wherever your AI agent / shell actually runs. May be
-   the same physical machine, may not.
-3. **Tailscale** — both hosts must be on the same tailnet.
-4. **Discord bot** — register an application at
-   <https://discord.com/developers/applications>, capture the bot token,
-   and add the bot to a server you control. The bot DMs you to approve
-   each claim.
-
-Build the binary:
+Build and install:
 
 ```bash
-git clone https://github.com/mrz1836/hush.git
-cd hush
-magex build                                # produces ./cmd/hush/hush
-sudo install -m 0755 cmd/hush/hush /usr/local/bin/hush
+git clone https://github.com/mrz1836/hush.git && cd hush
+magex build && sudo install -m 0755 cmd/hush/hush /usr/local/bin/hush
 ```
 
-(`magex` is the project's mage-x task runner; install instructions live
-at <https://github.com/mrz1818/mage-x>.)
-
-Bootstrap the vault host:
+Fast confidence check — **one command, fake secret, real Discord approval**:
 
 ```bash
-# 1. Create vault, derive keys, store Discord bot token in OS keychain.
-hush init server
+hush smoke --state-dir ~/.hush-smoke --reset
+```
 
-# 2. Add a secret (interactive TTY only — prompts for the value).
+`hush smoke` walks the setup prompts, creates an isolated test vault, adds
+`HUSH_SMOKE_TEST=hello-from-hush`, starts a temporary Tailscale-only server,
+enrolls a client, asks you to approve in Discord, verifies the fake secret,
+and then shuts the temporary server down. Clean smoke artifacts safely with
+`hush smoke clean` (archives by default).
+
+Bootstrap the vault host manually:
+
+```bash
+hush init server          # guided / interactive; preflight + prompts
 hush secret add OPENAI_API_KEY
-
-# 3. Start the server (binds to your Tailscale interface; refuses public IPs).
-hush serve
+hush serve                # binds Tailscale interface, brokers approvals
 ```
+
+During `hush init server`, set `discord_approval_channel_id` if you want
+approvals in a Discord channel instead of owner DMs. On macOS, if the login
+Keychain is locked or unavailable, choose the env-token fallback and run
+`hush serve` with `HUSH_DISCORD_BOT_TOKEN` exported in that terminal.
 
 Enrol the agent host:
 
 ```bash
-# 4. On the agent host (also on your tailnet):
 hush init client --machine-index 1
-
-# 5. Request a secret and exec a child with it injected as an env var.
 hush request \
-  --server "https://<vault-host-tailscale-ip>:7743" \
-  --machine-index 1 \
-  --scope OPENAI_API_KEY \
-  --max-uses 1 \
-  --ttl 5m \
-  --reason "smoke test" \
-  --exec "env | grep OPENAI_API_KEY"
+  --server "http://<vault-host-tailscale-ip>:7743/h/<path-prefix>" \
+  --machine-index 1 --scope OPENAI_API_KEY \
+  --max-uses 1 --ttl 5m --reason "smoke test" \
+  --exec printenv -- OPENAI_API_KEY
 ```
 
-Step 5 will pop a Discord DM on your phone with **Approve** / **Deny**
-buttons. Approve, and the child process you named in `--exec` runs with
-`OPENAI_API_KEY` in its environment — and **only** in its environment;
-nothing is written to disk on the agent host.
+Approve on Discord; the child process you named in `--exec` runs with
+`OPENAI_API_KEY` in its environment — and only there. `--exec` names a
+program, not a shell string; pass child arguments after `--`. Nothing is
+written to disk on the agent host.
 
-For long-running daemons, use `hush supervise` with a per-daemon
-supervisor TOML (see [`docs/DAEMONS.md`](docs/DAEMONS.md) and
-[`deploy/examples/supervisors/`](deploy/examples/supervisors/) for
-templates). For day-to-day operational reference, see
-[`docs/OPERATIONS.md`](docs/OPERATIONS.md). For the full server +
-supervisor TOML schemas, see
+`hush init server` is the canonical first-run entry point. It runs a
+diagnostic-first preflight, prompts for the inputs it actually needs,
+classifies pre-existing state per-artifact, and never silently overwrites.
+When it asks for a listen address, use the **vault host's Tailscale IPv4**
+plus a free port (for example, run `printf '%s:7743\n' "$(tailscale ip -4)"`
+on the server host). Do not use the laptop/client IP.
+For the full walkthrough — Keychain ACL recovery, clock-skew override,
+`--non-interactive` mode — see [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
+For Keychain vs `HUSH_DISCORD_BOT_TOKEN` positioning and the threat
+model, see [`docs/SECURITY.md`](docs/SECURITY.md) §2.4. For long-running
+daemons, see [`docs/DAEMONS.md`](docs/DAEMONS.md) and
+[`deploy/examples/supervisors/`](deploy/examples/supervisors/).
+For server + supervisor TOML schemas, see
 [`docs/CONFIG-SCHEMA.md`](docs/CONFIG-SCHEMA.md).
 
 <br>

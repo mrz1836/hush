@@ -50,7 +50,7 @@ const (
 	requestMsgServerTimeout      = "hush: request: server reported approval timeout"
 	requestMsgClientDeadline     = "hush: request: approval wait exceeded --ttl"
 	requestMsgDiscordUnavailable = "hush: request: Discord bot unavailable; vault server returned 503"
-	requestMsgPartialFetchFmt    = "hush: request: secret %q not present in vault; aborting before child start"
+	requestMsgPartialFetchFmt    = "hush: request: secret %q not present in vault; aborting before child start\n  if you added it after hush serve started, restart serve or send SIGHUP to reload the vault."
 	requestMsgInterrupted        = "hush: request: interrupted; pending request will expire server-side at --ttl"
 	requestMsgRateLimited        = "hush: request: rate limited; retry shortly"
 	requestMsgBadSignature       = "hush: request: server rejected client key signature"
@@ -346,6 +346,15 @@ func parseAndValidateFlags(cmd *cobra.Command, args []string) (requestFlags, err
 //
 //nolint:gocognit,gocyclo,cyclop,funlen // sequential pipeline; complexity is structural (data-model.md §7)
 func runRequest(parentCtx context.Context, stdout, stderr *Stream, deps requestDeps, flags requestFlags) error {
+	// Fail fast before signing, Discord approval, or secret fetch when --exec
+	// is not a resolvable program. This prevents burning an approval on a
+	// child-command typo such as --exec 'printenv HUSH_SMOKE_TEST'.
+	if flags.modeOf() == "exec" {
+		if _, err := preflightExecProgram(deps, flags.execProgram, stderr); err != nil {
+			return err
+		}
+	}
+
 	// 1. Client signing key.
 	clientKey, err := retrieveClientKey(parentCtx, deps, flags.machineIndex, flags.clientKeyFile, stderr)
 	if err != nil {

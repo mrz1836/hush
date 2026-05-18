@@ -95,6 +95,18 @@ var errPassphraseMismatch = errors.New("passphrase confirmation mismatch")
 // [ExitInputErr] by [mapErr].
 var errNoTTY = errors.New("stdin not a tty")
 
+// errUserAborted surfaces the guided init flow's per-artifact
+// recovery [q]uit choice. Mapped to [ExitInputErr] by [mapErr]: an
+// operator who picks "quit" supplied a (terminal) input that asked
+// hush to stop. Distinct from context cancellation so tests can
+// assert the user-driven path.
+var errUserAborted = errors.New("hush: init: user aborted")
+
+// errPreflightFailed surfaces a typed-error failure from the
+// preflight registry. Wraps the underlying setup sentinel; mapErr
+// inspects the wrapped error to pick the right exit code.
+var errPreflightFailed = errors.New("hush: init: preflight failed")
+
 // errPlatformACLUnsupported surfaces init's platform refusal on hosts
 // without per-binary keychain ACL semantics. Mapped to [ExitErr].
 var errPlatformACLUnsupported = errors.New("platform has no per-binary keychain ACL")
@@ -205,6 +217,7 @@ func mapErr(err error) int {
 		errors.Is(err, errFormatNotEval),
 		errors.Is(err, errMaxUsesTooLow),
 		errors.Is(err, errInvalidScopeName),
+		errors.Is(err, errUserAborted),
 		errors.Is(err, server.ErrMissingConfig),
 		errors.Is(err, config.ErrTOMLDecode),
 		errors.Is(err, config.ErrUnknownField),

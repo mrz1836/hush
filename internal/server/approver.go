@@ -140,4 +140,10 @@ const (
 	AuditFilePermCheckFailed  AuditEventType = "file_perm_check_failed"
 	AuditAuthFailedNotAllowed AuditEventType = "auth_failed"
 	AuditPanicCaptured        AuditEventType = "panic_captured"
+	// AuditClockSkewOverride is emitted once when --allow-clock-skew
+	// is set AND the clock-sync startup check would have failed. The
+	// override is the operator's explicit decision to come up despite
+	// known clock skew; hush never auto-sudos to fix the clock
+	// (T-278 Plan AC-8 / Task 4.2).
+	AuditClockSkewOverride AuditEventType = "clock_skew_override"
 )

@@ -410,7 +410,7 @@ func destroySecrets(secrets []vault.Secret) {
 // key → load vault → secret value prompt → confirm-value prompt →
 // description prompt → exists check → append → save → audit → ExitOK.
 //
-//nolint:gocognit,gocyclo,cyclop // sequential add flow; complexity is structural per data-model §3.1
+//nolint:gocognit,gocyclo,cyclop,nestif // sequential add flow; complexity is structural per data-model §3.1
 func runSecretAdd(ctx context.Context, stderr *Stream, in *os.File, deps *secretDeps, args []string) error {
 	if !deps.nonInteractive {
 		if err := enforceStdinTTY(ctx, in, deps, stderr, "add"); err != nil {

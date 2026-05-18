@@ -3,12 +3,12 @@
 package keychain
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"strings"
 
 	"github.com/mrz1836/hush/internal/vault/securebytes"
 )
@@ -17,9 +17,18 @@ const (
 	securityBin = "/usr/bin/security"
 
 	// Apple SecKeychain error codes; see SecBase.h.
-	exitItemNotFound  = 44
-	exitDuplicateItem = 45
-	exitUserCancelled = 51
+	//
+	// /usr/bin/security returns the low byte of the OSStatus value as
+	// its process exit code. Each constant below names the symbolic
+	// OSStatus and pins the truncated exit code we observe in tests
+	// and at runtime. Renaming or reordering changes ABI for the
+	// guided flow; see [mapSecurityError] for the mapping into the
+	// public keychain sentinels.
+	exitInteractionNotAllowed = 36  // errSecInteractionNotAllowed (-25308)
+	exitItemNotFound          = 44  // errSecItemNotFound (-25300)
+	exitDuplicateItem         = 45  // errSecDuplicateItem (-25299)
+	exitAuthFailed            = 51  // errSecAuthFailed (-25293)
+	exitUserCanceled          = 128 // errSecUserCanceled (-128)
 )
 
 // runner is the test seam for executing /usr/bin/security. Production
@@ -27,13 +36,12 @@ const (
 // stdin without launching the real binary.
 type runner func(*exec.Cmd) error
 
-// outputRunner runs cmd and returns its stdout; tests inject a
-// recorder that returns programmed bytes.
+// outputRunner runs cmd and returns its stdout/stderr as configured by the
+// caller; tests inject a recorder that returns programmed bytes.
 type outputRunner func(*exec.Cmd) ([]byte, error)
 
 // darwinKeychain is the macOS implementation. Operations shell out
-// to /usr/bin/security with a fixed argv vector; secrets travel via
-// stdin to keep them out of the process listing.
+// to /usr/bin/security with a fixed argv vector.
 type darwinKeychain struct {
 	logger   *slog.Logger
 	binary   string
@@ -46,36 +54,41 @@ func newPlatformKeychain(logger *slog.Logger) (Keychain, error) {
 		logger:   logger,
 		binary:   securityBin,
 		runFn:    (*exec.Cmd).Run,
-		outputFn: (*exec.Cmd).Output,
+		outputFn: (*exec.Cmd).CombinedOutput,
 	}, nil
 }
 
 // Store creates a new generic-password item under (service, account)
-// with the supplied per-binary ACL. The secret never appears in
-// argv; it is written to security's stdin via the -w flag.
+// with the supplied per-binary ACL.
+//
+// macOS `security add-generic-password -w` does not read the password from
+// stdin; when `-w` has no following argument it drops into the raw interactive
+// "password data for new item" prompt. That prompt is exactly the UX hush must
+// hide behind its guided panels, so Store passes the value as the `-w` argument.
+// This briefly exposes the token to local process-list observers on the trusted
+// vault host; the alternative is an unavoidable Apple prompt that repeatedly
+// failed T-278 validation. Keep this bridge isolated here so a future native
+// Security.framework implementation can remove the argv exposure without
+// touching CLI flow.
 func (k *darwinKeychain) Store(ctx context.Context, service, account string, value *securebytes.SecureBytes, acl string) error {
-	cmd := exec.CommandContext(ctx, k.binary, //nolint:gosec // fixed argv; service/account/acl are caller-vetted
+	var password string
+	if useErr := value.Use(func(b []byte) {
+		password = string(b)
+	}); useErr != nil {
+		return useErr
+	}
+	defer func() { password = "" }()
+
+	cmd := exec.CommandContext(ctx, k.binary, //nolint:gosec // fixed argv; see Store doc for -w password trade-off
 		"add-generic-password",
 		"-s", service,
 		"-a", account,
 		"-T", acl,
-		"-w",
+		"-w", password,
 	)
-	var feedErr error
-	if useErr := value.Use(func(b []byte) {
-		// Copy into a fresh buffer so the cmd-internal io.Reader
-		// does not retain the SecureBytes' mlocked slice.
-		buf := make([]byte, len(b))
-		copy(buf, b)
-		cmd.Stdin = bytes.NewReader(buf)
-	}); useErr != nil {
-		feedErr = useErr
-	}
-	if feedErr != nil {
-		return feedErr
-	}
-	if err := k.runFn(cmd); err != nil {
-		return mapSecurityError(err, "store")
+	out, err := k.outputFn(cmd)
+	if err != nil {
+		return mapSecurityError(err, "store", string(out))
 	}
 	return nil
 }
@@ -90,7 +103,7 @@ func (k *darwinKeychain) Retrieve(ctx context.Context, service, account string) 
 	)
 	out, err := k.outputFn(cmd)
 	if err != nil {
-		return nil, mapSecurityError(err, "retrieve")
+		return nil, mapSecurityError(err, "retrieve", string(out))
 	}
 	out = stripTrailingNewline(out)
 	if len(out) == 0 {
@@ -106,25 +119,44 @@ func (k *darwinKeychain) Delete(ctx context.Context, service, account string) er
 		"-s", service,
 		"-a", account,
 	)
-	if err := k.runFn(cmd); err != nil {
-		return mapSecurityError(err, "delete")
+	out, err := k.outputFn(cmd)
+	if err != nil {
+		return mapSecurityError(err, "delete", string(out))
 	}
 	return nil
 }
 
 // mapSecurityError maps the exit code from /usr/bin/security to a
-// keychain sentinel.
-func mapSecurityError(err error, op string) error {
+// keychain sentinel. The three denial codes
+// ([exitInteractionNotAllowed], [exitAuthFailed], [exitUserCanceled])
+// collapse to [ErrKeychainPermissionDenied]; init's ACL-aware
+// recovery flow re-translates that sentinel into
+// [setup.ErrTokenDenied] when the read targets the bot-token item
+// (Plan AC-5 / Task 3.1).
+func mapSecurityError(err error, op string, output ...string) error {
+	detail := strings.TrimSpace(strings.Join(output, "\n"))
+	wrap := func(base error) error {
+		if detail == "" {
+			return base
+		}
+		return fmt.Errorf("%w: %s", base, detail)
+	}
+	if strings.Contains(strings.ToLower(detail), "passphrase") || strings.Contains(strings.ToLower(detail), "keychain is locked") {
+		return wrap(ErrKeychainLocked)
+	}
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
 		switch ee.ExitCode() {
 		case exitItemNotFound:
-			return ErrKeychainItemNotFound
+			return wrap(ErrKeychainItemNotFound)
 		case exitDuplicateItem:
-			return ErrKeychainItemExists
-		case exitUserCancelled:
-			return ErrKeychainPermissionDenied
+			return wrap(ErrKeychainItemExists)
+		case exitInteractionNotAllowed, exitAuthFailed, exitUserCanceled:
+			return wrap(ErrKeychainPermissionDenied)
 		}
+	}
+	if detail != "" {
+		return fmt.Errorf("hush/keychain: security %s: %w: %s", op, err, detail)
 	}
 	return fmt.Errorf("hush/keychain: security %s: %w", op, err)
 }
