@@ -281,16 +281,19 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 	var err error
 	var listenAddr, ownerID, appID string
 	var approvalChannelID, auditChannelID string
+	explicitStateDir := strings.TrimSpace(deps.serverInputs.stateDir) != ""
 
 	if deps.serverNonInteractive {
 		pass, err = securebytes.New([]byte(deps.serverPassphrase))
 		if err != nil {
 			return err
 		}
-		botToken, err = securebytes.New([]byte(deps.serverBotToken))
-		if err != nil {
-			_ = pass.Destroy()
-			return err
+		if !explicitStateDir || strings.TrimSpace(deps.serverBotToken) != "" {
+			botToken, err = securebytes.New([]byte(deps.serverBotToken))
+			if err != nil {
+				_ = pass.Destroy()
+				return err
+			}
 		}
 		listenAddr = strings.TrimSpace(deps.serverInputs.listenAddr)
 		ownerID = strings.TrimSpace(deps.serverInputs.ownerID)
@@ -363,19 +366,25 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 			_ = stderr.WriteText(initMsgFieldRequiredFmt, "application_id")
 			return err
 		}
-		botToken, err = deps.promptSecret(in, stderr.w, promptBotToken)
-		if err != nil {
-			_ = pass.Destroy()
-			return err
+		if !explicitStateDir {
+			botToken, err = deps.promptSecret(in, stderr.w, promptBotToken)
+			if err != nil {
+				_ = pass.Destroy()
+				return err
+			}
 		}
 	}
 	defer func() { _ = pass.Destroy() }()
-	defer func() { _ = botToken.Destroy() }()
+	defer func() {
+		if botToken != nil {
+			_ = botToken.Destroy()
+		}
+	}()
 	if pass.Len() < minPassphraseLen {
 		_ = stderr.WriteText(initMsgPassphraseTooShort)
 		return errPassphraseTooShort
 	}
-	if botToken.Len() == 0 {
+	if !explicitStateDir && (botToken == nil || botToken.Len() == 0) {
 		_ = stderr.WriteText(initMsgFieldRequiredFmt, "discord_bot_token")
 		return errMissingFlag
 	}
@@ -401,18 +410,21 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 	configPath := filepath.Join(stateDir, "config.toml")
 	keychainItems := defaultServerKeychainItems()
 
-	// 4. Existence guards (vault, config, both keychain items).
+	// 4. Existence guards (vault, config, and keychain items only when
+	// this init run will write keychain items).
 	if guardErr := guardFileAbsent(vaultPath, errVaultExists, initMsgVaultExistsFmt, stderr); guardErr != nil {
 		return guardErr
 	}
 	if guardErr := guardFileAbsent(configPath, errConfigExists, initMsgConfigExistsFmt, stderr); guardErr != nil {
 		return guardErr
 	}
-	if guardErr := guardKeychainAbsent(ctx, deps.keychain, keychainItems.vaultPassphraseService, kcAccountServer, stderr); guardErr != nil {
-		return guardErr
-	}
-	if guardErr := guardKeychainAbsent(ctx, deps.keychain, keychainItems.discordService, kcAccountServer, stderr); guardErr != nil {
-		return guardErr
+	if !explicitStateDir {
+		if guardErr := guardKeychainAbsent(ctx, deps.keychain, keychainItems.vaultPassphraseService, kcAccountServer, stderr); guardErr != nil {
+			return guardErr
+		}
+		if guardErr := guardKeychainAbsent(ctx, deps.keychain, keychainItems.discordService, kcAccountServer, stderr); guardErr != nil {
+			return guardErr
+		}
 	}
 
 	// 5. Resolve binary path for keychain ACL.
@@ -488,7 +500,7 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 	// contexts, which is confusing and unnecessary because serve already
 	// supports HUSH_DISCORD_BOT_TOKEN and the operator keeps the vault
 	// passphrase. Default-state bootstrap remains strict.
-	if strings.TrimSpace(deps.serverInputs.stateDir) != "" {
+	if explicitStateDir {
 		_ = stderr.WriteText(initMsgKeychainSkipped)
 		_ = stderr.WriteText(initMsgServerComplete)
 		return nil
