@@ -24,11 +24,32 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/mrz1836/hush/internal/cli/setup"
 	"github.com/mrz1836/hush/internal/config"
 	"github.com/mrz1836/hush/internal/keychain"
 	"github.com/mrz1836/hush/internal/keys"
 	"github.com/mrz1836/hush/internal/vault"
 	"github.com/mrz1836/hush/internal/vault/securebytes"
+)
+
+// onExisting* enumerate the legal values of the `--on-existing` flag.
+// "" (unset) defers to per-mode defaults: prompt in interactive,
+// fail in non-interactive.
+const (
+	onExistingPrompt  = "prompt"
+	onExistingReuse   = "reuse"
+	onExistingRepair  = "repair"
+	onExistingArchive = "archive"
+	onExistingFail    = "fail"
+)
+
+// onExistingChoiceR/P/A/Q are the single-character return values
+// from a promptRecovery seam. Locked so tests can pin them.
+const (
+	recoveryChoiceReuse   = 'r'
+	recoveryChoiceRepair  = 'p'
+	recoveryChoiceArchive = 'a'
+	recoveryChoiceQuit    = 'q'
 )
 
 // Locked literal-text strings (contracts/cli-init.md §2.3 / §3.3).
@@ -45,9 +66,54 @@ const (
 	initMsgMachineIndexInvalid  = "hush: init: --machine-index must be a non-negative integer"
 	initMsgFieldRequiredFmt     = "hush: init: %s is required"
 	initMsgKeychainStoreFailFmt = "hush: init: keychain store failed: %v"
-	initMsgKeychainSkipped      = "hush: init: explicit state dir set; skipped Keychain writes. Serve will use the configured bot token Keychain item, or HUSH_DISCORD_BOT_TOKEN if you choose to override it."
+	initMsgKeychainSkipped      = "hush: init: --state-dir set; macOS Keychain writes are skipped for this learning/smoke path. Run hush serve with HUSH_DISCORD_BOT_TOKEN exported, or re-run hush init server without --state-dir to populate the default Keychain items."
 	initMsgWriteFailFmt         = "hush: init: write %s: %v"
 	initMsgServerComplete       = "hush: init: server bootstrap complete"
+
+	// initMsgKeychainPreExplainFmt is the hush-authored explanation
+	// printed before every Keychain write call. The placeholders are
+	// (purpose, service, account). Tests assert the literal text via
+	// transcript scan (Plan AC-4 / Task 2.3): no raw Apple `security`
+	// prompt may fire without this preamble.
+	initMsgKeychainPreExplainFmt = "hush: init: about to store the %s in your macOS Keychain.\n" +
+		"  item:    service=%s, account=%s\n" +
+		"  why:     hush serve reads this on every start; storing it here means you grant access once now and never type it again.\n" +
+		"  prompt:  macOS will ask 'do you want to allow access' — click 'Always Allow' so future serve restarts stay non-interactive."
+
+	// initMsgPreflightFailFmt renders a preflight failure: name, status,
+	// detail, remedy. Tests assert the remedy line is non-empty.
+	initMsgPreflightFailFmt = "hush: init: preflight %s failed: %s\n  remedy: %s"
+
+	// initMsgPreflightWarnFmt renders a preflight warning. The guided
+	// flow asks the operator to confirm before continuing.
+	initMsgPreflightWarnFmt = "hush: init: preflight %s warning: %s"
+
+	// initMsgRecoveryPromptFmt renders the per-artifact recovery prompt.
+	// Placeholders: kind, classification, current path (or "—" when
+	// none). Tests pin the literal options string.
+	initMsgRecoveryPromptFmt = "hush: init: existing %s (%s) at %s — choose [r]euse / [p]repair / [a]rchive (renames to .bak-<RFC3339>) / [q]uit: "
+
+	// initMsgRecoveryArchivedFmt records a successful archive action
+	// (Plan AC-9). %s = old path, %s = new path.
+	initMsgRecoveryArchivedFmt = "hush: init: archived %s to %s"
+
+	// initMsgRecoveryRepairFmt records a `[p]repair` choice. Phase 2
+	// treats repair as silent reuse for files (Phase 3 wires Keychain
+	// ACL repair); the message clarifies the limitation.
+	initMsgRecoveryRepairFmt = "hush: init: repair selected for %s — Phase 2 treats this as silent reuse; full repair flows arrive in later phases."
+
+	// initMsgRecoveryUserAborted is the locked stderr message emitted
+	// when the operator picks `[q]uit` from the recovery prompt.
+	initMsgRecoveryUserAborted = "hush: init: aborted by operator (user-aborted)"
+
+	// initMsgOnExistingInvalidFmt fires when --on-existing carries a
+	// value outside the allowed enum.
+	initMsgOnExistingInvalidFmt = "hush: init: --on-existing must be one of prompt/reuse/repair/archive/fail; got %q"
+
+	// initMsgClockSkewOverrideFmt fires when --allow-clock-skew was
+	// supplied AND the clock-sync preflight returned warn/fail. Phase 2
+	// just records the override; Phase 4 wires the audit pipeline.
+	initMsgClockSkewOverrideFmt = "hush: init: --allow-clock-skew override active; clock-sync check downgraded for %s"
 )
 
 // Locked prompt labels (contracts/cli-init.md §2.2 / §3.2).
@@ -84,6 +150,8 @@ type initDeps struct {
 	serverPassphrase     string
 	serverBotToken       string
 	serverInputs         serverInputs
+	serverAllowClockSkew bool
+	serverOnExisting     string
 	clientNonInteractive bool
 	clientPassphrase     string
 	clientRegistry       string
@@ -95,6 +163,11 @@ type initDeps struct {
 	// promptLine reads a non-secret line from stdin in production;
 	// tests substitute a deterministic reader.
 	promptLine func(in *os.File, prompt io.Writer, label string) (string, error)
+	// promptRecovery reads a single-character recovery choice
+	// (r/p/a/q) for per-artifact existing-state recovery. Tests
+	// substitute a scripted reader; the production binding reads
+	// a single line via promptLine and returns its first rune.
+	promptRecovery func(in *os.File, prompt io.Writer, label string) (rune, error)
 	// isTTY reports whether stdin is an interactive terminal.
 	isTTY func(*os.File) bool
 	// deriveMasterSeed is the Argon2id master-seed derivation.
@@ -102,6 +175,11 @@ type initDeps struct {
 	// every test; the stub MUST still validate the passphrase
 	// length contract.
 	deriveMasterSeed func(ctx context.Context, passphrase, salt []byte) ([]byte, error)
+	// runPreflight runs the diagnostic-first preflight pipeline
+	// before any TTY prompt (Plan AC-2). Production returns an
+	// empty Report until Phase 4 wires real checks. Tests inject a
+	// synthetic Report to drive the warn / fail branches.
+	runPreflight func(ctx context.Context) setup.Report
 }
 
 // productionInitDeps wires the production seams. Tests construct a
@@ -120,9 +198,39 @@ func productionInitDeps() (*initDeps, error) {
 		platformACL:      keychain.PerBinaryACLSupported,
 		promptSecret:     readPassphraseTTY,
 		promptLine:       readLineFromTTY,
+		promptRecovery:   defaultPromptRecovery,
 		isTTY:            defaultIsTTY,
 		deriveMasterSeed: keys.DeriveMasterSeed,
+		runPreflight:     defaultRunPreflight,
 	}, nil
+}
+
+// defaultPromptRecovery is the production binding for the recovery
+// (r/p/a/q) prompt. Reads a single line via the same TTY helper used
+// by the other line prompts; returns its first non-whitespace rune
+// lowercased. An empty line errors so the caller can re-prompt.
+func defaultPromptRecovery(in *os.File, prompt io.Writer, label string) (rune, error) {
+	line, err := readLineFromTTY(in, prompt, label)
+	if err != nil {
+		return 0, err
+	}
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return 0, errEmptyRecoveryChoice
+	}
+	r := []rune(line)[0]
+	if r >= 'A' && r <= 'Z' {
+		r = r + ('a' - 'A')
+	}
+	return r, nil
+}
+
+// defaultRunPreflight returns an empty preflight report. Phase 2
+// wires the seam; Phase 4 registers the real checks (clock-sync
+// first, then the rest of the [setup.CheckOrder] slots).
+func defaultRunPreflight(ctx context.Context) setup.Report {
+	reg := setup.NewRegistry()
+	return reg.Run(ctx)
 }
 
 func defaultIsTTY(f *os.File) bool {
@@ -186,10 +294,45 @@ func readClientBootstrapInput(path string) (clientBootstrapInput, error) {
 
 // newInitServerCmd builds the `hush init server` subcommand. The cobra
 // command tree is the contract; no exported symbols.
+//
+// The default mode is **guided/interactive**: hush runs a
+// diagnostic-first preflight, then prompts the operator for every
+// required input. `--non-interactive` is the explicit opt-out for
+// scripted/test callers (Plan AC-1, Q1=b / Q6=b).
 func newInitServerCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "server",
-		Short: "Bootstrap the vault host (creates vault, config, keychain entries)",
+		Short: "Bootstrap the vault host (default: guided/interactive; --non-interactive for scripted callers)",
+		Long: strings.TrimSpace(`
+Bootstrap the vault host.
+
+Default: guided/interactive. hush runs a diagnostic-first preflight
+(binary, config target, state dir, file modes, Keychain readability,
+Tailscale bind, listen port, clock sync, existing-artifact collision)
+and then prompts you for vault passphrase + Discord bot token. No
+prompt fires until the preflight pipeline has succeeded.
+
+Existing config / vault / state-dir / Keychain artifacts are classified
+per-artifact and you are offered [r]euse / [p]repair / [a]rchive /
+[q]uit — never silently overwritten.
+
+Flags:
+  --non-interactive        Opt out of the guided flow; read bootstrap
+                           inputs from --input-file and the listed
+                           flags. Use this in scripts / tests / CI.
+  --allow-clock-skew       Downgrade a failing clock-sync preflight to
+                           a warning. hush will never auto-sudo on
+                           your behalf; rely on this only if you have
+                           knowingly accepted the skew (Plan AC-8).
+  --on-existing=<mode>     prompt | reuse | repair | archive | fail
+                           Default: prompt (interactive) / fail
+                           (non-interactive). 'archive' renames the
+                           colliding artifact to
+                           '<path>.bak-<RFC3339>' before continuing.
+  --state-dir <path>       Override the default ~/.hush state dir
+                           (smoke/learning path; Keychain writes are
+                           skipped).
+`),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			deps, err := productionInitDeps()
 			if err != nil {
@@ -201,6 +344,8 @@ func newInitServerCmd() *cobra.Command {
 			deps.serverInputs.stateDir, _ = cmd.Flags().GetString("state-dir")
 			deps.serverInputs.approvalChannelID, _ = cmd.Flags().GetString("discord-approval-channel-id")
 			deps.serverInputs.auditChannelID, _ = cmd.Flags().GetString("discord-audit-channel-id")
+			deps.serverAllowClockSkew, _ = cmd.Flags().GetBool("allow-clock-skew")
+			deps.serverOnExisting, _ = cmd.Flags().GetString("on-existing")
 			if strings.TrimSpace(deps.serverInputs.stateDir) != "" {
 				deps.stateDirRoot = deps.serverInputs.stateDir
 			}
@@ -218,7 +363,7 @@ func newInitServerCmd() *cobra.Command {
 			return runInitServer(cmd.Context(), out.stdout, out.stderr, os.Stdin, deps)
 		},
 	}
-	cmd.Flags().Bool("non-interactive", false, "Read server bootstrap inputs from flags/environment instead of TTY prompts")
+	cmd.Flags().Bool("non-interactive", false, "Opt out of the guided flow; read bootstrap inputs from --input-file and flags")
 	cmd.Flags().String("state-dir", "", "State directory for generated vault/config (default ~/.hush)")
 	cmd.Flags().String("listen-addr", "", "Server listen address (required with --non-interactive)")
 	cmd.Flags().String("discord-owner-id", "", "Discord owner snowflake (required with --non-interactive)")
@@ -226,6 +371,8 @@ func newInitServerCmd() *cobra.Command {
 	cmd.Flags().String("discord-approval-channel-id", "", "Discord approval channel snowflake (optional; empty sends approvals by DM)")
 	cmd.Flags().String("discord-audit-channel-id", "", "Discord audit mirror channel snowflake (optional)")
 	cmd.Flags().String("input-file", "", "0600 JSON bootstrap input for --non-interactive")
+	cmd.Flags().Bool("allow-clock-skew", false, "Downgrade a failing clock-sync preflight to a warning (no auto-sudo)")
+	cmd.Flags().String("on-existing", "", "Recovery mode for pre-existing artifacts: prompt|reuse|repair|archive|fail")
 	return cmd
 }
 
@@ -276,6 +423,24 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 		_ = stderr.WriteText(initMsgPlatformUnsupported, runtime.GOOS)
 		return fmt.Errorf("%w: %s", errPlatformACLUnsupported, runtime.GOOS)
 	}
+	if err := validateOnExisting(deps.serverOnExisting); err != nil {
+		_ = stderr.WriteText(initMsgOnExistingInvalidFmt, deps.serverOnExisting)
+		return err
+	}
+
+	// 0. Diagnostic-first preflight. No prompt may fire until this
+	//    pipeline has settled (Plan AC-1, AC-2 / Task 2.2). On any
+	//    `fail` result we surface the typed error + remedy and exit
+	//    non-zero. On `warn` we print and continue (Phase 2 keeps
+	//    this non-interactive; Phase 4 wires the y/n confirm flow
+	//    alongside the real clock-sync check).
+	if deps.runPreflight != nil {
+		report := deps.runPreflight(ctx)
+		if pfErr := handlePreflightReport(report, deps, stderr); pfErr != nil {
+			return pfErr
+		}
+	}
+
 	var pass *securebytes.SecureBytes
 	var botToken *securebytes.SecureBytes
 	var err error
@@ -410,21 +575,32 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 	configPath := filepath.Join(stateDir, "config.toml")
 	keychainItems := defaultServerKeychainItems()
 
-	// 4. Existence guards (vault, config, and keychain items only when
-	// this init run will write keychain items).
-	if guardErr := guardFileAbsent(vaultPath, errVaultExists, initMsgVaultExistsFmt, stderr); guardErr != nil {
-		return guardErr
+	// 4. Existence handling — classifier-first (Plan AC-9 / Task 2.4).
+	//    The classifier inspects vault / config / state-dir, and the
+	//    Discord bot-token Keychain item (the only one whose write is
+	//    skipped under explicit-state-dir flows). Each non-absent
+	//    artifact triggers a per-artifact `[r]euse / [p]repair /
+	//    [a]rchive / [q]uit` prompt (interactive) OR consumes the
+	//    `--on-existing` flag (non-interactive). The legacy passphrase
+	//    Keychain guard is preserved below so the explicit error
+	//    message contract continues to hold when the operator chose
+	//    `--on-existing=fail`.
+	decisions, recoveryErr := recoverExistingArtifacts(ctx, in, stderr, deps, vaultPath, configPath, stateDir, keychainItems, explicitStateDir)
+	if recoveryErr != nil {
+		return recoveryErr
 	}
-	if guardErr := guardFileAbsent(configPath, errConfigExists, initMsgConfigExistsFmt, stderr); guardErr != nil {
-		return guardErr
-	}
-	if !explicitStateDir {
-		if guardErr := guardKeychainAbsent(ctx, deps.keychain, keychainItems.vaultPassphraseService, kcAccountServer, stderr); guardErr != nil {
+	if decisions.modeFor(setup.ArtifactVault) == onExistingFail {
+		if guardErr := guardFileAbsent(vaultPath, errVaultExists, initMsgVaultExistsFmt, stderr); guardErr != nil {
 			return guardErr
 		}
-		if guardErr := guardKeychainAbsent(ctx, deps.keychain, keychainItems.discordService, kcAccountServer, stderr); guardErr != nil {
+	}
+	if decisions.modeFor(setup.ArtifactConfig) == onExistingFail {
+		if guardErr := guardFileAbsent(configPath, errConfigExists, initMsgConfigExistsFmt, stderr); guardErr != nil {
 			return guardErr
 		}
+	}
+	if guardErr := applyLegacyKeychainGuards(ctx, deps, stderr, decisions, keychainItems, explicitStateDir); guardErr != nil {
+		return guardErr
 	}
 
 	// 5. Resolve binary path for keychain ACL.
@@ -461,35 +637,45 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 	defer func() { _ = vaultEncKey.Destroy() }()
 
 	// 7. Ensure the state directory exists at 0700, then write the
-	// empty vault.
+	// empty vault. Skip vault write when the operator picked
+	// [r]euse / [p]repair for the existing vault artifact.
 	if dirErr := ensureStateDir(stateDir); dirErr != nil {
 		return dirErr
 	}
-	if saveErr := vault.SaveWithSalt(ctx, vaultPath, vaultEncKey, salt, []vault.Secret{}); saveErr != nil {
+	if reuseArtifact(decisions, setup.ArtifactVault) {
+		// Vault already on disk and the operator chose reuse/repair —
+		// nothing to write. The salt we just derived is discarded;
+		// hush serve reads the salt from the existing vault header.
+	} else if saveErr := vault.SaveWithSalt(ctx, vaultPath, vaultEncKey, salt, []vault.Secret{}); saveErr != nil {
 		return saveErr
 	}
 
-	// 8. Generate path_prefix and write config.toml atomically.
-	pathPrefix, err := generatePathPrefix(deps.randReader)
-	if err != nil {
-		return err
-	}
-	cfgBody := buildServerDecodedFromDefaults(serverInputs{
-		listenAddr:        listenAddr,
-		pathPrefix:        pathPrefix,
-		ownerID:           ownerID,
-		applicationID:     appID,
-		stateDir:          stateDir,
-		approvalChannelID: approvalChannelID,
-		auditChannelID:    auditChannelID,
-		botTokenKeychain:  keychainItems.discordService,
-	})
-	if err := writeConfigTOMLAtomic(configPath, cfgBody); err != nil {
-		_ = stderr.WriteText(initMsgWriteFailFmt, configPath, err)
-		return err
+	// 8. Generate path_prefix and write config.toml atomically. Skip
+	// when the operator chose reuse/repair for the existing config.
+	if !reuseArtifact(decisions, setup.ArtifactConfig) {
+		pathPrefix, ppErr := generatePathPrefix(deps.randReader)
+		if ppErr != nil {
+			return ppErr
+		}
+		cfgBody := buildServerDecodedFromDefaults(serverInputs{
+			listenAddr:        listenAddr,
+			pathPrefix:        pathPrefix,
+			ownerID:           ownerID,
+			applicationID:     appID,
+			stateDir:          stateDir,
+			approvalChannelID: approvalChannelID,
+			auditChannelID:    auditChannelID,
+			botTokenKeychain:  keychainItems.discordService,
+		})
+		if wErr := writeConfigTOMLAtomic(configPath, cfgBody); wErr != nil {
+			_ = stderr.WriteText(initMsgWriteFailFmt, configPath, wErr)
+			return wErr
+		}
 	}
 
-	// 9. Round-trip-validate the generated config.
+	// 9. Round-trip-validate the config we just wrote (or the one
+	// the operator chose to reuse — either way, hush serve will
+	// read this file).
 	if _, err := config.LoadServer(ctx, configPath); err != nil {
 		return fmt.Errorf("hush/cli: init: round-trip-validate config: %w", err)
 	}
@@ -505,17 +691,34 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 		_ = stderr.WriteText(initMsgServerComplete)
 		return nil
 	}
+	// Hush-authored pre-explanations satisfy Plan AC-4 / Task 2.3:
+	// no raw Apple `security` prompt fires without a hush-authored
+	// preamble of what / why / what-to-click.
+	emitKeychainPreExplain(stderr, "vault passphrase", keychainItems.vaultPassphraseService, kcAccountServer)
 	if err := deps.keychain.Store(ctx, keychainItems.vaultPassphraseService, kcAccountServer, pass, binPath); err != nil {
 		_ = stderr.WriteText(initMsgKeychainStoreFailFmt, err)
 		return err
 	}
-	if err := deps.keychain.Store(ctx, keychainItems.discordService, kcAccountServer, botToken, binPath); err != nil {
-		_ = stderr.WriteText(initMsgKeychainStoreFailFmt, err)
-		return err
+	if reuseArtifact(decisions, setup.ArtifactKeychainToken) {
+		// Operator chose reuse/repair for the existing Discord
+		// bot-token item — keep the OS Keychain item untouched.
+	} else {
+		emitKeychainPreExplain(stderr, "Discord bot token", keychainItems.discordService, kcAccountServer)
+		if err := deps.keychain.Store(ctx, keychainItems.discordService, kcAccountServer, botToken, binPath); err != nil {
+			_ = stderr.WriteText(initMsgKeychainStoreFailFmt, err)
+			return err
+		}
 	}
-
 	_ = stderr.WriteText(initMsgServerComplete)
 	return nil
+}
+
+// emitKeychainPreExplain writes the hush-authored multi-line
+// explanation that must precede every macOS Keychain write call
+// (Plan AC-4 / Task 2.3). Tests scan the transcript for this string;
+// see init_test.go TestInitServer_PreExplainsKeychainWrites.
+func emitKeychainPreExplain(stderr *Stream, purpose, service, account string) {
+	_ = stderr.WriteText(initMsgKeychainPreExplainFmt, purpose, service, account)
 }
 
 // runInitClient is the orchestration entry-point for `hush init client`.

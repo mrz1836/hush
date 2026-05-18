@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/mrz1836/hush/internal/cli/setup"
 	"github.com/mrz1836/hush/internal/config"
 	"github.com/mrz1836/hush/internal/keychain"
 	"github.com/mrz1836/hush/internal/vault/securebytes"
@@ -138,4 +139,49 @@ func mustReadFile(t *testing.T, path string) []byte {
 	b, err := os.ReadFile(path)
 	require.NoError(t, err)
 	return b
+}
+
+// TestInit_PreflightFailure_SuppressesPrompts is the synthetic-failure
+// integration test required by Plan AC-2 / Task 2.2: the preflight
+// pipeline runs BEFORE any prompt, so injecting a failure must cause
+// the flow to short-circuit and no prompt seam may fire.
+func TestInit_PreflightFailure_SuppressesPrompts(t *testing.T) {
+	tmpDir := t.TempDir()
+	require.NoError(t, os.Chmod(tmpDir, 0o700))
+
+	promptCalled := false
+	kc := keychain.NewFake()
+	t.Cleanup(kc.Destroy)
+	deps := &initDeps{
+		keychain:         kc,
+		binaryPath:       func() (string, error) { return "/usr/local/bin/hush", nil },
+		randReader:       newDeterministicReader(),
+		stateDirRoot:     tmpDir,
+		platformACL:      func() bool { return true },
+		isTTY:            func(_ *os.File) bool { return true },
+		deriveMasterSeed: fastDeriveMasterSeed,
+		promptSecret: func(_ *os.File, _ io.Writer, _ string) (*securebytes.SecureBytes, error) {
+			promptCalled = true
+			return nil, errors.New("no prompt may fire when preflight fails")
+		},
+		promptLine: func(_ *os.File, _ io.Writer, _ string) (string, error) {
+			promptCalled = true
+			return "", errors.New("no prompt may fire when preflight fails")
+		},
+		runPreflight: func(_ context.Context) setup.Report {
+			return setup.Report{Results: []setup.SetupCheckResult{
+				setup.Fail("config_target", setup.ErrStateStale, "config target /unwritable.toml is not writable"),
+			}}
+		},
+	}
+	stdoutS := newStream(io.Discard, false, true)
+	stderrBuf := &strings.Builder{}
+	stderrS := newStream(stderrBuf, false, true)
+
+	err := runInitServer(context.Background(), stdoutS, stderrS, dummyTTY(t), deps)
+	require.Error(t, err)
+	require.True(t, errors.Is(err, errPreflightFailed), "got %v", err)
+	require.False(t, promptCalled, "prompts must be suppressed when preflight returns fail")
+	require.Contains(t, stderrBuf.String(), "preflight config_target failed")
+	require.Contains(t, stderrBuf.String(), "remedy:")
 }

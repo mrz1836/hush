@@ -20,11 +20,44 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mrz1836/hush/internal/cli/setup"
 	"github.com/mrz1836/hush/internal/config"
 	"github.com/mrz1836/hush/internal/keychain"
 	"github.com/mrz1836/hush/internal/testutil"
 	"github.com/mrz1836/hush/internal/vault/securebytes"
 )
+
+// setupReport is a local alias used by the test helpers that
+// synthesize preflight reports — keeps the test file readable
+// without churning every call site through `setup.Report`.
+type setupReport = setup.Report
+
+// synthesizeFailReport returns a deterministic Report with a single
+// failing Check whose remedy hint is populated so the failure render
+// path is exercised end-to-end.
+func synthesizeFailReport(t *testing.T) setupReport {
+	t.Helper()
+	return setup.Report{Results: []setup.SetupCheckResult{
+		setup.Fail("config_target", setup.ErrStateStale, "config target path is unwritable"),
+	}}
+}
+
+// synthesizeWarnReport returns a single-warn Report exercising the
+// warn surface path.
+func synthesizeWarnReport() setupReport {
+	return setup.Report{Results: []setup.SetupCheckResult{
+		setup.Warn("file_modes", "audit.jsonl mode 0640 is laxer than 0600"),
+	}}
+}
+
+// synthesizeClockSkewWarnReport returns a warn report keyed on the
+// clock_sync slot so the --allow-clock-skew override codepath is
+// exercised.
+func synthesizeClockSkewWarnReport() setupReport {
+	return setup.Report{Results: []setup.SetupCheckResult{
+		setup.Warn(string(setup.CheckClockSync), "clock drift 2.3s exceeds 100ms"),
+	}}
+}
 
 const (
 	testGoodPassphrase     = "correctbatterystaple"
@@ -448,6 +481,10 @@ func TestInitServer_DefaultStateStillFailsWhenKeychainDenied(t *testing.T) {
 func TestInitServer_RefusesPreExistingVault(t *testing.T) {
 	t.Parallel()
 	fx := newInitFixture(t)
+	// Opt into legacy fail-on-existence behavior; the default
+	// guided flow prompts per artifact (Plan AC-9 / Task 2.4). The
+	// fail-mode contract is exercised by this test.
+	fx.deps.serverOnExisting = onExistingFail
 	vaultPath := filepath.Join(fx.tempDir, "secrets.vault")
 	originalBytes := []byte("preexisting-vault-bytes")
 	require.NoError(t, os.WriteFile(vaultPath, originalBytes, 0o600))
@@ -467,6 +504,7 @@ func TestInitServer_RefusesPreExistingVault(t *testing.T) {
 func TestInitServer_RefusesPreExistingConfig(t *testing.T) {
 	t.Parallel()
 	fx := newInitFixture(t)
+	fx.deps.serverOnExisting = onExistingFail
 	configPath := filepath.Join(fx.tempDir, "config.toml")
 	require.NoError(t, os.WriteFile(configPath, []byte("preexisting"), 0o600))
 
@@ -866,6 +904,275 @@ func TestInit_NeverGeneratesPassphrase(t *testing.T) {
 	require.NotContains(t, s, "GeneratePassphrase")
 	require.NotContains(t, s, "passphrase.Generate")
 	require.NotRegexp(t, `Generate.*Pass`, s)
+}
+
+// ---- Phase 2: preflight, recovery, Keychain pre-explanation ---------------
+
+// scriptedRecoveryReader returns a promptRecovery seam that yields
+// the supplied runes (one per call). Each invocation pops the head.
+func scriptedRecoveryReader(t *testing.T, choices []rune) func(*os.File, io.Writer, string) (rune, error) {
+	t.Helper()
+	idx := 0
+	return func(_ *os.File, _ io.Writer, _ string) (rune, error) {
+		if idx >= len(choices) {
+			return 0, fmt.Errorf("scripted recovery reader exhausted at index %d", idx)
+		}
+		v := choices[idx]
+		idx++
+		return v, nil
+	}
+}
+
+// TestInitServer_PreflightFail_ShortCircuitsBeforePrompt asserts AC-2 /
+// Task 2.2: when the preflight registry returns a fail, the guided
+// flow exits with the typed remedy and never prompts the operator.
+func TestInitServer_PreflightFail_ShortCircuitsBeforePrompt(t *testing.T) {
+	t.Parallel()
+	fx := newInitFixture(t)
+	// Sentinel preflight that always fails. The promptSecret /
+	// promptLine seams are scripted but should be untouched because
+	// the preflight short-circuits before any prompt fires.
+	promptSecretCalled := 0
+	promptLineCalled := 0
+	fx.deps.promptSecret = func(_ *os.File, _ io.Writer, _ string) (*securebytes.SecureBytes, error) {
+		promptSecretCalled++
+		return securebytes.New([]byte(testGoodPassphrase))
+	}
+	fx.deps.promptLine = func(_ *os.File, _ io.Writer, _ string) (string, error) {
+		promptLineCalled++
+		return testListenAddrInput, nil
+	}
+	fx.deps.runPreflight = func(_ context.Context) setupReport {
+		return synthesizeFailReport(t)
+	}
+
+	err := runInitServer(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, fx.deps)
+	require.Error(t, err)
+	require.True(t, errors.Is(err, errPreflightFailed), "got %v", err)
+	require.Zero(t, promptSecretCalled, "no secret prompt may fire before preflight settles")
+	require.Zero(t, promptLineCalled, "no line prompt may fire before preflight settles")
+	require.Contains(t, fx.stderr.String(), "preflight")
+	require.Contains(t, fx.stderr.String(), "remedy")
+}
+
+// TestInitServer_PreflightWarn_ContinuesWithSurface asserts the warn
+// branch (Plan AC-2): warnings are surfaced but the flow continues
+// to the prompt phase.
+func TestInitServer_PreflightWarn_ContinuesWithSurface(t *testing.T) {
+	t.Parallel()
+	fx := newInitFixture(t)
+	fx.deps.runPreflight = func(_ context.Context) setupReport {
+		return synthesizeWarnReport()
+	}
+
+	err := runInitServer(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, fx.deps)
+	require.NoError(t, err)
+	require.Contains(t, fx.stderr.String(), "warning")
+	require.Contains(t, fx.stderr.String(), initMsgServerComplete)
+}
+
+// TestInitServer_AllowClockSkew_DowngradesClockSyncWarn asserts that
+// --allow-clock-skew folds a clock-sync warn into a single override
+// message (Plan AC-8 / Task 2.5). Phase 4 wires the audit event.
+func TestInitServer_AllowClockSkew_DowngradesClockSyncWarn(t *testing.T) {
+	t.Parallel()
+	fx := newInitFixture(t)
+	fx.deps.serverAllowClockSkew = true
+	fx.deps.runPreflight = func(_ context.Context) setupReport {
+		return synthesizeClockSkewWarnReport()
+	}
+
+	err := runInitServer(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, fx.deps)
+	require.NoError(t, err)
+	require.Contains(t, fx.stderr.String(), "--allow-clock-skew override active")
+	// The raw warn message is suppressed in favor of the override
+	// announcement.
+	require.NotContains(t, fx.stderr.String(), "preflight clock_sync warning")
+}
+
+// TestInitServer_PreExplainsKeychainWrites asserts the hush-authored
+// pre-explanation precedes every Keychain write (Plan AC-4 / Task 2.3).
+func TestInitServer_PreExplainsKeychainWrites(t *testing.T) {
+	t.Parallel()
+	fx := newInitFixture(t)
+	require.NoError(t, runInitServer(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, fx.deps))
+
+	transcript := fx.stderr.String()
+	// Vault passphrase preamble + bot token preamble.
+	require.Contains(t, transcript, "vault passphrase in your macOS Keychain")
+	require.Contains(t, transcript, "Discord bot token in your macOS Keychain")
+	require.Contains(t, transcript, "click 'Always Allow'")
+
+	// The pre-explanation appears BEFORE the success line.
+	vaultIdx := strings.Index(transcript, "vault passphrase in your macOS Keychain")
+	tokenIdx := strings.Index(transcript, "Discord bot token in your macOS Keychain")
+	completeIdx := strings.Index(transcript, initMsgServerComplete)
+	require.GreaterOrEqual(t, vaultIdx, 0)
+	require.GreaterOrEqual(t, tokenIdx, 0)
+	require.GreaterOrEqual(t, completeIdx, 0)
+	require.Less(t, vaultIdx, completeIdx)
+	require.Less(t, tokenIdx, completeIdx)
+}
+
+// TestInitServer_Recovery_PromptQuitAborts asserts AC-9 Task 2.4:
+// pressing `q` at the recovery prompt exits cleanly with the
+// user-aborted code.
+func TestInitServer_Recovery_PromptQuitAborts(t *testing.T) {
+	t.Parallel()
+	fx := newInitFixture(t)
+	// Pre-existing vault triggers a non-absent classification.
+	vaultPath := filepath.Join(fx.tempDir, "secrets.vault")
+	require.NoError(t, os.WriteFile(vaultPath, []byte("preexisting"), 0o600))
+	fx.deps.promptRecovery = scriptedRecoveryReader(t, []rune{'q'})
+
+	err := runInitServer(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, fx.deps)
+	require.True(t, errors.Is(err, errUserAborted))
+	require.Equal(t, ExitInputErr, mapErr(err))
+	require.Contains(t, fx.stderr.String(), initMsgRecoveryUserAborted)
+}
+
+// TestInitServer_Recovery_PromptReuseSkipsCreate asserts AC-9 Task 2.4:
+// `r`euse leaves the existing file in place and proceeds.
+func TestInitServer_Recovery_PromptReuseSkipsCreate(t *testing.T) {
+	t.Parallel()
+	fx := newInitFixture(t)
+	// Pre-existing config file → classifier marks safe-to-reuse →
+	// new behavior prompts. Pick `r` to silently reuse.
+	configPath := filepath.Join(fx.tempDir, "config.toml")
+	// Pre-populate with a valid baseline so config.LoadServer can
+	// round-trip after reuse. Build it via the same helper init uses.
+	body := buildServerDecodedFromDefaults(serverInputs{
+		listenAddr:    testListenAddrInput,
+		pathPrefix:    "preexistabcd",
+		ownerID:       testOwnerIDInput,
+		applicationID: testApplicationIDIn,
+		stateDir:      fx.tempDir,
+	})
+	require.NoError(t, writeConfigTOMLAtomic(configPath, body))
+	statBefore, _ := os.Stat(configPath)
+	originalSum := mustReadAll(t, configPath)
+	fx.deps.promptRecovery = scriptedRecoveryReader(t, []rune{'r'})
+
+	require.NoError(t, runInitServer(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, fx.deps))
+
+	// File unchanged.
+	statAfter, _ := os.Stat(configPath)
+	require.Equal(t, statBefore.ModTime(), statAfter.ModTime())
+	require.Equal(t, originalSum, mustReadAll(t, configPath))
+}
+
+// TestInitServer_Recovery_PromptArchiveRenamesAndProceeds asserts the
+// `a`rchive branch writes <path>.bak-<RFC3339> and continues.
+func TestInitServer_Recovery_PromptArchiveRenamesAndProceeds(t *testing.T) {
+	t.Parallel()
+	fx := newInitFixture(t)
+	vaultPath := filepath.Join(fx.tempDir, "secrets.vault")
+	require.NoError(t, os.WriteFile(vaultPath, []byte("preexisting-bytes"), 0o600))
+	fx.deps.promptRecovery = scriptedRecoveryReader(t, []rune{'a'})
+
+	require.NoError(t, runInitServer(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, fx.deps))
+
+	// Original file moved to *.bak-* sibling.
+	entries, err := os.ReadDir(fx.tempDir)
+	require.NoError(t, err)
+	var backupCount int
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "secrets.vault.bak-") {
+			backupCount++
+		}
+	}
+	require.Equal(t, 1, backupCount, "expected exactly one secrets.vault.bak-* sibling")
+	// Fresh vault written at the original path.
+	info, err := os.Stat(vaultPath)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	require.Contains(t, fx.stderr.String(), "archived")
+}
+
+// TestInitServer_Recovery_NonInteractive_OnExistingArchive asserts
+// Plan AC-1 + AC-9 with --non-interactive: --on-existing=archive is
+// honored without prompting.
+func TestInitServer_Recovery_NonInteractive_OnExistingArchive(t *testing.T) {
+	t.Parallel()
+	fx := newInitFixture(t)
+	fx.deps.serverNonInteractive = true
+	fx.deps.serverPassphrase = testGoodPassphrase
+	fx.deps.serverBotToken = testBotTokenInput
+	fx.deps.serverInputs.listenAddr = testListenAddrInput
+	fx.deps.serverInputs.ownerID = testOwnerIDInput
+	fx.deps.serverInputs.applicationID = testApplicationIDIn
+	fx.deps.serverOnExisting = onExistingArchive
+	// Recovery prompt is never invoked in non-interactive mode but
+	// wire it to fail loudly if it is — defence in depth.
+	fx.deps.promptRecovery = func(*os.File, io.Writer, string) (rune, error) {
+		return 0, errors.New("promptRecovery must not fire under --non-interactive")
+	}
+	vaultPath := filepath.Join(fx.tempDir, "secrets.vault")
+	require.NoError(t, os.WriteFile(vaultPath, []byte("preexisting"), 0o600))
+
+	require.NoError(t, runInitServer(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, fx.deps))
+
+	entries, err := os.ReadDir(fx.tempDir)
+	require.NoError(t, err)
+	var backupCount int
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "secrets.vault.bak-") {
+			backupCount++
+		}
+	}
+	require.Equal(t, 1, backupCount)
+}
+
+// TestInitServer_OnExistingFlag_RejectsInvalidValue asserts the flag
+// is enum-validated (Plan AC-1 / Task 2.5).
+func TestInitServer_OnExistingFlag_RejectsInvalidValue(t *testing.T) {
+	t.Parallel()
+	fx := newInitFixture(t)
+	fx.deps.serverOnExisting = "nope"
+
+	err := runInitServer(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, fx.deps)
+	require.True(t, errors.Is(err, errMissingFlag))
+	require.Contains(t, fx.stderr.String(), "--on-existing must be one of")
+}
+
+// TestNewInitServerCmd_Help_AdvertisesGuidedDefault asserts AC-1 /
+// Task 2.1: --help text documents the new default and the new flags.
+func TestNewInitServerCmd_Help_AdvertisesGuidedDefault(t *testing.T) {
+	t.Parallel()
+	cmd := newInitServerCmd()
+	help := cmd.Long + " " + cmd.Short
+	for _, want := range []string{
+		"guided/interactive",
+		"--non-interactive",
+		"--allow-clock-skew",
+		"--on-existing",
+	} {
+		require.Contains(t, help, want, "init server help must document %q", want)
+	}
+
+	flag := cmd.Flags().Lookup("allow-clock-skew")
+	require.NotNil(t, flag, "allow-clock-skew flag must be declared")
+	flag = cmd.Flags().Lookup("on-existing")
+	require.NotNil(t, flag, "on-existing flag must be declared")
+	flag = cmd.Flags().Lookup("non-interactive")
+	require.NotNil(t, flag, "non-interactive flag must remain declared")
+}
+
+// TestNewServeCmd_Help_HasAllowClockSkew asserts Plan AC-8 / Task 2.5:
+// hush serve carries the --allow-clock-skew flag (wired in Phase 4).
+func TestNewServeCmd_Help_HasAllowClockSkew(t *testing.T) {
+	t.Parallel()
+	cmd := newServeCmd()
+	flag := cmd.Flags().Lookup("allow-clock-skew")
+	require.NotNil(t, flag, "serve must carry --allow-clock-skew (Phase 4 wires the runtime)")
+}
+
+// mustReadAll is a tiny test helper that fails on read errors.
+func mustReadAll(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path) //nolint:gosec // test-only helper, path is within t.TempDir()
+	require.NoError(t, err)
+	return string(b)
 }
 
 // ---- Helper / lower-level coverage -----------------------------------------
