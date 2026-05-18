@@ -2,7 +2,6 @@ package setup
 
 import (
 	"errors"
-	"fmt"
 	"runtime"
 
 	"github.com/mrz1836/hush/internal/keychain"
@@ -181,27 +180,5 @@ func TokenErrorFromKeychain(err error) error {
 		return ErrTokenDenied
 	default:
 		return err
-	}
-}
-
-// ClockSyncRemedy returns the exact, copy-pasteable command that
-// resynchronises the system clock on the supplied GOOS. The string
-// is the value used in [ErrClockUnsynchronised]'s remedy hint and
-// is exposed so [Check] implementations can render it without
-// re-deriving the platform mapping.
-//
-// Unrecognized GOOS values return a portable hint that points the
-// user at their distribution's clock-sync documentation rather
-// than guessing a command that might not exist.
-func ClockSyncRemedy(goos string) string {
-	switch goos {
-	case "darwin":
-		return "run `sudo sntp -sS time.apple.com` to resync the clock, then re-run; hush will never auto-sudo on your behalf"
-	case "linux":
-		return "run `sudo chronyc makestep` (chrony) or `sudo ntpdate -u pool.ntp.org` (ntpdate), then re-run; hush will never auto-sudo on your behalf"
-	case "windows":
-		return "open an elevated PowerShell and run `w32tm /resync`, then re-run"
-	default:
-		return fmt.Sprintf("resync your system clock per your OS docs (%s), then re-run; hush will never auto-sudo on your behalf", goos)
 	}
 }

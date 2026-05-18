@@ -187,27 +187,3 @@ func TestTokenErrorFromKeychain_Translates(t *testing.T) {
 		})
 	}
 }
-
-// TestClockSyncRemedy_PerPlatform asserts the platform-aware
-// helper returns the exact command string each supported GOOS is
-// documented to receive. Locked text — AC-8's "exact remediation
-// command" promise.
-func TestClockSyncRemedy_PerPlatform(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		goos          string
-		wantSubstring string
-	}{
-		{"darwin", "sudo sntp -sS time.apple.com"},
-		{"linux", "sudo chronyc makestep"},
-		{"windows", "w32tm /resync"},
-		{"plan9", "plan9"}, // unknown GOOS echoes the value in the fallback hint.
-	}
-	for _, tc := range cases {
-		t.Run(tc.goos, func(t *testing.T) {
-			t.Parallel()
-			require.Contains(t, setup.ClockSyncRemedy(tc.goos), tc.wantSubstring)
-		})
-	}
-}

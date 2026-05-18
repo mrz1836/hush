@@ -41,7 +41,7 @@ func TestDefaultClockSyncProbe_Darwin_Parses(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			execNetworkTime = tc.stub
-			synced, _, err := defaultClockSyncProbe(context.Background())
+			synced, _, err := DefaultClockSyncProbe(context.Background())
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("err=%v wantErr=%v", err, tc.wantErr)
 			}

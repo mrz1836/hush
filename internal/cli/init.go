@@ -28,6 +28,7 @@ import (
 	"github.com/mrz1836/hush/internal/config"
 	"github.com/mrz1836/hush/internal/keychain"
 	"github.com/mrz1836/hush/internal/keys"
+	"github.com/mrz1836/hush/internal/server"
 	"github.com/mrz1836/hush/internal/vault"
 	"github.com/mrz1836/hush/internal/vault/securebytes"
 )
@@ -273,7 +274,7 @@ func productionInitDeps() (*initDeps, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &initDeps{
+	deps := &initDeps{
 		keychain:         kc,
 		binaryPath:       os.Executable,
 		randReader:       rand.Reader,
@@ -285,8 +286,9 @@ func productionInitDeps() (*initDeps, error) {
 		promptRecovery:   defaultPromptRecovery,
 		isTTY:            defaultIsTTY,
 		deriveMasterSeed: keys.DeriveMasterSeed,
-		runPreflight:     defaultRunPreflight,
-	}, nil
+	}
+	deps.runPreflight = defaultRunPreflightFor(deps)
+	return deps, nil
 }
 
 // defaultPromptRecovery is the production binding for the recovery
@@ -309,12 +311,25 @@ func defaultPromptRecovery(in *os.File, prompt io.Writer, label string) (rune, e
 	return r, nil
 }
 
-// defaultRunPreflight returns an empty preflight report. Phase 2
-// wires the seam; Phase 4 registers the real checks (clock-sync
-// first, then the rest of the [setup.CheckOrder] slots).
-func defaultRunPreflight(ctx context.Context) setup.Report {
-	reg := setup.NewRegistry()
-	return reg.Run(ctx)
+// defaultRunPreflightFor returns the production preflight closure
+// bound to deps. The closure builds a fresh [setup.Registry] on every
+// invocation so a re-run after recovery picks up the operator's
+// latest flag state (notably [initDeps.serverAllowClockSkew], which
+// is mutable up to the moment the preflight runs).
+//
+// Phase 4 wires the clock-sync slot; later phases register the rest
+// of [setup.CheckOrder] in this same factory.
+func defaultRunPreflightFor(deps *initDeps) func(ctx context.Context) setup.Report {
+	return func(ctx context.Context) setup.Report {
+		reg := setup.NewRegistry()
+		reg.MustRegister(setup.NewClockSyncCheck(setup.ClockSyncCheckConfig{
+			Required:  config.DefaultRequireNTPSync,
+			MaxDrift:  config.DefaultMaxClockDrift,
+			Timeout:   server.DefaultClockSyncTimeout,
+			AllowSkew: deps.serverAllowClockSkew,
+		}))
+		return reg.Run(ctx)
+	}
 }
 
 func defaultIsTTY(f *os.File) bool {

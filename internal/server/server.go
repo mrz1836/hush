@@ -191,6 +191,13 @@ type Deps struct {
 
 	// ShutdownTimeout overrides DefaultShutdownTimeout.
 	ShutdownTimeout time.Duration
+
+	// AllowClockSkew downgrades a would-be clock-sync startup failure
+	// to a logged warning + a single [AuditClockSkewOverride] audit
+	// event. Set from `hush serve --allow-clock-skew` (T-278 Plan
+	// AC-8 / Task 4.2). hush never auto-sudos to fix the clock; this
+	// flag is the only override path on the serve side.
+	AllowClockSkew bool
 }
 
 // mountedRoute is one (method, path, handler) tuple captured before Run via
@@ -228,6 +235,7 @@ type Server struct {
 	nonceCache        sign.NonceCache
 	reloadDrainWindow time.Duration
 	shutdownTimeout   time.Duration
+	allowClockSkew    bool
 
 	runStartedAt time.Time
 	clockInSync  atomic.Bool
@@ -277,6 +285,7 @@ func New(deps Deps) (*Server, error) {
 		nonceCache:        sign.NewNonceCache(),
 		reloadDrainWindow: deps.ReloadDrainWindow,
 		shutdownTimeout:   deps.ShutdownTimeout,
+		allowClockSkew:    deps.AllowClockSkew,
 		shutdownDoneCh:    make(chan struct{}),
 	}
 
@@ -284,7 +293,7 @@ func New(deps Deps) (*Server, error) {
 		s.clock = time.Now
 	}
 	if s.clockProbe == nil {
-		s.clockProbe = defaultClockSyncProbe
+		s.clockProbe = DefaultClockSyncProbe
 	}
 	if s.interfaceLister == nil {
 		s.interfaceLister = func() ([]net.Addr, error) { return defaultInterfaceLister() }

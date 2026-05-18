@@ -367,6 +367,105 @@ func TestAbsDuration(t *testing.T) {
 	}
 }
 
+// TestStartupChecks_AllowClockSkewDowngradesNotSynced covers Plan
+// AC-8 / Task 4.2: with --allow-clock-skew (Deps.AllowClockSkew=true)
+// a not-synced probe no longer aborts startup. The check emits a
+// single clock_skew_override audit event and returns nil so the rest
+// of the lifecycle runs.
+func TestStartupChecks_AllowClockSkewDowngradesNotSynced(t *testing.T) {
+	t.Parallel()
+
+	srv, audit, _, _ := newTestServer(t, func(d *Deps) {
+		d.ClockSyncProbe = scriptedClockProbe(false, 0, nil)
+		d.AllowClockSkew = true
+	})
+
+	if err := srv.checkClockSync(context.Background()); err != nil {
+		t.Fatalf("checkClockSync with override returned err=%v, want nil", err)
+	}
+	ev := audit.snapshot()
+	if len(ev) != 1 {
+		t.Fatalf("audit events=%d want 1: %+v", len(ev), ev)
+	}
+	if ev[0].Type != AuditClockSkewOverride {
+		t.Fatalf("event type=%q want %q", ev[0].Type, AuditClockSkewOverride)
+	}
+	if ev[0].Detail["reason"] == "" {
+		t.Fatalf("override audit missing reason: %+v", ev[0].Detail)
+	}
+	if srv.clockInSync.Load() {
+		t.Fatalf("clockInSync should remain false under override")
+	}
+}
+
+// TestStartupChecks_AllowClockSkewDowngradesDriftExceeded covers the
+// drift-exceeded branch under override. Reason should reflect the
+// numeric drift so operators can correlate the override against the
+// actual skew.
+func TestStartupChecks_AllowClockSkewDowngradesDriftExceeded(t *testing.T) {
+	t.Parallel()
+
+	srv, audit, _, _ := newTestServer(t, func(d *Deps) {
+		d.ClockSyncProbe = scriptedClockProbe(true, 90*time.Second, nil)
+		d.AllowClockSkew = true
+	})
+
+	if err := srv.checkClockSync(context.Background()); err != nil {
+		t.Fatalf("checkClockSync with override returned err=%v, want nil", err)
+	}
+	ev := audit.snapshot()
+	if len(ev) != 1 || ev[0].Type != AuditClockSkewOverride {
+		t.Fatalf("expected one clock_skew_override event, got %+v", ev)
+	}
+	if !contains(ev[0].Detail["reason"], "drift") {
+		t.Fatalf("override audit reason missing drift detail: %q", ev[0].Detail["reason"])
+	}
+}
+
+// TestStartupChecks_AllowClockSkewDowngradesProbeError covers the
+// probe-error branch under override.
+func TestStartupChecks_AllowClockSkewDowngradesProbeError(t *testing.T) {
+	t.Parallel()
+
+	srv, audit, _, _ := newTestServer(t, func(d *Deps) {
+		d.ClockSyncProbe = scriptedClockProbe(true, 0, errTestSynthetic)
+		d.AllowClockSkew = true
+	})
+
+	if err := srv.checkClockSync(context.Background()); err != nil {
+		t.Fatalf("checkClockSync with override returned err=%v, want nil", err)
+	}
+	ev := audit.snapshot()
+	if len(ev) != 1 || ev[0].Type != AuditClockSkewOverride {
+		t.Fatalf("expected one clock_skew_override event, got %+v", ev)
+	}
+	if ev[0].Detail["reason"] != "probe failed" {
+		t.Fatalf("override audit reason=%q want %q", ev[0].Detail["reason"], "probe failed")
+	}
+}
+
+// TestStartupChecks_AllowClockSkewLeavesPassThroughAlone confirms a
+// happy-path probe is unchanged under override: no audit event,
+// clockInSync set to true.
+func TestStartupChecks_AllowClockSkewLeavesPassThroughAlone(t *testing.T) {
+	t.Parallel()
+
+	srv, audit, _, _ := newTestServer(t, func(d *Deps) {
+		d.ClockSyncProbe = scriptedClockProbe(true, 0, nil)
+		d.AllowClockSkew = true
+	})
+
+	if err := srv.checkClockSync(context.Background()); err != nil {
+		t.Fatalf("checkClockSync happy err=%v", err)
+	}
+	if got := audit.snapshot(); len(got) != 0 {
+		t.Fatalf("audit events under healthy override: %+v", got)
+	}
+	if !srv.clockInSync.Load() {
+		t.Fatalf("clockInSync should be true on a successful probe")
+	}
+}
+
 func contains(s, sub string) bool {
 	return len(s) > 0 && (s == sub || (len(sub) > 0 && (indexOf(s, sub) >= 0)))
 }

@@ -339,6 +339,7 @@ func TestServer_DepsFieldsLocked(t *testing.T) {
 		"Clock", "ClockSyncProbe", "InterfaceLister", "Listener",
 		"VaultKey", "LoadVaultFn", "ClientKeyResolver",
 		"ReloadDrainWindow", "ShutdownTimeout",
+		"AllowClockSkew",
 	}
 	for _, name := range want {
 		if _, ok := depsType.FieldByName(name); !ok {

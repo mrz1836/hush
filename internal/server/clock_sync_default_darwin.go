@@ -21,11 +21,11 @@ var execNetworkTime = func(ctx context.Context) (string, error) {
 	return string(out), nil
 }
 
-// defaultClockSyncProbe is the platform-default probe used by the chassis on
+// DefaultClockSyncProbe is the platform-default probe used by the chassis on
 // darwin. Parses the yes/no answer from `systemsetup -getusingnetworktime`.
 // Drift is reported as zero — the binary's accuracy is sub-second-class on
 // modern macOS, well inside [config.SecuritySection.MaxClockDrift].
-func defaultClockSyncProbe(ctx context.Context) (bool, time.Duration, error) {
+func DefaultClockSyncProbe(ctx context.Context) (bool, time.Duration, error) {
 	probeCtx, cancel := context.WithTimeout(ctx, DefaultClockSyncTimeout)
 	defer cancel()
 

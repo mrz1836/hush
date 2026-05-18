@@ -127,18 +127,15 @@ func newServeCmd() *cobra.Command {
 				passphraseSource: resolvePassphrase,
 				approverFactory:  newProductionBotApprover,
 			}
-			// --allow-clock-skew is declared here so the flag surface
-			// matches `hush init server`; the runtime wiring lands in
-			// Phase 4 (T-278), where the clock-sync startup check
-			// learns to downgrade fail → warn under the override and
-			// emit a single `clock_skew_override` audit event. For now
-			// the flag is accepted (so scripts pinning it survive) but
-			// inert.
+			// --allow-clock-skew downgrades the clock-sync startup check
+			// from fail to a logged warning + a single audit event
+			// (T-278 Plan AC-8 / Task 4.2). hush never auto-sudos to fix
+			// the clock; this flag is the only override path.
 			deps.allowClockSkew, _ = cmd.Flags().GetBool("allow-clock-skew")
 			return runServe(cmd.Context(), out.stdout, out.stderr, deps)
 		},
 	}
-	cmd.Flags().Bool("allow-clock-skew", false, "Downgrade clock-sync fail → warn at serve start (Phase 4 wires the audit event; no auto-sudo)")
+	cmd.Flags().Bool("allow-clock-skew", false, "Downgrade a failing clock-sync startup check to a logged warning + audit event (no auto-sudo)")
 	return cmd
 }
 
@@ -148,16 +145,13 @@ func newServeCmd() *cobra.Command {
 //nolint:gocognit,gocyclo,cyclop,contextcheck // sequential 11-step composition; complexity is structural per research.md §10. The audit goroutine intentionally runs on a parallel ctx so it survives parent-cancel for shutdown drain.
 func runServe(ctx context.Context, stdout, stderr *Stream, deps serveDeps) error {
 	_ = stdout
-	// Phase 4 of T-278 wires the audit event; here we just announce
-	// the override under --verbose so operators can see it landed.
-	_ = deps.allowClockSkew
 	verbose := func(format string, args ...any) {
 		if deps.verbose {
 			_ = stderr.WriteText(format, args...)
 		}
 	}
 	if deps.allowClockSkew {
-		verbose("serve: --allow-clock-skew override active (audit event wires in T-278 Phase 4)")
+		verbose("serve: --allow-clock-skew override active; clock-sync fail will downgrade to warn + audit event")
 	}
 
 	// 1. Resolve config path (~ expansion).
@@ -281,6 +275,7 @@ func runServe(ctx context.Context, stdout, stderr *Stream, deps serveDeps) error
 		VaultKey:        vaultEncKey,
 		ClockSyncProbe:  deps.clockSyncProbe,
 		InterfaceLister: deps.interfaceLister,
+		AllowClockSkew:  deps.allowClockSkew,
 	}
 	srv, err := server.New(srvDeps)
 	if err != nil {
