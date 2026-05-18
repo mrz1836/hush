@@ -266,6 +266,134 @@ func TestServe_BadPassphrase_ExitAuth(t *testing.T) {
 	}
 }
 
+// TestT273_Fixture4_ServeStartsViaEnvTokenWhenKeychainUnavailable is
+// the serve-side leg of SC-10 / AC-12 case 4: with
+// HUSH_DISCORD_BOT_TOKEN exported and a configured-but-unreachable
+// Keychain item name, [loadBotToken] returns the env-supplied token
+// without ever shelling out to the Keychain subprocess. This pins the
+// fallback wire that T-273 proved we will hit in the wild.
+//
+// t.Setenv mutates process-global state, so the test is intentionally
+// serial.
+func TestT273_Fixture4_ServeStartsViaEnvTokenWhenKeychainUnavailable(t *testing.T) {
+	const envToken = "T273-serve-fixture4-env-token"
+	t.Setenv("HUSH_DISCORD_BOT_TOKEN", envToken)
+
+	tok, err := loadBotToken(t.Context(), "hush-T273-serve-fixture4-nonexistent")
+	if err != nil {
+		t.Fatalf("loadBotToken under env-var fallback: %v", err)
+	}
+	t.Cleanup(func() { _ = tok.Destroy() })
+
+	if err := tok.Use(func(b []byte) {
+		if string(b) != envToken {
+			t.Fatalf("loaded token = %q, want %q", string(b), envToken)
+		}
+	}); err != nil {
+		t.Fatalf("token.Use: %v", err)
+	}
+}
+
+// TestT273_Fixture5_ServeAllowClockSkewDowngradesProbeFailure is the
+// serve-side leg of SC-10 / AC-12 case 5 (override branch): when the
+// chassis's clock-sync probe fails AND `--allow-clock-skew` is set on
+// `hush serve`, the chassis MUST emit the "clock-sync override active"
+// log line and let startup continue past the clock-sync gate instead
+// of returning [server.ErrClockUnsynchronised] immediately. The
+// per-event audit assertion is covered by
+// [TestStartupChecks_AllowClockSkew*] in internal/server; this
+// integration test pins the wire from `hush serve --allow-clock-skew`
+// through serveDeps.allowClockSkew into the chassis.
+func TestT273_Fixture5_ServeAllowClockSkewDowngradesProbeFailure(t *testing.T) {
+	tsAddr, ok := hasTailscaleAddr()
+	if !ok {
+		t.Skip("no Tailscale CGNAT address on this host")
+	}
+
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+
+	listener, err := net.Listen("tcp", tsAddr+":0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	listenAddr := listener.Addr().(*net.TCPAddr)
+	listenAddrStr := netip.AddrPortFrom(netip.MustParseAddr(tsAddr), uint16(listenAddr.Port)).String()
+
+	configPath := writeTestConfig(t, dir, listenAddrStr, "abcdef")
+	makeRealVault(t, dir)
+
+	// Synthetic probe always returns not-synced. Without override the
+	// chassis returns ErrClockUnsynchronised immediately;
+	// AllowClockSkew downgrades that to a logged warn + audit event.
+	deps := serveDeps{
+		configPath:     configPath,
+		allowClockSkew: true,
+		passphraseSource: func(_ context.Context, _ *os.File, _ io.Writer) (*securebytes.SecureBytes, error) {
+			return securebytes.New([]byte("hush-test-seed-NEVER-USE-IN-PROD"))
+		},
+		approverFactory: testApproverFactory,
+		listener:        listener,
+		clockSyncProbe:  func(_ context.Context) (bool, time.Duration, error) { return false, 0, nil },
+	}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	var stdout, stderr bytes.Buffer
+	out := newStream(&stdout, false, true)
+	errStream := newStream(&stderr, false, true)
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- runServe(ctx, out, errStream, deps) }()
+
+	// Wait until either the override line appears (success) or
+	// runServe returns early (failure). The override log line is the
+	// authoritative signal that the chassis passed the clock-sync
+	// gate under --allow-clock-skew; downstream chassis behavior
+	// (interface-list checks, /hz handlers) is covered by other
+	// integration tests and not the subject of this fixture.
+	deadline := time.Now().Add(5 * time.Second)
+	var overrideObserved bool
+overridePoll:
+	for time.Now().Before(deadline) {
+		select {
+		case earlyErr := <-errCh:
+			t.Fatalf("runServe returned early under override: %v; stderr=%q",
+				earlyErr, stderr.String())
+		default:
+		}
+		if bytes.Contains(stderr.Bytes(), []byte("clock-sync override active")) {
+			overrideObserved = true
+			break overridePoll
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	cancel()
+	select {
+	case err := <-errCh:
+		// Override path returns either nil (clean shutdown) or
+		// context.Canceled depending on which step the cancel landed
+		// on; either is acceptable. The fixture specifically rejects
+		// ErrClockUnsynchronised, which would mean the override did
+		// not fire.
+		if err != nil && errors.Is(err, server.ErrClockUnsynchronised) {
+			t.Fatalf("runServe surfaced ErrClockUnsynchronised under --allow-clock-skew; want override path; got %v",
+				err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("runServe did not return within 10s of cancel")
+	}
+
+	if !overrideObserved {
+		t.Fatalf("clock-sync override line never appeared in stderr; got %q",
+			stderr.String())
+	}
+}
+
 // silenceUnused keeps the imports satisfied across builds where no
 // chassis types are referenced.
 var _ = server.ErrAlreadyRun

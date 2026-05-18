@@ -223,6 +223,29 @@ func TestNewPlatformKeychain_Darwin(t *testing.T) {
 	require.True(t, ok)
 }
 
+// TestT273_Fixture1_RetrieveExit51IsPermissionDenied is the dedicated
+// SC-10 / AC-12 case 1 fixture at the keychain layer: Darwin exit
+// code 51 (errSecAuthFailed — the "item exists but the read was
+// refused" verdict observed during T-273) MUST map to
+// [ErrKeychainPermissionDenied]. Upstream this drives
+// [setup.ErrTokenDenied] and the ACL-repair panel; pinning the wire
+// here means a future kernel-level remap of exit codes cannot quietly
+// regress the panel-trigger condition.
+func TestT273_Fixture1_RetrieveExit51IsPermissionDenied(t *testing.T) {
+	t.Parallel()
+	k := newDarwinForTest()
+	k.outputFn = func(*exec.Cmd) ([]byte, error) {
+		return nil, fakeExitErr(t, exitAuthFailed)
+	}
+
+	_, err := k.Retrieve(context.Background(), "hush-discord", "hush-server")
+	require.True(t, errors.Is(err, ErrKeychainPermissionDenied),
+		"exit %d (errSecAuthFailed) MUST map to ErrKeychainPermissionDenied; got %v",
+		exitAuthFailed, err)
+	require.Equal(t, 51, exitAuthFailed,
+		"exit 51 is the observed T-273 ACL-denial code; renaming the constant must keep its value")
+}
+
 func TestMapSecurityError_NonExitError(t *testing.T) {
 	t.Parallel()
 	got := mapSecurityError(io.EOF, "store")

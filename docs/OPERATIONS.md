@@ -89,6 +89,25 @@ Current truth:
 
 ---
 
+## Shell snippet safety (zsh-first)
+
+Every shell snippet hush emits to the operator or ships in this repo's docs MUST be safe to paste into the default macOS shell, which is `zsh`. Bash-only constructs that crash zsh — most notably `read -p` and `read -s` — are forbidden in:
+
+- user-facing strings printed by the CLI (e.g. `hush init server` panels, error remedies)
+- every doc surface a setup reader hits (`docs/*.md`, `README.md`)
+
+A guard test (`internal/cli/setup/snippets_test.go::TestZshSafeSnippetsGuard`) scans those surfaces and fails CI on any unallowlisted match. The rule exists because the T-273 Hush 101 incident showed that operators land in `zsh` immediately after `hush init server`, and a single `read -p` snippet in a fallback instruction instantly bricks the first interaction.
+
+Zsh-safe alternatives:
+
+- prompt + line read: `printf '%s ' 'prompt:'; read REPLY`
+- no-echo read: prefer a separate `stty -echo`/`stty echo` block, or call the operator into hush's own no-echo prompt seam rather than recommending shell-level no-echo
+- raw read: `IFS= read -r REPLY` (works on both zsh and bash)
+
+If a doc surface legitimately needs to *describe* the forbidden constructs (e.g. when explaining the rule itself), add the file + substring to the `zshGuardAllowlist` in `snippets_test.go`. The OPERATIONS.md prose that introduces this rule is itself the canonical example: the line above that says snippets MUST NOT include `read -p` or `read -s` is allowlisted by exact-substring match.
+
+---
+
 ## Cross-references
 
 - functional/acceptance scope: `docs/SPEC.md`
