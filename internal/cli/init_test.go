@@ -376,27 +376,25 @@ func TestInitServer_InteractiveHonorsNonSecretFlagInputs(t *testing.T) {
 	require.Equal(t, "665678901234567890", loaded.Server.DiscordAuditChannelID)
 }
 
-func TestInitServer_ExplicitStateDirScopesConfiguredKeychainItem(t *testing.T) {
+func TestInitServer_ExplicitStateDirUsesDefaultConfiguredKeychainItem(t *testing.T) {
 	t.Parallel()
 	fx := newInitFixture(t)
 	explicitDir := filepath.Join(fx.tempDir, "fresh-vault")
 	fx.deps.stateDirRoot = explicitDir
 	fx.deps.serverInputs.stateDir = explicitDir
-	items := serverKeychainItems(explicitDir, true)
 
 	err := runInitServer(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, fx.deps)
 	require.NoError(t, err)
 
 	_, err = fx.keychain.Retrieve(context.Background(), kcServiceVaultPassphrase, kcAccountServer)
 	require.True(t, errors.Is(err, keychain.ErrKeychainItemNotFound))
-	_, err = fx.keychain.Retrieve(context.Background(), items.vaultPassphraseService, kcAccountServer)
+	_, err = fx.keychain.Retrieve(context.Background(), "hush-discord", kcAccountServer)
 	require.True(t, errors.Is(err, keychain.ErrKeychainItemNotFound))
 
 	loaded, err := config.LoadServer(context.Background(), filepath.Join(explicitDir, "config.toml"))
 	require.NoError(t, err)
 	require.Equal(t, explicitDir, loaded.Server.StateDir)
-	require.Equal(t, items.discordService, loaded.Discord.BotTokenKeychainItem)
-	require.NotEqual(t, "hush-discord", loaded.Discord.BotTokenKeychainItem)
+	require.Equal(t, "hush-discord", loaded.Discord.BotTokenKeychainItem)
 }
 
 func TestInitServer_ExplicitStateDirSkipsKeychainWrites(t *testing.T) {

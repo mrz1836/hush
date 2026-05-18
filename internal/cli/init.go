@@ -399,7 +399,7 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 	}
 	vaultPath := filepath.Join(stateDir, "secrets.vault")
 	configPath := filepath.Join(stateDir, "config.toml")
-	keychainItems := serverKeychainItems(stateDir, strings.TrimSpace(deps.serverInputs.stateDir) != "")
+	keychainItems := defaultServerKeychainItems()
 
 	// 4. Existence guards (vault, config, both keychain items).
 	if guardErr := guardFileAbsent(vaultPath, errVaultExists, initMsgVaultExistsFmt, stderr); guardErr != nil {
@@ -890,18 +890,10 @@ type serverKeychainItemNames struct {
 	discordService         string
 }
 
-func serverKeychainItems(stateDir string, explicitStateDir bool) serverKeychainItemNames {
-	if !explicitStateDir {
-		return serverKeychainItemNames{
-			vaultPassphraseService: kcServiceVaultPassphrase,
-			discordService:         "hush-discord",
-		}
-	}
-	sum := sha256.Sum256([]byte(stateDir))
-	suffix := hex.EncodeToString(sum[:])[:12]
+func defaultServerKeychainItems() serverKeychainItemNames {
 	return serverKeychainItemNames{
-		vaultPassphraseService: kcServiceVaultPassphrase + "-" + suffix,
-		discordService:         "hush-discord-" + suffix,
+		vaultPassphraseService: kcServiceVaultPassphrase,
+		discordService:         "hush-discord",
 	}
 }
 
