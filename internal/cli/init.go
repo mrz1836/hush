@@ -45,7 +45,7 @@ const (
 	initMsgMachineIndexInvalid  = "hush: init: --machine-index must be a non-negative integer"
 	initMsgFieldRequiredFmt     = "hush: init: %s is required"
 	initMsgKeychainStoreFailFmt = "hush: init: keychain store failed: %v"
-	initMsgKeychainFallbackFmt  = "hush: init: keychain store denied for explicit state dir; continuing without keychain item (%v). Set HUSH_DISCORD_BOT_TOKEN when running serve."
+	initMsgKeychainSkipped      = "hush: init: explicit state dir set; skipped Keychain writes. Set HUSH_DISCORD_BOT_TOKEN when running serve."
 	initMsgWriteFailFmt         = "hush: init: write %s: %v"
 	initMsgServerComplete       = "hush: init: server bootstrap complete"
 )
@@ -482,31 +482,27 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 		return fmt.Errorf("hush/cli: init: round-trip-validate config: %w", err)
 	}
 
-	// 10. Store the keychain items. Explicit-state bootstrap is allowed
-	// to continue if macOS refuses non-GUI Keychain writes; serve has an
-	// existing HUSH_DISCORD_BOT_TOKEN fallback and the operator keeps the
-	// vault passphrase. Default-state bootstrap remains strict.
-	allowKeychainFallback := strings.TrimSpace(deps.serverInputs.stateDir) != ""
-	if err := storeServerKeychainItem(ctx, deps, keychainItems.vaultPassphraseService, pass, binPath, stderr, allowKeychainFallback); err != nil {
+	// 10. Store the keychain items. Explicit-state bootstrap is the
+	// learning/smoke path, so skip Keychain writes entirely: macOS
+	// security prompts for "password data for new item" in some terminal
+	// contexts, which is confusing and unnecessary because serve already
+	// supports HUSH_DISCORD_BOT_TOKEN and the operator keeps the vault
+	// passphrase. Default-state bootstrap remains strict.
+	if strings.TrimSpace(deps.serverInputs.stateDir) != "" {
+		_ = stderr.WriteText(initMsgKeychainSkipped)
+		_ = stderr.WriteText(initMsgServerComplete)
+		return nil
+	}
+	if err := deps.keychain.Store(ctx, keychainItems.vaultPassphraseService, kcAccountServer, pass, binPath); err != nil {
+		_ = stderr.WriteText(initMsgKeychainStoreFailFmt, err)
 		return err
 	}
-	if err := storeServerKeychainItem(ctx, deps, keychainItems.discordService, botToken, binPath, stderr, allowKeychainFallback); err != nil {
+	if err := deps.keychain.Store(ctx, keychainItems.discordService, kcAccountServer, botToken, binPath); err != nil {
+		_ = stderr.WriteText(initMsgKeychainStoreFailFmt, err)
 		return err
 	}
 
 	_ = stderr.WriteText(initMsgServerComplete)
-	return nil
-}
-
-func storeServerKeychainItem(ctx context.Context, deps *initDeps, service string, value *securebytes.SecureBytes, binPath string, stderr *Stream, allowFallback bool) error {
-	if err := deps.keychain.Store(ctx, service, kcAccountServer, value, binPath); err != nil {
-		if allowFallback && errors.Is(err, keychain.ErrKeychainPermissionDenied) {
-			_ = stderr.WriteText(initMsgKeychainFallbackFmt, err)
-			return nil
-		}
-		_ = stderr.WriteText(initMsgKeychainStoreFailFmt, err)
-		return err
-	}
 	return nil
 }
 

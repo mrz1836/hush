@@ -176,6 +176,20 @@ func (d *deterministicReader) Read(p []byte) (int, error) {
 	return len(p), nil
 }
 
+type panicStoreKeychain struct{}
+
+func (panicStoreKeychain) Store(context.Context, string, string, *securebytes.SecureBytes, string) error {
+	panic("Store should not be called for explicit state-dir init")
+}
+
+func (panicStoreKeychain) Retrieve(context.Context, string, string) (*securebytes.SecureBytes, error) {
+	return nil, keychain.ErrKeychainItemNotFound
+}
+
+func (panicStoreKeychain) Delete(context.Context, string, string) error {
+	return keychain.ErrKeychainItemNotFound
+}
+
 type denyStoreKeychain struct{}
 
 func (denyStoreKeychain) Store(context.Context, string, string, *securebytes.SecureBytes, string) error {
@@ -362,7 +376,7 @@ func TestInitServer_InteractiveHonorsNonSecretFlagInputs(t *testing.T) {
 	require.Equal(t, "665678901234567890", loaded.Server.DiscordAuditChannelID)
 }
 
-func TestInitServer_ExplicitStateDirScopesServerKeychainItems(t *testing.T) {
+func TestInitServer_ExplicitStateDirScopesConfiguredKeychainItem(t *testing.T) {
 	t.Parallel()
 	fx := newInitFixture(t)
 	explicitDir := filepath.Join(fx.tempDir, "fresh-vault")
@@ -375,32 +389,27 @@ func TestInitServer_ExplicitStateDirScopesServerKeychainItems(t *testing.T) {
 
 	_, err = fx.keychain.Retrieve(context.Background(), kcServiceVaultPassphrase, kcAccountServer)
 	require.True(t, errors.Is(err, keychain.ErrKeychainItemNotFound))
-	got, err := fx.keychain.Retrieve(context.Background(), items.vaultPassphraseService, kcAccountServer)
-	require.NoError(t, err)
-	defer got.Destroy()
+	_, err = fx.keychain.Retrieve(context.Background(), items.vaultPassphraseService, kcAccountServer)
+	require.True(t, errors.Is(err, keychain.ErrKeychainItemNotFound))
 
 	loaded, err := config.LoadServer(context.Background(), filepath.Join(explicitDir, "config.toml"))
 	require.NoError(t, err)
 	require.Equal(t, explicitDir, loaded.Server.StateDir)
 	require.Equal(t, items.discordService, loaded.Discord.BotTokenKeychainItem)
 	require.NotEqual(t, "hush-discord", loaded.Discord.BotTokenKeychainItem)
-
-	bot, err := fx.keychain.Retrieve(context.Background(), items.discordService, kcAccountServer)
-	require.NoError(t, err)
-	defer bot.Destroy()
 }
 
-func TestInitServer_ExplicitStateDirContinuesWhenKeychainDenied(t *testing.T) {
+func TestInitServer_ExplicitStateDirSkipsKeychainWrites(t *testing.T) {
 	t.Parallel()
 	fx := newInitFixture(t)
 	explicitDir := filepath.Join(fx.tempDir, "keychain-denied-vault")
 	fx.deps.stateDirRoot = explicitDir
 	fx.deps.serverInputs.stateDir = explicitDir
-	fx.deps.keychain = denyStoreKeychain{}
+	fx.deps.keychain = panicStoreKeychain{}
 
 	err := runInitServer(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, fx.deps)
 	require.NoError(t, err)
-	require.Contains(t, fx.stderr.String(), "keychain store denied for explicit state dir")
+	require.Contains(t, fx.stderr.String(), initMsgKeychainSkipped)
 	require.Contains(t, fx.stderr.String(), initMsgServerComplete)
 
 	_, err = os.Stat(filepath.Join(explicitDir, "secrets.vault"))
