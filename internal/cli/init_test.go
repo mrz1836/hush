@@ -176,6 +176,20 @@ func (d *deterministicReader) Read(p []byte) (int, error) {
 	return len(p), nil
 }
 
+type denyStoreKeychain struct{}
+
+func (denyStoreKeychain) Store(context.Context, string, string, *securebytes.SecureBytes, string) error {
+	return keychain.ErrKeychainPermissionDenied
+}
+
+func (denyStoreKeychain) Retrieve(context.Context, string, string) (*securebytes.SecureBytes, error) {
+	return nil, keychain.ErrKeychainItemNotFound
+}
+
+func (denyStoreKeychain) Delete(context.Context, string, string) error {
+	return keychain.ErrKeychainItemNotFound
+}
+
 // ---- Server-mode tests ----------------------------------------------------
 
 func TestInitServer_RefusesShortPassphrase(t *testing.T) {
@@ -374,6 +388,35 @@ func TestInitServer_ExplicitStateDirScopesServerKeychainItems(t *testing.T) {
 	bot, err := fx.keychain.Retrieve(context.Background(), items.discordService, kcAccountServer)
 	require.NoError(t, err)
 	defer bot.Destroy()
+}
+
+func TestInitServer_ExplicitStateDirContinuesWhenKeychainDenied(t *testing.T) {
+	t.Parallel()
+	fx := newInitFixture(t)
+	explicitDir := filepath.Join(fx.tempDir, "keychain-denied-vault")
+	fx.deps.stateDirRoot = explicitDir
+	fx.deps.serverInputs.stateDir = explicitDir
+	fx.deps.keychain = denyStoreKeychain{}
+
+	err := runInitServer(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, fx.deps)
+	require.NoError(t, err)
+	require.Contains(t, fx.stderr.String(), "keychain store denied for explicit state dir")
+	require.Contains(t, fx.stderr.String(), initMsgServerComplete)
+
+	_, err = os.Stat(filepath.Join(explicitDir, "secrets.vault"))
+	require.NoError(t, err)
+	_, err = config.LoadServer(context.Background(), filepath.Join(explicitDir, "config.toml"))
+	require.NoError(t, err)
+}
+
+func TestInitServer_DefaultStateStillFailsWhenKeychainDenied(t *testing.T) {
+	t.Parallel()
+	fx := newInitFixture(t)
+	fx.deps.keychain = denyStoreKeychain{}
+
+	err := runInitServer(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, fx.deps)
+	require.True(t, errors.Is(err, keychain.ErrKeychainPermissionDenied))
+	require.Contains(t, fx.stderr.String(), "keychain store failed")
 }
 
 func TestInitServer_RefusesPreExistingVault(t *testing.T) {

@@ -45,6 +45,7 @@ const (
 	initMsgMachineIndexInvalid  = "hush: init: --machine-index must be a non-negative integer"
 	initMsgFieldRequiredFmt     = "hush: init: %s is required"
 	initMsgKeychainStoreFailFmt = "hush: init: keychain store failed: %v"
+	initMsgKeychainFallbackFmt  = "hush: init: keychain store denied for explicit state dir; continuing without keychain item (%v). Set HUSH_DISCORD_BOT_TOKEN when running serve."
 	initMsgWriteFailFmt         = "hush: init: write %s: %v"
 	initMsgServerComplete       = "hush: init: server bootstrap complete"
 )
@@ -481,17 +482,31 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 		return fmt.Errorf("hush/cli: init: round-trip-validate config: %w", err)
 	}
 
-	// 10. Store the keychain items.
-	if err := deps.keychain.Store(ctx, keychainItems.vaultPassphraseService, kcAccountServer, pass, binPath); err != nil {
-		_ = stderr.WriteText(initMsgKeychainStoreFailFmt, err)
+	// 10. Store the keychain items. Explicit-state bootstrap is allowed
+	// to continue if macOS refuses non-GUI Keychain writes; serve has an
+	// existing HUSH_DISCORD_BOT_TOKEN fallback and the operator keeps the
+	// vault passphrase. Default-state bootstrap remains strict.
+	allowKeychainFallback := strings.TrimSpace(deps.serverInputs.stateDir) != ""
+	if err := storeServerKeychainItem(ctx, deps, keychainItems.vaultPassphraseService, pass, binPath, stderr, allowKeychainFallback); err != nil {
 		return err
 	}
-	if err := deps.keychain.Store(ctx, keychainItems.discordService, kcAccountServer, botToken, binPath); err != nil {
-		_ = stderr.WriteText(initMsgKeychainStoreFailFmt, err)
+	if err := storeServerKeychainItem(ctx, deps, keychainItems.discordService, botToken, binPath, stderr, allowKeychainFallback); err != nil {
 		return err
 	}
 
 	_ = stderr.WriteText(initMsgServerComplete)
+	return nil
+}
+
+func storeServerKeychainItem(ctx context.Context, deps *initDeps, service string, value *securebytes.SecureBytes, binPath string, stderr *Stream, allowFallback bool) error {
+	if err := deps.keychain.Store(ctx, service, kcAccountServer, value, binPath); err != nil {
+		if allowFallback && errors.Is(err, keychain.ErrKeychainPermissionDenied) {
+			_ = stderr.WriteText(initMsgKeychainFallbackFmt, err)
+			return nil
+		}
+		_ = stderr.WriteText(initMsgKeychainStoreFailFmt, err)
+		return err
+	}
 	return nil
 }
 
