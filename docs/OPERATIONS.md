@@ -40,6 +40,21 @@ Useful flags:
 - `--strict-clock` — disables the smoke-only clock-skew override while the
   temporary server runs.
 
+Clean smoke/test artifacts safely:
+
+```bash
+hush smoke clean
+```
+
+By default this archives `~/.hush-smoke` and the historical dogfood state
+`~/.hush-t278-validation` if present. It refuses to touch real `~/.hush`
+state. To permanently delete smoke state instead of archiving, use the
+explicit confirmation gate:
+
+```bash
+hush smoke clean --destroy --confirm 'destroy smoke'
+```
+
 ### Manual setup path
 
 ```bash

@@ -163,3 +163,51 @@ func mustAddrPortFromURL(t *testing.T, raw string) netip.AddrPort {
 	require.NoError(t, err)
 	return ap
 }
+
+func TestSmokeClean_ArchivesKnownSmokeDirsByDefault(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	for _, name := range []string{".hush-smoke", ".hush-t278-validation"} {
+		require.NoError(t, os.Mkdir(filepath.Join(home, name), 0o700))
+	}
+	deps := productionSmokeDeps()
+	deps.nowFn = func() time.Time { return time.Date(2026, 5, 18, 14, 0, 0, 0, time.UTC) }
+	stderr := &strings.Builder{}
+	err := runSmokeClean(newStream(io.Discard, false, true), newStream(stderr, false, true), deps, smokeCleanOptions{})
+	require.NoError(t, err)
+	require.NoDirExists(t, filepath.Join(home, ".hush-smoke"))
+	require.DirExists(t, filepath.Join(home, ".hush-smoke.bak-20260518-140000"))
+	require.NoDirExists(t, filepath.Join(home, ".hush-t278-validation"))
+	require.DirExists(t, filepath.Join(home, ".hush-t278-validation.bak-20260518-140000"))
+	require.Contains(t, stderr.String(), "archived")
+}
+
+func TestSmokeClean_DestroyRequiresConfirmation(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), ".hush-smoke")
+	require.NoError(t, os.Mkdir(dir, 0o700))
+	deps := productionSmokeDeps()
+	err := runSmokeClean(newStream(io.Discard, false, true), newStream(io.Discard, false, true), deps, smokeCleanOptions{
+		stateDirs: []string{dir},
+		destroy:   true,
+	})
+	require.Error(t, err)
+	require.DirExists(t, dir)
+
+	err = runSmokeClean(newStream(io.Discard, false, true), newStream(io.Discard, false, true), deps, smokeCleanOptions{
+		stateDirs: []string{dir},
+		destroy:   true,
+		confirm:   "destroy smoke",
+	})
+	require.NoError(t, err)
+	require.NoDirExists(t, dir)
+}
+
+func TestSmokeClean_RefusesRealHushState(t *testing.T) {
+	t.Parallel()
+	err := runSmokeClean(newStream(io.Discard, false, true), newStream(io.Discard, false, true), productionSmokeDeps(), smokeCleanOptions{
+		stateDirs: []string{"~/.hush"},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "refuses non-smoke")
+}

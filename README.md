@@ -52,7 +52,8 @@ hush smoke --state-dir ~/.hush-smoke --reset
 `hush smoke` walks the setup prompts, creates an isolated test vault, adds
 `HUSH_SMOKE_TEST=hello-from-hush`, starts a temporary Tailscale-only server,
 enrolls a client, asks you to approve in Discord, verifies the fake secret,
-and then shuts the temporary server down.
+and then shuts the temporary server down. Clean smoke artifacts safely with
+`hush smoke clean` (archives by default).
 
 Bootstrap the vault host manually:
 

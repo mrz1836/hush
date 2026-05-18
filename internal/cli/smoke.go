@@ -27,14 +27,17 @@ const (
 )
 
 const (
-	smokeMsgStart            = "hush: smoke: starting fake-secret smoke test"
-	smokeMsgInitServer       = "hush: smoke: initialized server state at %s"
-	smokeMsgSecretAdded      = "hush: smoke: added fake secret %s"
-	smokeMsgClientEnrolled   = "hush: smoke: enrolled client machine-%d"
-	smokeMsgServeStarting    = "hush: smoke: starting temporary server at %s"
-	smokeMsgApprove          = "hush: smoke: approve the %s request in Discord now"
-	smokeMsgSuccess          = "hush: smoke: success — %s=%s"
-	smokeMsgArchivedStateDir = "hush: smoke: archived existing state dir to %s"
+	smokeMsgStart             = "hush: smoke: starting fake-secret smoke test"
+	smokeMsgInitServer        = "hush: smoke: initialized server state at %s"
+	smokeMsgSecretAdded       = "hush: smoke: added fake secret %s"
+	smokeMsgClientEnrolled    = "hush: smoke: enrolled client machine-%d"
+	smokeMsgServeStarting     = "hush: smoke: starting temporary server at %s"
+	smokeMsgApprove           = "hush: smoke: approve the %s request in Discord now"
+	smokeMsgSuccess           = "hush: smoke: success — %s=%s"
+	smokeMsgArchivedStateDir  = "hush: smoke: archived existing state dir to %s"
+	smokeMsgCleanArchivedFmt  = "hush: smoke clean: archived %s to %s"
+	smokeMsgCleanDestroyedFmt = "hush: smoke clean: destroyed %s"
+	smokeMsgCleanAbsentFmt    = "hush: smoke clean: absent %s"
 )
 
 type smokeDeps struct {
@@ -61,6 +64,12 @@ type smokeOptions struct {
 	machineIndex      uint32
 	reset             bool
 	strictClock       bool
+}
+
+type smokeCleanOptions struct {
+	stateDirs []string
+	destroy   bool
+	confirm   string
 }
 
 func productionSmokeDeps() smokeDeps {
@@ -91,6 +100,7 @@ func newSmokeCmd() *cobra.Command {
 			return runSmoke(cmd.Context(), out.stdout, out.stderr, os.Stdin, productionSmokeDeps(), opts)
 		},
 	}
+	cmd.AddCommand(newSmokeCleanCmd())
 	cmd.Flags().StringVar(&opts.stateDir, "state-dir", opts.stateDir, "Isolated smoke-test state directory")
 	cmd.Flags().StringVar(&opts.listenAddr, "listen-addr", "", "Vault host Tailscale listen address (ip:port); prompts when empty")
 	cmd.Flags().StringVar(&opts.ownerID, "discord-owner-id", "", "Discord owner/user snowflake; prompts when empty")
@@ -416,4 +426,74 @@ func restoreEnv(key, old string, hadOld bool) {
 		return
 	}
 	_ = os.Unsetenv(key)
+}
+
+func newSmokeCleanCmd() *cobra.Command {
+	opts := smokeCleanOptions{}
+	cmd := &cobra.Command{
+		Use:   "clean",
+		Short: "Archive or destroy isolated smoke-test state",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			out := outputFromCmd(cmd)
+			return runSmokeClean(out.stdout, out.stderr, productionSmokeDeps(), opts)
+		},
+	}
+	cmd.Flags().StringArrayVar(&opts.stateDirs, "state-dir", nil, "Smoke/test state dir to clean; repeatable (defaults to ~/.hush-smoke and ~/.hush-t278-validation)")
+	cmd.Flags().BoolVar(&opts.destroy, "destroy", false, "Permanently delete instead of archiving (requires --confirm 'destroy smoke')")
+	cmd.Flags().StringVar(&opts.confirm, "confirm", "", "Required confirmation phrase for --destroy")
+	return cmd
+}
+
+func runSmokeClean(_ *Stream, stderr *Stream, deps smokeDeps, opts smokeCleanOptions) error {
+	targets := opts.stateDirs
+	if len(targets) == 0 {
+		targets = []string{"~/.hush-smoke", "~/.hush-t278-validation"}
+	}
+	if opts.destroy && opts.confirm != "destroy smoke" {
+		return fmt.Errorf("%w: --destroy requires --confirm 'destroy smoke'", errMissingFlag)
+	}
+	for _, raw := range targets {
+		path, err := expandTilde(raw)
+		if err != nil {
+			return err
+		}
+		if err := validateSmokeCleanTarget(path); err != nil {
+			return err
+		}
+		if _, err := os.Stat(path); err != nil {
+			if os.IsNotExist(err) {
+				_ = stderr.WriteText(smokeMsgCleanAbsentFmt, path)
+				continue
+			}
+			return err
+		}
+		if opts.destroy {
+			if err := os.RemoveAll(path); err != nil {
+				return err
+			}
+			_ = stderr.WriteText(smokeMsgCleanDestroyedFmt, path)
+			continue
+		}
+		archived, err := archiveSmokeStateDir(path, deps.nowFn())
+		if err != nil {
+			return err
+		}
+		if archived != "" {
+			_ = stderr.WriteText(smokeMsgCleanArchivedFmt, path, archived)
+		}
+	}
+	return nil
+}
+
+func validateSmokeCleanTarget(path string) error {
+	clean := filepath.Clean(path)
+	base := filepath.Base(clean)
+	switch {
+	case base == ".hush-smoke" || strings.HasPrefix(base, ".hush-smoke-"):
+		return nil
+	case base == ".hush-t278-validation" || strings.HasPrefix(base, ".hush-t278-validation-"):
+		return nil
+	default:
+		return fmt.Errorf("%w: smoke clean refuses non-smoke state dir %q", errMissingFlag, path)
+	}
 }
