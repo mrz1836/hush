@@ -324,6 +324,58 @@ func TestInitServer_StoresBotTokenInKeychain(t *testing.T) {
 	require.Equal(t, testInitBinaryPath, fx.keychain.RecordedACL("hush-discord", kcAccountServer))
 }
 
+func TestInitServer_InteractiveHonorsNonSecretFlagInputs(t *testing.T) {
+	t.Parallel()
+	fx := newInitFixture(t)
+	fx.deps.serverInputs.listenAddr = "100.96.10.5:7743"
+	fx.deps.serverInputs.ownerID = "223456789012345678"
+	fx.deps.serverInputs.applicationID = "445678901234567890"
+	fx.deps.serverInputs.approvalChannelID = "555678901234567890"
+	fx.deps.serverInputs.auditChannelID = "665678901234567890"
+	fx.deps.promptLine = func(_ *os.File, _ io.Writer, _ string) (string, error) {
+		return "", errors.New("promptLine should not be called for flag-provided fields")
+	}
+
+	err := runInitServer(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, fx.deps)
+	require.NoError(t, err)
+
+	loaded, err := config.LoadServer(context.Background(), filepath.Join(fx.tempDir, "config.toml"))
+	require.NoError(t, err)
+	require.Equal(t, "100.96.10.5:7743", loaded.Server.ListenAddr.String())
+	require.Equal(t, "223456789012345678", loaded.Server.DiscordOwnerID)
+	require.Equal(t, "445678901234567890", loaded.Discord.ApplicationID)
+	require.Equal(t, "555678901234567890", loaded.Server.DiscordApprovalChannelID)
+	require.Equal(t, "665678901234567890", loaded.Server.DiscordAuditChannelID)
+}
+
+func TestInitServer_ExplicitStateDirScopesServerKeychainItems(t *testing.T) {
+	t.Parallel()
+	fx := newInitFixture(t)
+	explicitDir := filepath.Join(fx.tempDir, "fresh-vault")
+	fx.deps.stateDirRoot = explicitDir
+	fx.deps.serverInputs.stateDir = explicitDir
+	items := serverKeychainItems(explicitDir, true)
+
+	err := runInitServer(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, fx.deps)
+	require.NoError(t, err)
+
+	_, err = fx.keychain.Retrieve(context.Background(), kcServiceVaultPassphrase, kcAccountServer)
+	require.True(t, errors.Is(err, keychain.ErrKeychainItemNotFound))
+	got, err := fx.keychain.Retrieve(context.Background(), items.vaultPassphraseService, kcAccountServer)
+	require.NoError(t, err)
+	defer got.Destroy()
+
+	loaded, err := config.LoadServer(context.Background(), filepath.Join(explicitDir, "config.toml"))
+	require.NoError(t, err)
+	require.Equal(t, explicitDir, loaded.Server.StateDir)
+	require.Equal(t, items.discordService, loaded.Discord.BotTokenKeychainItem)
+	require.NotEqual(t, "hush-discord", loaded.Discord.BotTokenKeychainItem)
+
+	bot, err := fx.keychain.Retrieve(context.Background(), items.discordService, kcAccountServer)
+	require.NoError(t, err)
+	defer bot.Destroy()
+}
+
 func TestInitServer_RefusesPreExistingVault(t *testing.T) {
 	t.Parallel()
 	fx := newInitFixture(t)

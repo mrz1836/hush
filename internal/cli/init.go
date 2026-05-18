@@ -194,15 +194,17 @@ func newInitServerCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			deps.serverInputs.listenAddr, _ = cmd.Flags().GetString("listen-addr")
+			deps.serverInputs.ownerID, _ = cmd.Flags().GetString("discord-owner-id")
+			deps.serverInputs.applicationID, _ = cmd.Flags().GetString("discord-application-id")
+			deps.serverInputs.stateDir, _ = cmd.Flags().GetString("state-dir")
+			deps.serverInputs.approvalChannelID, _ = cmd.Flags().GetString("discord-approval-channel-id")
+			deps.serverInputs.auditChannelID, _ = cmd.Flags().GetString("discord-audit-channel-id")
+			if strings.TrimSpace(deps.serverInputs.stateDir) != "" {
+				deps.stateDirRoot = deps.serverInputs.stateDir
+			}
 			if nonInteractive, _ := cmd.Flags().GetBool("non-interactive"); nonInteractive {
 				deps.serverNonInteractive = true
-				deps.serverInputs.listenAddr, _ = cmd.Flags().GetString("listen-addr")
-				deps.serverInputs.ownerID, _ = cmd.Flags().GetString("discord-owner-id")
-				deps.serverInputs.applicationID, _ = cmd.Flags().GetString("discord-application-id")
-				deps.serverInputs.stateDir, _ = cmd.Flags().GetString("state-dir")
-				deps.serverInputs.approvalChannelID, _ = cmd.Flags().GetString("discord-approval-channel-id")
-				deps.serverInputs.auditChannelID, _ = cmd.Flags().GetString("discord-audit-channel-id")
-				deps.stateDirRoot = deps.serverInputs.stateDir
 				inputFile, _ := cmd.Flags().GetString("input-file")
 				input, inputErr := readServerBootstrapInput(inputFile)
 				if inputErr != nil {
@@ -328,19 +330,33 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 		}
 
 		// 2. Operator-supplied non-secret fields (FR-009: no defaults).
-		listenAddr, err = promptRequired(deps.promptLine, in, stderr.w, promptListenAddr, "listen_addr")
+		// If flags supplied these values, honor them and only prompt for
+		// the missing fields. Secrets remain TTY-only in interactive mode.
+		listenAddr = strings.TrimSpace(deps.serverInputs.listenAddr)
+		ownerID = strings.TrimSpace(deps.serverInputs.ownerID)
+		appID = strings.TrimSpace(deps.serverInputs.applicationID)
+		approvalChannelID = strings.TrimSpace(deps.serverInputs.approvalChannelID)
+		auditChannelID = strings.TrimSpace(deps.serverInputs.auditChannelID)
+
+		if listenAddr == "" {
+			listenAddr, err = promptRequired(deps.promptLine, in, stderr.w, promptListenAddr, "listen_addr")
+		}
 		if err != nil {
 			_ = pass.Destroy()
 			_ = stderr.WriteText(initMsgFieldRequiredFmt, "listen_addr")
 			return err
 		}
-		ownerID, err = promptRequired(deps.promptLine, in, stderr.w, promptOwnerID, "discord_owner_id")
+		if ownerID == "" {
+			ownerID, err = promptRequired(deps.promptLine, in, stderr.w, promptOwnerID, "discord_owner_id")
+		}
 		if err != nil {
 			_ = pass.Destroy()
 			_ = stderr.WriteText(initMsgFieldRequiredFmt, "discord_owner_id")
 			return err
 		}
-		appID, err = promptRequired(deps.promptLine, in, stderr.w, promptApplicationID, "application_id")
+		if appID == "" {
+			appID, err = promptRequired(deps.promptLine, in, stderr.w, promptApplicationID, "application_id")
+		}
 		if err != nil {
 			_ = pass.Destroy()
 			_ = stderr.WriteText(initMsgFieldRequiredFmt, "application_id")
@@ -382,6 +398,7 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 	}
 	vaultPath := filepath.Join(stateDir, "secrets.vault")
 	configPath := filepath.Join(stateDir, "config.toml")
+	keychainItems := serverKeychainItems(stateDir, strings.TrimSpace(deps.serverInputs.stateDir) != "")
 
 	// 4. Existence guards (vault, config, both keychain items).
 	if guardErr := guardFileAbsent(vaultPath, errVaultExists, initMsgVaultExistsFmt, stderr); guardErr != nil {
@@ -390,10 +407,10 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 	if guardErr := guardFileAbsent(configPath, errConfigExists, initMsgConfigExistsFmt, stderr); guardErr != nil {
 		return guardErr
 	}
-	if guardErr := guardKeychainAbsent(ctx, deps.keychain, kcServiceVaultPassphrase, kcAccountServer, stderr); guardErr != nil {
+	if guardErr := guardKeychainAbsent(ctx, deps.keychain, keychainItems.vaultPassphraseService, kcAccountServer, stderr); guardErr != nil {
 		return guardErr
 	}
-	if guardErr := guardKeychainAbsent(ctx, deps.keychain, "hush-discord", kcAccountServer, stderr); guardErr != nil {
+	if guardErr := guardKeychainAbsent(ctx, deps.keychain, keychainItems.discordService, kcAccountServer, stderr); guardErr != nil {
 		return guardErr
 	}
 
@@ -452,6 +469,7 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 		stateDir:          stateDir,
 		approvalChannelID: approvalChannelID,
 		auditChannelID:    auditChannelID,
+		botTokenKeychain:  keychainItems.discordService,
 	})
 	if err := writeConfigTOMLAtomic(configPath, cfgBody); err != nil {
 		_ = stderr.WriteText(initMsgWriteFailFmt, configPath, err)
@@ -464,11 +482,11 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 	}
 
 	// 10. Store the keychain items.
-	if err := deps.keychain.Store(ctx, kcServiceVaultPassphrase, kcAccountServer, pass, binPath); err != nil {
+	if err := deps.keychain.Store(ctx, keychainItems.vaultPassphraseService, kcAccountServer, pass, binPath); err != nil {
 		_ = stderr.WriteText(initMsgKeychainStoreFailFmt, err)
 		return err
 	}
-	if err := deps.keychain.Store(ctx, "hush-discord", kcAccountServer, botToken, binPath); err != nil {
+	if err := deps.keychain.Store(ctx, keychainItems.discordService, kcAccountServer, botToken, binPath); err != nil {
 		_ = stderr.WriteText(initMsgKeychainStoreFailFmt, err)
 		return err
 	}
@@ -856,6 +874,26 @@ func generatePathPrefix(r io.Reader) (string, error) {
 
 // serverInputs bundles the operator-supplied or generated values
 // that vary per init run.
+type serverKeychainItemNames struct {
+	vaultPassphraseService string
+	discordService         string
+}
+
+func serverKeychainItems(stateDir string, explicitStateDir bool) serverKeychainItemNames {
+	if !explicitStateDir {
+		return serverKeychainItemNames{
+			vaultPassphraseService: kcServiceVaultPassphrase,
+			discordService:         "hush-discord",
+		}
+	}
+	sum := sha256.Sum256([]byte(stateDir))
+	suffix := hex.EncodeToString(sum[:])[:12]
+	return serverKeychainItemNames{
+		vaultPassphraseService: kcServiceVaultPassphrase + "-" + suffix,
+		discordService:         "hush-discord-" + suffix,
+	}
+}
+
 type serverInputs struct {
 	listenAddr        string
 	pathPrefix        string
@@ -864,6 +902,7 @@ type serverInputs struct {
 	stateDir          string
 	approvalChannelID string
 	auditChannelID    string
+	botTokenKeychain  string
 }
 
 // buildServerDecodedFromDefaults produces a fully-populated
@@ -873,6 +912,10 @@ func buildServerDecodedFromDefaults(in serverInputs) tomlDocument {
 	stateDir := in.stateDir
 	if stateDir == "" {
 		stateDir = config.DefaultStateDir
+	}
+	botTokenKeychain := strings.TrimSpace(in.botTokenKeychain)
+	if botTokenKeychain == "" {
+		botTokenKeychain = "hush-discord"
 	}
 	// audit_log and client_registry must resolve under state_dir
 	// (config validator enforces audit_log under state_dir).
@@ -890,7 +933,7 @@ func buildServerDecodedFromDefaults(in serverInputs) tomlDocument {
 			DiscordAuditChannelID:    in.auditChannelID,
 		},
 		Discord: tomlDiscord{
-			BotTokenKeychainItem: "hush-discord",
+			BotTokenKeychainItem: botTokenKeychain,
 			ApplicationID:        in.applicationID,
 		},
 		Crypto: tomlCrypto{
