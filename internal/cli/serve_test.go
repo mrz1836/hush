@@ -191,6 +191,24 @@ func TestLoadBotToken_ItemNameValidation(t *testing.T) {
 	}
 }
 
+func TestLoadBotToken_EnvFallbackBeforeKeychain(t *testing.T) {
+	t.Setenv("HUSH_DISCORD_BOT_TOKEN", "smoke-token")
+
+	got, err := loadBotToken(t.Context(), "hush-nonexistent-test-item")
+	if err != nil {
+		t.Fatalf("loadBotToken: %v", err)
+	}
+	defer func() { _ = got.Destroy() }()
+
+	if err := got.Use(func(b []byte) {
+		if string(b) != "smoke-token" {
+			t.Fatalf("token = %q, want smoke-token", string(b))
+		}
+	}); err != nil {
+		t.Fatalf("token use: %v", err)
+	}
+}
+
 // TestServe_OutputNoSentinel asserts the SECRET sentinel planted as
 // the piped passphrase never appears on captured stderr.
 func TestServe_OutputNoSentinel(t *testing.T) {

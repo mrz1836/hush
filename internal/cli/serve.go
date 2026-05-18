@@ -242,6 +242,7 @@ func runServe(ctx context.Context, stdout, stderr *Stream, deps serveDeps) error
 	// 8. Construct the Discord approver.
 	approver, discordHealthFn, err := deps.approverFactory(ctx, cfg, logger)
 	if err != nil {
+		_ = stderr.WriteText("discord: approver init failed: %v", err)
 		return err
 	}
 	verbose("discord: approver constructed")
@@ -420,6 +421,12 @@ var botTokenItemRe = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,128}$`)
 // `secret-tool lookup service hush attribute <item>`. Returns the
 // token wrapped in *securebytes.SecureBytes.
 func loadBotToken(ctx context.Context, item string) (*securebytes.SecureBytes, error) {
+	// Smoke bootstrap fallback for non-interactive hosts where macOS
+	// Keychain writes require a SecurityAgent prompt. Production
+	// deploys should keep using the configured Keychain item below.
+	if envToken, ok := os.LookupEnv("HUSH_DISCORD_BOT_TOKEN"); ok && envToken != "" {
+		return securebytes.New([]byte(envToken))
+	}
 	if !botTokenItemRe.MatchString(item) {
 		return nil, fmt.Errorf("%w: invalid item name", errBotTokenMissing)
 	}
