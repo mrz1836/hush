@@ -648,7 +648,7 @@ func TestLoad_EnvPassthroughDefaultsToEmpty(t *testing.T) {
 	assert.Empty(t, s.Child.EnvPassthrough)
 }
 
-func TestLoad_MissingValidatorsTable(t *testing.T) {
+func TestLoad_MissingValidatorsTableDefaultsToNoop(t *testing.T) {
 	t.Parallel()
 	b, err := os.ReadFile("testdata/valid_minimal.toml")
 	require.NoError(t, err)
@@ -656,9 +656,9 @@ func TestLoad_MissingValidatorsTable(t *testing.T) {
 	idx := strings.Index(body, "[validators]")
 	require.GreaterOrEqual(t, idx, 0)
 	body = body[:idx]
-	_, err = loadBody(t, body)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrMissingRequiredField))
+	s, err := loadBody(t, body)
+	require.NoError(t, err)
+	assert.Empty(t, s.Validators)
 }
 
 func TestValidateServerURL_ParseError(t *testing.T) {

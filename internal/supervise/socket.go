@@ -40,6 +40,8 @@ var errParentNotDir = errors.New("supervise: parent path is not a directory")
 type StatusInputs interface {
 	Name() string
 	SessionExpiresAt() time.Time
+	SessionJTI() string
+	RestartCount() uint64
 	RefreshWindowNext() time.Time
 	ScopeHealthy() []string
 	ScopeStale() []string
@@ -342,6 +344,8 @@ func (s *StatusServer) snapshotForResponse() Snapshot {
 type statusJSON struct {
 	Supervisor        string   `json:"supervisor"`
 	SessionExpiresAt  string   `json:"session_expires_at"`
+	SessionJTI        string   `json:"session_jti"`
+	RestartCount      uint64   `json:"restart_count"`
 	RefreshWindowNext string   `json:"refresh_window_next"`
 	ScopeHealthy      []string `json:"scope_healthy"`
 	ScopeStale        []string `json:"scope_stale"`
@@ -375,6 +379,8 @@ func (s *StatusServer) renderStatus(snap Snapshot) ([]byte, error) {
 	if inputs != nil {
 		doc.Supervisor = inputs.Name()
 		doc.SessionExpiresAt = inputs.SessionExpiresAt().Format(time.RFC3339)
+		doc.SessionJTI = inputs.SessionJTI()
+		doc.RestartCount = inputs.RestartCount()
 		doc.RefreshWindowNext = inputs.RefreshWindowNext().Format(time.RFC3339)
 		if h := inputs.ScopeHealthy(); h != nil {
 			doc.ScopeHealthy = h

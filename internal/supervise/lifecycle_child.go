@@ -274,6 +274,7 @@ func (l *Lifecycle) silentRefillAndRestart(ctx context.Context) error {
 		l.transition(ctx, EventClaimUnavailable)
 		return err
 	}
+	l.inputs.restartCount.Add(1)
 	l.emitSilentRefill(ctx, l.config.Scope)
 	l.transition(ctx, EventFetchOK)
 	return nil

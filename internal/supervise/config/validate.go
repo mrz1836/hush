@@ -54,9 +54,6 @@ func requiredFieldGate(d supervisorDecoded) error {
 	if d.Child.Command == nil {
 		missing("child.command")
 	}
-	if d.Validators == nil {
-		missing("validators")
-	}
 	return errors.Join(errs...)
 }
 

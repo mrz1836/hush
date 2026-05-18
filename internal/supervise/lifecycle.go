@@ -135,7 +135,9 @@ type statusInputs struct {
 	scopeHealthy     atomic.Pointer[[]string]
 	scopeStale       atomic.Pointer[[]string]
 	sessionExp       atomic.Pointer[time.Time]
+	sessionJTI       atomic.Pointer[string]
 	refreshNext      atomic.Pointer[time.Time]
+	restartCount     atomic.Uint64
 	discordConnected atomic.Bool
 }
 
@@ -148,6 +150,19 @@ func (o *statusInputs) SessionExpiresAt() time.Time {
 		return *p
 	}
 	return time.Time{}
+}
+
+// SessionJTI returns the current supervisor session identifier.
+func (o *statusInputs) SessionJTI() string {
+	if p := o.sessionJTI.Load(); p != nil {
+		return *p
+	}
+	return ""
+}
+
+// RestartCount returns the number of successful child restarts in this process.
+func (o *statusInputs) RestartCount() uint64 {
+	return o.restartCount.Load()
 }
 
 // RefreshWindowNext returns the next refresh-window instant.

@@ -86,6 +86,8 @@ func (l *Lifecycle) performRefreshClaim(ctx context.Context) refreshResult {
 		l.sessionJTI = resp.JTI
 		l.sessionMu.Unlock()
 		l.inputs.sessionExp.Store(&exp)
+		jti := resp.JTI
+		l.inputs.sessionJTI.Store(&jti)
 		l.emitSessionRefreshed(ctx, resp.JTI, prevJTI, exp)
 		return refreshResult{}
 	case status == http.StatusForbidden:

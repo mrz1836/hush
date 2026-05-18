@@ -62,7 +62,10 @@ func productionSuperviseDeps() (superviseRuntimeDeps, error) {
 // the keychain and reconstitutes a secp256k1 *ecdsa.PrivateKey. Mirrors
 // retrieveClientKey in request.go but takes a bare keychain.Keychain so
 // it works with the supervise dep seam.
-func loadSupervisorClientKey(ctx context.Context, kc keychain.Keychain, machineIndex uint32) (*ecdsa.PrivateKey, error) {
+func loadSupervisorClientKey(ctx context.Context, kc keychain.Keychain, machineIndex uint32, clientKeyFile string) (*ecdsa.PrivateKey, error) {
+	if clientKeyFile != "" {
+		return retrieveClientKeyFromFile(clientKeyFile)
+	}
 	account := fmt.Sprintf("machine-%d", machineIndex)
 	sb, err := kc.Retrieve(ctx, kcServiceClient, account)
 	if err != nil {
@@ -128,7 +131,7 @@ func runLifecycle(rootCtx context.Context, cfg *superviseconfig.Supervisor, pidf
 		return err
 	}
 
-	signKey, err := loadSupervisorClientKey(rootCtx, rt.keychain, cfg.ClientMachineIndex)
+	signKey, err := loadSupervisorClientKey(rootCtx, rt.keychain, cfg.ClientMachineIndex, cfg.ClientKeyFile)
 	if err != nil {
 		return err
 	}

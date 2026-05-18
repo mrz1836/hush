@@ -27,6 +27,8 @@ import (
 type stubStatusInputs struct {
 	name              string
 	sessionExpiresAt  time.Time
+	sessionJTI        string
+	restartCount      uint64
 	refreshWindowNext time.Time
 	scopeHealthy      []string
 	scopeStale        []string
@@ -37,6 +39,8 @@ type stubStatusInputs struct {
 
 func (s *stubStatusInputs) Name() string                 { return s.name }
 func (s *stubStatusInputs) SessionExpiresAt() time.Time  { return s.sessionExpiresAt }
+func (s *stubStatusInputs) SessionJTI() string           { return s.sessionJTI }
+func (s *stubStatusInputs) RestartCount() uint64         { return s.restartCount }
 func (s *stubStatusInputs) RefreshWindowNext() time.Time { return s.refreshWindowNext }
 func (s *stubStatusInputs) ScopeHealthy() []string       { return s.scopeHealthy }
 func (s *stubStatusInputs) ScopeStale() []string         { return s.scopeStale }
@@ -130,6 +134,8 @@ func TestSocket_StatusJSONShape(t *testing.T) {
 	srv.attach(&stubStatusInputs{
 		name:              "openclaw",
 		sessionExpiresAt:  time.Date(2026, 4, 15, 13, 12, 0, 0, time.UTC),
+		sessionJTI:        "jti-123",
+		restartCount:      2,
 		refreshWindowNext: time.Date(2026, 4, 15, 16, 0, 0, 0, time.UTC),
 		scopeHealthy:      []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY"},
 		scopeStale:        []string{},
@@ -198,6 +204,8 @@ func TestSocket_StatusJSONFromSnapshot(t *testing.T) {
 	srv.attach(&stubStatusInputs{
 		name:              "openclaw",
 		sessionExpiresAt:  time.Date(2026, 4, 15, 13, 12, 0, 0, time.UTC),
+		sessionJTI:        "jti-123",
+		restartCount:      2,
 		refreshWindowNext: time.Date(2026, 4, 15, 16, 0, 0, 0, time.UTC),
 		scopeHealthy:      []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY"},
 		scopeStale:        []string{},
@@ -209,7 +217,7 @@ func TestSocket_StatusJSONFromSnapshot(t *testing.T) {
 	body, err := srv.renderStatus(snap)
 	require.NoError(t, err)
 
-	expected := `{"supervisor":"openclaw","session_expires_at":"2026-04-15T13:12:00Z","refresh_window_next":"2026-04-15T16:00:00Z","scope_healthy":["ANTHROPIC_API_KEY","OPENAI_API_KEY"],"scope_stale":[],"last_auth_failure":null,"child_pid":51234,"child_uptime":"8h12m0s","discord_connected":true,"state":"running"}`
+	expected := `{"supervisor":"openclaw","session_expires_at":"2026-04-15T13:12:00Z","session_jti":"jti-123","restart_count":2,"refresh_window_next":"2026-04-15T16:00:00Z","scope_healthy":["ANTHROPIC_API_KEY","OPENAI_API_KEY"],"scope_stale":[],"last_auth_failure":null,"child_pid":51234,"child_uptime":"8h12m0s","discord_connected":true,"state":"running"}`
 	assert.Equal(t, expected, string(body))
 }
 
@@ -564,6 +572,8 @@ type panickyInputs struct{}
 
 func (panickyInputs) Name() string                 { panic("boom") }
 func (panickyInputs) SessionExpiresAt() time.Time  { return time.Time{} }
+func (panickyInputs) SessionJTI() string           { return "" }
+func (panickyInputs) RestartCount() uint64         { return 0 }
 func (panickyInputs) RefreshWindowNext() time.Time { return time.Time{} }
 func (panickyInputs) ScopeHealthy() []string       { return nil }
 func (panickyInputs) ScopeStale() []string         { return nil }

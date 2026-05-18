@@ -107,6 +107,17 @@ func TestSuperviseConfig_DefaultRequestedTTL(t *testing.T) {
 	assert.Equal(t, 20*time.Hour, DefaultRequestedTTL)
 }
 
+func TestSuperviseConfig_ClientKeyFileExpands(t *testing.T) {
+	t.Parallel()
+	body := strings.Replace(minimalBody(t), `client_machine_index = 2`, "client_machine_index = 2\nclient_key_file = \"~/hush-smoke-client.key\"", 1)
+	p := writeConfig(t, body)
+	s, err := Load(context.Background(), p)
+	require.NoError(t, err)
+	require.NotEmpty(t, s.ClientKeyFile)
+	assert.True(t, filepath.IsAbs(s.ClientKeyFile))
+	assert.Contains(t, s.ClientKeyFile, "hush-smoke-client.key")
+}
+
 func TestSuperviseConfig_DefaultRefreshWindow(t *testing.T) {
 	t.Parallel()
 	body := removeLine(minimalBody(t), "refresh_window")

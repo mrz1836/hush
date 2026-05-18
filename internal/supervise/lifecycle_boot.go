@@ -290,6 +290,8 @@ func (l *Lifecycle) applyClaimResponse(ctx context.Context, resp claimWireRespon
 	l.sessionMu.Unlock()
 
 	l.inputs.sessionExp.Store(&exp)
+	jti := resp.JTI
+	l.inputs.sessionJTI.Store(&jti)
 	scopeCopy := append([]string(nil), l.config.Scope...)
 	l.inputs.scopeHealthy.Store(&scopeCopy)
 	emptyStale := []string{}

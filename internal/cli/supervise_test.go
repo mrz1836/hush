@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -225,6 +226,22 @@ func TestSupervise_NoCacheBeatsGraceWindow(t *testing.T) {
 	}
 	_ = flagGraceWindow
 	assert.False(t, enabled)
+}
+
+func TestLoadSupervisorClientKey_UsesSmokeKeyFileOverride(t *testing.T) {
+	priv := makeClientKey(t)
+	scalar := make([]byte, 32)
+	//nolint:staticcheck // secp256k1 unsupported by crypto/ecdh; .D access intentional
+	priv.D.FillBytes(scalar)
+	path := filepath.Join(t.TempDir(), "client.key")
+	require.NoError(t, os.WriteFile(path, []byte(hex.EncodeToString(scalar)+"\n"), 0o600))
+
+	rec := &recordingKeychain{}
+	got, err := loadSupervisorClientKey(context.Background(), rec, 0, path)
+	require.NoError(t, err)
+	//nolint:staticcheck // secp256k1 unsupported by crypto/ecdh; .D read-only comparison
+	assert.Equal(t, 0, got.D.Cmp(priv.D))
+	assert.Equal(t, int32(0), rec.calls)
 }
 
 // TestSupervise_OrchestrationDelegatesToInternalSupervise — static

@@ -23,6 +23,7 @@ type Supervisor struct {
 	Reason                 string
 	ServerURL              string
 	ClientMachineIndex     uint32
+	ClientKeyFile          string
 	SessionType            string
 	RequestedTTL           time.Duration
 	RefreshWindow          string
@@ -81,6 +82,7 @@ type supervisorDecoded struct {
 	Reason                 string   `toml:"reason"`
 	ServerURL              string   `toml:"server_url"`
 	ClientMachineIndex     *uint32  `toml:"client_machine_index"`
+	ClientKeyFile          string   `toml:"client_key_file"`
 	SessionType            string   `toml:"session_type"`
 	RequestedTTL           string   `toml:"requested_ttl"`
 	RefreshWindow          string   `toml:"refresh_window"`
@@ -201,6 +203,13 @@ func materialize(d supervisorDecoded) (*Supervisor, error) {
 	}
 	if d.ClientMachineIndex != nil {
 		s.ClientMachineIndex = *d.ClientMachineIndex
+	}
+	if d.ClientKeyFile != "" {
+		clientKeyFile, ckErr := absPath(d.ClientKeyFile)
+		if ckErr != nil {
+			return nil, fmt.Errorf("hush/supervise/config: client_key_file expand: %w", ckErr)
+		}
+		s.ClientKeyFile = clientKeyFile
 	}
 
 	if d.SessionType != "supervisor" {
