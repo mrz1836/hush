@@ -62,6 +62,7 @@ type BotApprover struct {
 	session      sessionAPI
 	ownerID      string
 	auditChan    string
+	approvalChan string
 	rateLimitWin time.Duration
 	available    atomic.Bool
 	pending      sync.Map // map[string]*pendingEntry
@@ -168,6 +169,7 @@ func newBotApproverWithSession(ctx context.Context, cfg BotConfig, logger *slog.
 		session:            session,
 		ownerID:            cfg.OwnerID,
 		auditChan:          cfg.AuditChannelID,
+		approvalChan:       cfg.ApprovalChannelID,
 		rateLimitWin:       window,
 		bucket:             newRateBucket(window),
 		logger:             logger,
@@ -184,7 +186,8 @@ func newBotApproverWithSession(ctx context.Context, cfg BotConfig, logger *slog.
 }
 
 // RequestApproval delivers an approval prompt to the configured
-// operator's DM channel and blocks until one of:
+// approval channel when ApprovalChannelID is set, otherwise to the
+// configured operator's DM channel, and blocks until one of:
 //   - operator clicks Approve → Decision{Approved: true,
 //     ApprovedTTL: req.RequestedTTL}, nil
 //   - operator clicks Deny → Decision{}, ErrApprovalDenied
@@ -199,9 +202,9 @@ func newBotApproverWithSession(ctx context.Context, cfg BotConfig, logger *slog.
 //  2. rate-limit bucket Acquire denies the request → return
 //     ErrRateLimited.
 //  3. DM rendering produces a *discordgo.MessageSend.
-//  4. session.UserChannelCreate(OwnerID) +
-//     session.ChannelMessageSendComplex(dmChan, msg). Failure refunds
-//     the rate-limit bucket and returns ErrDiscordUnavailable.
+//  4. Deliver the message to ApprovalChannelID when configured, otherwise
+//     session.UserChannelCreate(OwnerID) + ChannelMessageSendComplex(dmChan, msg).
+//     Failure refunds the rate-limit bucket and returns ErrDiscordUnavailable.
 //  5. Bucket Commit promotes the pending slot to delivered.
 //  6. Audit-channel mirror (best-effort, non-blocking).
 //  7. Block on the per-request decision channel.
@@ -236,23 +239,19 @@ func (a *BotApprover) RequestApproval(ctx context.Context, req ApprovalRequest) 
 	}
 	msg := renderApproval(req, customID)
 
-	dm, err := a.session.UserChannelCreate(a.ownerID)
-	if err != nil {
-		a.logger.Warn("hush/discord: UserChannelCreate failed",
-			slog.String("err_class", "discord_unavailable"))
-		return Decision{}, fmt.Errorf("%w: %w", ErrDiscordUnavailable, err)
-	}
-	if dm == nil {
-		return Decision{}, ErrDiscordUnavailable
-	}
-
 	ch := make(chan decisionEvent, 1)
 	entry := &pendingEntry{ch: ch, req: req}
 	a.pending.Store(customID, entry)
 
-	if _, err := a.session.ChannelMessageSendComplex(dm.ID, msg); err != nil {
+	dest, err := a.approvalDestination()
+	if err != nil {
+		a.pending.Delete(customID)
+		return Decision{}, err
+	}
+	if _, err := a.session.ChannelMessageSendComplex(dest, msg); err != nil {
 		a.pending.Delete(customID)
 		a.logger.Warn("hush/discord: ChannelMessageSendComplex failed",
+			slog.String("delivery", a.approvalDeliveryMode()),
 			slog.String("err_class", "discord_unavailable"))
 		return Decision{}, fmt.Errorf("%w: %w", ErrDiscordUnavailable, err)
 	}
@@ -275,6 +274,7 @@ func (a *BotApprover) RequestApproval(ctx context.Context, req ApprovalRequest) 
 
 	a.logger.Debug("hush/discord: approval request delivered",
 		slog.String("request_id", customID),
+		slog.String("delivery", a.approvalDeliveryMode()),
 		slog.String("session_type", string(req.SessionType)))
 
 	select {
@@ -303,6 +303,29 @@ func (a *BotApprover) RequestApproval(ctx context.Context, req ApprovalRequest) 
 		}
 		return Decision{}, ctx.Err()
 	}
+}
+
+func (a *BotApprover) approvalDeliveryMode() string {
+	if strings.TrimSpace(a.approvalChan) != "" {
+		return "channel"
+	}
+	return "dm"
+}
+
+func (a *BotApprover) approvalDestination() (string, error) {
+	if channelID := strings.TrimSpace(a.approvalChan); channelID != "" {
+		return channelID, nil
+	}
+	dm, err := a.session.UserChannelCreate(a.ownerID)
+	if err != nil {
+		a.logger.Warn("hush/discord: UserChannelCreate failed",
+			slog.String("err_class", "discord_unavailable"))
+		return "", fmt.Errorf("%w: %w", ErrDiscordUnavailable, err)
+	}
+	if dm == nil {
+		return "", ErrDiscordUnavailable
+	}
+	return dm.ID, nil
 }
 
 // registerHandlers wires the InteractionCreate / Connect / Disconnect /

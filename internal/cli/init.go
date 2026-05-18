@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -77,6 +78,11 @@ type initDeps struct {
 	nowFn        func() time.Time
 	platformACL  func() bool
 
+	serverNonInteractive bool
+	serverPassphrase     string
+	serverBotToken       string
+	serverInputs         serverInputs
+
 	// promptSecret reads a no-echo line from stdin in production;
 	// tests substitute a deterministic reader.
 	promptSecret func(in *os.File, prompt io.Writer, label string) (*securebytes.SecureBytes, error)
@@ -133,10 +139,30 @@ func newInitCmd() *cobra.Command {
 	return cmd
 }
 
+type serverBootstrapInput struct {
+	VaultPassphrase string `json:"vault_passphrase"`
+	DiscordBotToken string `json:"discord_bot_token"`
+}
+
+func readServerBootstrapInput(path string) (serverBootstrapInput, error) {
+	if strings.TrimSpace(path) == "" {
+		return serverBootstrapInput{}, fmt.Errorf("%w: --input-file", errMissingFlag)
+	}
+	body, err := os.ReadFile(path) //nolint:gosec // operator-supplied bootstrap file path
+	if err != nil {
+		return serverBootstrapInput{}, fmt.Errorf("hush/cli: init: read input file: %w", err)
+	}
+	var input serverBootstrapInput
+	if err := json.Unmarshal(body, &input); err != nil {
+		return serverBootstrapInput{}, fmt.Errorf("hush/cli: init: decode input file: %w", err)
+	}
+	return input, nil
+}
+
 // newInitServerCmd builds the `hush init server` subcommand. The cobra
 // command tree is the contract; no exported symbols.
 func newInitServerCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "server",
 		Short: "Bootstrap the vault host (creates vault, config, keychain entries)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -144,10 +170,36 @@ func newInitServerCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if nonInteractive, _ := cmd.Flags().GetBool("non-interactive"); nonInteractive {
+				deps.serverNonInteractive = true
+				deps.serverInputs.listenAddr, _ = cmd.Flags().GetString("listen-addr")
+				deps.serverInputs.ownerID, _ = cmd.Flags().GetString("discord-owner-id")
+				deps.serverInputs.applicationID, _ = cmd.Flags().GetString("discord-application-id")
+				deps.serverInputs.stateDir, _ = cmd.Flags().GetString("state-dir")
+				deps.serverInputs.approvalChannelID, _ = cmd.Flags().GetString("discord-approval-channel-id")
+				deps.serverInputs.auditChannelID, _ = cmd.Flags().GetString("discord-audit-channel-id")
+				deps.stateDirRoot = deps.serverInputs.stateDir
+				inputFile, _ := cmd.Flags().GetString("input-file")
+				input, inputErr := readServerBootstrapInput(inputFile)
+				if inputErr != nil {
+					return inputErr
+				}
+				deps.serverPassphrase = input.VaultPassphrase
+				deps.serverBotToken = input.DiscordBotToken
+			}
 			out := outputFromCmd(cmd)
 			return runInitServer(cmd.Context(), out.stdout, out.stderr, os.Stdin, deps)
 		},
 	}
+	cmd.Flags().Bool("non-interactive", false, "Read server bootstrap inputs from flags/environment instead of TTY prompts")
+	cmd.Flags().String("state-dir", "", "State directory for generated vault/config (default ~/.hush)")
+	cmd.Flags().String("listen-addr", "", "Server listen address (required with --non-interactive)")
+	cmd.Flags().String("discord-owner-id", "", "Discord owner snowflake (required with --non-interactive)")
+	cmd.Flags().String("discord-application-id", "", "Discord application snowflake (required with --non-interactive)")
+	cmd.Flags().String("discord-approval-channel-id", "", "Discord approval channel snowflake (optional; empty sends approvals by DM)")
+	cmd.Flags().String("discord-audit-channel-id", "", "Discord audit mirror channel snowflake (optional)")
+	cmd.Flags().String("input-file", "", "0600 JSON bootstrap input for --non-interactive")
+	return cmd
 }
 
 // newInitClientCmd builds the `hush init client` subcommand. The cobra
@@ -182,56 +234,107 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 		_ = stderr.WriteText(initMsgPlatformUnsupported, runtime.GOOS)
 		return fmt.Errorf("%w: %s", errPlatformACLUnsupported, runtime.GOOS)
 	}
-	if !deps.isTTY(in) {
-		_ = stderr.WriteText(initMsgNoTTY)
-		return errNoTTY
-	}
+	var pass *securebytes.SecureBytes
+	var botToken *securebytes.SecureBytes
+	var err error
+	var listenAddr, ownerID, appID string
+	var approvalChannelID, auditChannelID string
 
-	// 1. Passphrase + confirmation.
-	pass, err := deps.promptSecret(in, stderr.w, promptVaultPassphrase)
-	if err != nil {
-		return err
+	if deps.serverNonInteractive {
+		pass, err = securebytes.New([]byte(deps.serverPassphrase))
+		if err != nil {
+			return err
+		}
+		botToken, err = securebytes.New([]byte(deps.serverBotToken))
+		if err != nil {
+			_ = pass.Destroy()
+			return err
+		}
+		listenAddr = strings.TrimSpace(deps.serverInputs.listenAddr)
+		ownerID = strings.TrimSpace(deps.serverInputs.ownerID)
+		appID = strings.TrimSpace(deps.serverInputs.applicationID)
+		approvalChannelID = strings.TrimSpace(deps.serverInputs.approvalChannelID)
+		auditChannelID = strings.TrimSpace(deps.serverInputs.auditChannelID)
+	} else {
+		if !deps.isTTY(in) {
+			_ = stderr.WriteText(initMsgNoTTY)
+			return errNoTTY
+		}
+
+		// 1. Passphrase + confirmation.
+		pass, err = deps.promptSecret(in, stderr.w, promptVaultPassphrase)
+		if err != nil {
+			return err
+		}
+		if pass.Len() < minPassphraseLen {
+			_ = pass.Destroy()
+			_ = stderr.WriteText(initMsgPassphraseTooShort)
+			return errPassphraseTooShort
+		}
+		confirm, confirmErr := deps.promptSecret(in, stderr.w, promptConfirmVault)
+		if confirmErr != nil {
+			_ = pass.Destroy()
+			return confirmErr
+		}
+		equal, cmpErr := secureBytesEqual(pass, confirm)
+		_ = confirm.Destroy()
+		if cmpErr != nil {
+			_ = pass.Destroy()
+			return cmpErr
+		}
+		if !equal {
+			_ = pass.Destroy()
+			_ = stderr.WriteText(initMsgPassphraseMismatch)
+			return errPassphraseMismatch
+		}
+
+		// 2. Operator-supplied non-secret fields (FR-009: no defaults).
+		listenAddr, err = promptRequired(deps.promptLine, in, stderr.w, promptListenAddr, "listen_addr")
+		if err != nil {
+			_ = pass.Destroy()
+			_ = stderr.WriteText(initMsgFieldRequiredFmt, "listen_addr")
+			return err
+		}
+		ownerID, err = promptRequired(deps.promptLine, in, stderr.w, promptOwnerID, "discord_owner_id")
+		if err != nil {
+			_ = pass.Destroy()
+			_ = stderr.WriteText(initMsgFieldRequiredFmt, "discord_owner_id")
+			return err
+		}
+		appID, err = promptRequired(deps.promptLine, in, stderr.w, promptApplicationID, "application_id")
+		if err != nil {
+			_ = pass.Destroy()
+			_ = stderr.WriteText(initMsgFieldRequiredFmt, "application_id")
+			return err
+		}
+		botToken, err = deps.promptSecret(in, stderr.w, promptBotToken)
+		if err != nil {
+			_ = pass.Destroy()
+			return err
+		}
 	}
 	defer func() { _ = pass.Destroy() }()
+	defer func() { _ = botToken.Destroy() }()
 	if pass.Len() < minPassphraseLen {
 		_ = stderr.WriteText(initMsgPassphraseTooShort)
 		return errPassphraseTooShort
 	}
-	confirm, err := deps.promptSecret(in, stderr.w, promptConfirmVault)
-	if err != nil {
-		return err
+	if botToken.Len() == 0 {
+		_ = stderr.WriteText(initMsgFieldRequiredFmt, "discord_bot_token")
+		return errMissingFlag
 	}
-	defer func() { _ = confirm.Destroy() }()
-	equal, cmpErr := secureBytesEqual(pass, confirm)
-	if cmpErr != nil {
-		return cmpErr
-	}
-	if !equal {
-		_ = stderr.WriteText(initMsgPassphraseMismatch)
-		return errPassphraseMismatch
-	}
-
-	// 2. Operator-supplied non-secret fields (FR-009: no defaults).
-	listenAddr, err := promptRequired(deps.promptLine, in, stderr.w, promptListenAddr, "listen_addr")
-	if err != nil {
+	if listenAddr == "" {
 		_ = stderr.WriteText(initMsgFieldRequiredFmt, "listen_addr")
-		return err
+		return errMissingFlag
 	}
-	ownerID, err := promptRequired(deps.promptLine, in, stderr.w, promptOwnerID, "discord_owner_id")
-	if err != nil {
+	if ownerID == "" {
 		_ = stderr.WriteText(initMsgFieldRequiredFmt, "discord_owner_id")
-		return err
+		return errMissingFlag
 	}
-	appID, err := promptRequired(deps.promptLine, in, stderr.w, promptApplicationID, "application_id")
-	if err != nil {
+	if appID == "" {
 		_ = stderr.WriteText(initMsgFieldRequiredFmt, "application_id")
-		return err
+		return errMissingFlag
 	}
-	botToken, err := deps.promptSecret(in, stderr.w, promptBotToken)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = botToken.Destroy() }()
 
 	// 3. Resolve target paths.
 	stateDir, err := resolveStateDir(deps.stateDirRoot)
@@ -303,11 +406,13 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 		return err
 	}
 	cfgBody := buildServerDecodedFromDefaults(serverInputs{
-		listenAddr:    listenAddr,
-		pathPrefix:    pathPrefix,
-		ownerID:       ownerID,
-		applicationID: appID,
-		stateDir:      stateDir,
+		listenAddr:        listenAddr,
+		pathPrefix:        pathPrefix,
+		ownerID:           ownerID,
+		applicationID:     appID,
+		stateDir:          stateDir,
+		approvalChannelID: approvalChannelID,
+		auditChannelID:    auditChannelID,
 	})
 	if err := writeConfigTOMLAtomic(configPath, cfgBody); err != nil {
 		_ = stderr.WriteText(initMsgWriteFailFmt, configPath, err)
@@ -609,11 +714,13 @@ func generatePathPrefix(r io.Reader) (string, error) {
 // serverInputs bundles the operator-supplied or generated values
 // that vary per init run.
 type serverInputs struct {
-	listenAddr    string
-	pathPrefix    string
-	ownerID       string
-	applicationID string
-	stateDir      string
+	listenAddr        string
+	pathPrefix        string
+	ownerID           string
+	applicationID     string
+	stateDir          string
+	approvalChannelID string
+	auditChannelID    string
 }
 
 // buildServerDecodedFromDefaults produces a fully-populated
@@ -630,12 +737,14 @@ func buildServerDecodedFromDefaults(in serverInputs) tomlDocument {
 	clientRegistry := filepath.Join(stateDir, "clients.json")
 	return tomlDocument{
 		Server: tomlServer{
-			ListenAddr:     in.listenAddr,
-			PathPrefix:     in.pathPrefix,
-			StateDir:       stateDir,
-			AuditLog:       auditLog,
-			DiscordOwnerID: in.ownerID,
-			ClientRegistry: clientRegistry,
+			ListenAddr:               in.listenAddr,
+			PathPrefix:               in.pathPrefix,
+			StateDir:                 stateDir,
+			AuditLog:                 auditLog,
+			DiscordOwnerID:           in.ownerID,
+			ClientRegistry:           clientRegistry,
+			DiscordApprovalChannelID: in.approvalChannelID,
+			DiscordAuditChannelID:    in.auditChannelID,
 		},
 		Discord: tomlDiscord{
 			BotTokenKeychainItem: "hush-discord",
@@ -679,13 +788,14 @@ type tomlDocument struct {
 }
 
 type tomlServer struct {
-	ListenAddr            string `toml:"listen_addr"`
-	PathPrefix            string `toml:"path_prefix"`
-	StateDir              string `toml:"state_dir"`
-	AuditLog              string `toml:"audit_log"`
-	DiscordOwnerID        string `toml:"discord_owner_id"`
-	ClientRegistry        string `toml:"client_registry"`
-	DiscordAuditChannelID string `toml:"discord_audit_channel_id,omitempty"`
+	ListenAddr               string `toml:"listen_addr"`
+	PathPrefix               string `toml:"path_prefix"`
+	StateDir                 string `toml:"state_dir"`
+	AuditLog                 string `toml:"audit_log"`
+	DiscordOwnerID           string `toml:"discord_owner_id"`
+	ClientRegistry           string `toml:"client_registry"`
+	DiscordApprovalChannelID string `toml:"discord_approval_channel_id,omitempty"`
+	DiscordAuditChannelID    string `toml:"discord_audit_channel_id,omitempty"`
 }
 
 type tomlDiscord struct {

@@ -55,7 +55,8 @@ type Decision struct {
 }
 
 // BotConfig parameterises NewBotApprover. Token, OwnerID, and AppID
-// are required; AuditChannelID is optional (empty disables audit-
+// are required; ApprovalChannelID is optional (empty sends approval prompts
+// to the owner DM); AuditChannelID is optional (empty disables audit-
 // channel mirroring); DMRateLimit ≤ 0 falls back to
 // DefaultDMRateLimit.
 //
@@ -67,9 +68,10 @@ type Decision struct {
 // returns; the package keeps no further reference to the SecureBytes
 // object.
 type BotConfig struct {
-	Token          *securebytes.SecureBytes
-	OwnerID        string
-	AppID          string
-	AuditChannelID string
-	DMRateLimit    time.Duration
+	Token             *securebytes.SecureBytes
+	OwnerID           string
+	AppID             string
+	ApprovalChannelID string
+	AuditChannelID    string
+	DMRateLimit       time.Duration
 }

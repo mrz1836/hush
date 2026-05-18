@@ -458,11 +458,12 @@ func newProductionBotApprover(ctx context.Context, cfg *config.Server, logger *s
 		return nil, nil, err
 	}
 	approver, err := discord.NewBotApprover(ctx, discord.BotConfig{
-		Token:          tokenSB,
-		OwnerID:        cfg.Server.DiscordOwnerID,
-		AppID:          cfg.Discord.ApplicationID,
-		AuditChannelID: cfg.Server.DiscordAuditChannelID,
-		DMRateLimit:    5 * time.Minute,
+		Token:             tokenSB,
+		OwnerID:           cfg.Server.DiscordOwnerID,
+		AppID:             cfg.Discord.ApplicationID,
+		ApprovalChannelID: cfg.Server.DiscordApprovalChannelID,
+		AuditChannelID:    cfg.Server.DiscordAuditChannelID,
+		DMRateLimit:       5 * time.Minute,
 	}, logger)
 	if err != nil {
 		return nil, nil, err

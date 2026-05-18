@@ -636,3 +636,74 @@ func TestBotApprover_RaceClean(t *testing.T) {
 	close(stop)
 	wg.Wait()
 }
+
+func TestRequestApproval_ChannelFirstWhenAuditChannelConfigured(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	shim := newSessionShim()
+	cfg := BotConfig{
+		Token:             mustSecureBytes(t, []byte("tok")),
+		OwnerID:           "owner",
+		AppID:             "app",
+		ApprovalChannelID: "approval-channel",
+	}
+	a := newTestApprover(ctx, shim, cfg, testutil.NewSilentLogger())
+	shim.TriggerReady()
+
+	go func() {
+		uuid := waitForSentCustomID(t, shim, "approval-channel")
+		shim.TriggerInteractionCreate(uuid + ":approve")
+	}()
+	dec, err := a.RequestApproval(ctx, interactiveSampleRequest())
+	if err != nil {
+		t.Fatalf("err = %v; want nil", err)
+	}
+	if !dec.Approved {
+		t.Fatal("expected Approved=true")
+	}
+	if got := shim.DMCount(); got != 0 {
+		t.Fatalf("DMCount = %d; want 0 when channel is configured", got)
+	}
+	if got := len(shim.SentMessagesFor("approval-channel")); got != 1 {
+		t.Fatalf("approval-channel messages = %d; want 1", got)
+	}
+}
+
+func TestRequestApproval_ChannelSendFailureDoesNotFallBackToDM(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	shim := newSessionShim()
+	shim.SetSendErr("approval-channel", errShimSendFail)
+	cfg := BotConfig{
+		Token:             mustSecureBytes(t, []byte("tok")),
+		OwnerID:           "owner",
+		AppID:             "app",
+		ApprovalChannelID: "approval-channel",
+	}
+	a := newTestApprover(ctx, shim, cfg, testutil.NewSilentLogger())
+	shim.TriggerReady()
+
+	_, err := a.RequestApproval(ctx, interactiveSampleRequest())
+	if !errors.Is(err, ErrDiscordUnavailable) {
+		t.Fatalf("err = %v; want ErrDiscordUnavailable", err)
+	}
+	if got := shim.DMCount(); got != 0 {
+		t.Fatalf("DMCount = %d; want 0 when configured channel delivery fails", got)
+	}
+}
+
+func waitForSentCustomID(t *testing.T, shim *sessionShim, channelID string) string {
+	t.Helper()
+	deadline := time.Now().Add(shimWaitTimeout)
+	for time.Now().Before(deadline) {
+		msgs := shim.SentMessagesFor(channelID)
+		if len(msgs) > 0 {
+			return extractUUID(t, msgs[len(msgs)-1])
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("timeout waiting for message in %s", channelID)
+	return ""
+}

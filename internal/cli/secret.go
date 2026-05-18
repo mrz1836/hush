@@ -150,6 +150,11 @@ type secretDeps struct {
 	stateDirRoot string
 	logger       *slog.Logger
 	nowFn        func() time.Time
+
+	nonInteractive bool
+	passphrase     string
+	secretValue    string
+	description    string
 }
 
 // productionSecretDeps wires the real seams. Tests construct a custom
@@ -187,16 +192,52 @@ func newSecretCmd() *cobra.Command {
 	return cmd
 }
 
+type secretAddInput struct {
+	VaultPassphrase string `json:"vault_passphrase"`
+	Value           string `json:"value"`
+	Description     string `json:"description"`
+}
+
+func readSecretAddInput(path string) (secretAddInput, error) {
+	if strings.TrimSpace(path) == "" {
+		return secretAddInput{}, fmt.Errorf("%w: --input-file", errMissingFlag)
+	}
+	body, err := os.ReadFile(path) //nolint:gosec // operator-supplied bootstrap file path
+	if err != nil {
+		return secretAddInput{}, fmt.Errorf("hush: secret: read input file: %w", err)
+	}
+	var input secretAddInput
+	if err := json.Unmarshal(body, &input); err != nil {
+		return secretAddInput{}, fmt.Errorf("hush: secret: decode input file: %w", err)
+	}
+	return input, nil
+}
+
 func newSecretAddCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "add NAME",
-		Short: "Add a new vault entry (interactive TTY only)",
+		Short: "Add a new vault entry (interactive TTY by default)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := outputFromCmd(cmd)
-			return runSecretAdd(cmd.Context(), out.stderr, os.Stdin, productionSecretDeps(), args)
+			deps := productionSecretDeps()
+			if nonInteractive, _ := cmd.Flags().GetBool("non-interactive"); nonInteractive {
+				deps.nonInteractive = true
+				inputFile, _ := cmd.Flags().GetString("input-file")
+				input, inputErr := readSecretAddInput(inputFile)
+				if inputErr != nil {
+					return inputErr
+				}
+				deps.passphrase = input.VaultPassphrase
+				deps.secretValue = input.Value
+				deps.description = input.Description
+			}
+			return runSecretAdd(cmd.Context(), out.stderr, os.Stdin, deps, args)
 		},
 	}
+	cmd.Flags().Bool("non-interactive", false, "Read add inputs from environment instead of TTY prompts")
+	cmd.Flags().String("input-file", "", "0600 JSON input for --non-interactive")
+	return cmd
 }
 
 func newSecretRemoveCmd() *cobra.Command {
@@ -355,8 +396,10 @@ func destroySecrets(secrets []vault.Secret) {
 //
 //nolint:gocognit,gocyclo,cyclop // sequential add flow; complexity is structural per data-model §3.1
 func runSecretAdd(ctx context.Context, stderr *Stream, in *os.File, deps *secretDeps, args []string) error {
-	if err := enforceStdinTTY(ctx, in, deps, stderr, "add"); err != nil {
-		return err
+	if !deps.nonInteractive {
+		if err := enforceStdinTTY(ctx, in, deps, stderr, "add"); err != nil {
+			return err
+		}
 	}
 	name := args[0]
 	if err := validateSecretName(name); err != nil {
@@ -369,7 +412,12 @@ func runSecretAdd(ctx context.Context, stderr *Stream, in *os.File, deps *secret
 		return err
 	}
 
-	passphrase, err := deps.promptPassphrase(in, stderr.w, promptVaultPassphrase)
+	var passphrase *securebytes.SecureBytes
+	if deps.nonInteractive {
+		passphrase, err = securebytes.New([]byte(deps.passphrase))
+	} else {
+		passphrase, err = deps.promptPassphrase(in, stderr.w, promptVaultPassphrase)
+	}
 	if err != nil {
 		return err
 	}
@@ -395,31 +443,40 @@ func runSecretAdd(ctx context.Context, stderr *Stream, in *os.File, deps *secret
 	}
 	defer destroySecrets(secrets)
 
-	value, err := deps.promptSecret(in, stderr.w, promptSecretValue)
+	var value *securebytes.SecureBytes
+	var description string
+	if deps.nonInteractive {
+		value, err = securebytes.New([]byte(deps.secretValue))
+		description = deps.description
+	} else {
+		value, err = deps.promptSecret(in, stderr.w, promptSecretValue)
+	}
 	if err != nil {
 		return err
 	}
 	defer func() { _ = value.Destroy() }()
 
-	confirm, err := deps.promptSecret(in, stderr.w, promptConfirmSecretValue)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = confirm.Destroy() }()
+	if !deps.nonInteractive {
+		confirm, confirmErr := deps.promptSecret(in, stderr.w, promptConfirmSecretValue)
+		if confirmErr != nil {
+			return confirmErr
+		}
+		defer func() { _ = confirm.Destroy() }()
 
-	equal, cmpErr := secureBytesEqual(value, confirm)
-	if cmpErr != nil {
-		return cmpErr
-	}
-	if !equal {
-		_ = stderr.WriteText(secretMsgValueMismatch)
-		auditEvent(ctx, deps.logger, slog.LevelWarn, "secret_confirmation_mismatch", "add", name, "value_mismatch")
-		return errSecretValueMismatch
-	}
+		equal, cmpErr := secureBytesEqual(value, confirm)
+		if cmpErr != nil {
+			return cmpErr
+		}
+		if !equal {
+			_ = stderr.WriteText(secretMsgValueMismatch)
+			auditEvent(ctx, deps.logger, slog.LevelWarn, "secret_confirmation_mismatch", "add", name, "value_mismatch")
+			return errSecretValueMismatch
+		}
 
-	description, err := deps.promptLine(in, stderr.w, promptDescription)
-	if err != nil {
-		return err
+		description, err = deps.promptLine(in, stderr.w, promptDescription)
+		if err != nil {
+			return err
+		}
 	}
 
 	for _, s := range secrets {
@@ -466,7 +523,12 @@ func runSecretRemove(ctx context.Context, stderr *Stream, in *os.File, deps *sec
 		return err
 	}
 
-	passphrase, err := deps.promptPassphrase(in, stderr.w, promptVaultPassphrase)
+	var passphrase *securebytes.SecureBytes
+	if deps.nonInteractive {
+		passphrase, err = securebytes.New([]byte(deps.passphrase))
+	} else {
+		passphrase, err = deps.promptPassphrase(in, stderr.w, promptVaultPassphrase)
+	}
 	if err != nil {
 		return err
 	}
@@ -540,7 +602,12 @@ func runSecretList(ctx context.Context, stdout, stderr *Stream, in, stdoutFile *
 		return err
 	}
 
-	passphrase, err := deps.promptPassphrase(in, stderr.w, promptVaultPassphrase)
+	var passphrase *securebytes.SecureBytes
+	if deps.nonInteractive {
+		passphrase, err = securebytes.New([]byte(deps.passphrase))
+	} else {
+		passphrase, err = deps.promptPassphrase(in, stderr.w, promptVaultPassphrase)
+	}
 	if err != nil {
 		return err
 	}
@@ -631,7 +698,12 @@ func runSecretRotate(ctx context.Context, stderr *Stream, in *os.File, deps *sec
 		return err
 	}
 
-	passphrase, err := deps.promptPassphrase(in, stderr.w, promptVaultPassphrase)
+	var passphrase *securebytes.SecureBytes
+	if deps.nonInteractive {
+		passphrase, err = securebytes.New([]byte(deps.passphrase))
+	} else {
+		passphrase, err = deps.promptPassphrase(in, stderr.w, promptVaultPassphrase)
+	}
 	if err != nil {
 		return err
 	}

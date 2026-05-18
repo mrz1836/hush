@@ -33,13 +33,14 @@ type Server struct {
 
 // ServerSection holds the [server] TOML table.
 type ServerSection struct {
-	ListenAddr            netip.AddrPort // pre-parsed; Tailscale CGNAT validated
-	PathPrefix            string         // [A-Za-z0-9_-]{6,32}
-	StateDir              string         // absolute, ~-expanded, must exist + be a directory
-	AuditLog              string         // absolute, ~-expanded, must be under StateDir
-	DiscordOwnerID        string         // Discord snowflake (non-secret)
-	ClientRegistry        string         // absolute, ~-expanded
-	DiscordAuditChannelID string         // optional; empty == not configured
+	ListenAddr               netip.AddrPort // pre-parsed; Tailscale CGNAT validated
+	PathPrefix               string         // [A-Za-z0-9_-]{6,32}
+	StateDir                 string         // absolute, ~-expanded, must exist + be a directory
+	AuditLog                 string         // absolute, ~-expanded, must be under StateDir
+	DiscordOwnerID           string         // Discord snowflake (non-secret)
+	ClientRegistry           string         // absolute, ~-expanded
+	DiscordApprovalChannelID string         // optional; empty == approve by DM
+	DiscordAuditChannelID    string         // optional; empty == not configured
 }
 
 // DiscordSection holds the [discord] TOML table.
@@ -89,13 +90,14 @@ type serverDecoded struct {
 }
 
 type serverSectionDecoded struct {
-	ListenAddr            string `toml:"listen_addr"`
-	PathPrefix            string `toml:"path_prefix"`
-	StateDir              string `toml:"state_dir"`
-	AuditLog              string `toml:"audit_log"`
-	DiscordOwnerID        string `toml:"discord_owner_id"`
-	ClientRegistry        string `toml:"client_registry"`
-	DiscordAuditChannelID string `toml:"discord_audit_channel_id"`
+	ListenAddr               string `toml:"listen_addr"`
+	PathPrefix               string `toml:"path_prefix"`
+	StateDir                 string `toml:"state_dir"`
+	AuditLog                 string `toml:"audit_log"`
+	DiscordOwnerID           string `toml:"discord_owner_id"`
+	ClientRegistry           string `toml:"client_registry"`
+	DiscordApprovalChannelID string `toml:"discord_approval_channel_id"`
+	DiscordAuditChannelID    string `toml:"discord_audit_channel_id"`
 }
 
 type discordSectionDecoded struct {
@@ -313,6 +315,7 @@ func materialize(d serverDecoded) (*Server, error) { //nolint:cyclop,gocognit,go
 	s.Server.ClientRegistry = absCR
 
 	s.Server.DiscordOwnerID = d.Server.DiscordOwnerID
+	s.Server.DiscordApprovalChannelID = d.Server.DiscordApprovalChannelID
 	s.Server.DiscordAuditChannelID = d.Server.DiscordAuditChannelID
 
 	// ---- [discord] ----
