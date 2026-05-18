@@ -69,6 +69,9 @@ Nothing is written to disk on the agent host.
 `hush init server` is the canonical first-run entry point. It runs a
 diagnostic-first preflight, prompts for the inputs it actually needs,
 classifies pre-existing state per-artifact, and never silently overwrites.
+When it asks for a listen address, use the **vault host's Tailscale IPv4**
+plus a free port (for example, run `printf '%s:7743\n' "$(tailscale ip -4)"`
+on the server host). Do not use the laptop/client IP.
 For the full walkthrough — Keychain ACL recovery, clock-skew override,
 `--non-interactive` mode — see [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
 For Keychain vs `HUSH_DISCORD_BOT_TOKEN` positioning and the threat

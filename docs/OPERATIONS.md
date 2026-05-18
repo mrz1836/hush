@@ -59,6 +59,18 @@ The minimum prerequisites are:
 3. **Discord/listen-address prompts.** Owner snowflake, application
    snowflake, listen address (Tailscale IP + free port), optional
    approval / audit channel IDs.
+
+   The listen address is the **vault host's Tailscale IPv4 plus a free
+   TCP port**. It is not the laptop/client IP. Run this on the machine
+   that will run `hush serve`:
+
+   ```zsh
+   printf '%s:7743\n' "$(tailscale ip -4)"
+   ```
+
+   Paste the printed value at the prompt. For example, if the vault host's
+   Tailscale IP is `100.96.10.4`, enter `100.96.10.4:7743`. Pick another
+   free port such as `7744` if `7743` is already in use.
 4. **Vault passphrase.** Entered with no echo. Confirmed once.
 5. **Keychain writes (macOS).** Each Keychain write is preceded by a
    hush-authored explanation panel that names the item, says what is
