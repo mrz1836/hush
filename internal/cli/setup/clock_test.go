@@ -82,12 +82,13 @@ func TestClockSyncCheck_VerdictMatrix(t *testing.T) {
 
 	probeErr := errors.New("synthetic probe failure")
 	cases := []struct {
-		name       string
-		probe      setup.ClockProbe
-		allowSkew  bool
-		wantStatus setup.Status
-		wantIs     error
-		wantHint   bool
+		name             string
+		probe            setup.ClockProbe
+		allowSkew        bool
+		probeFailureWarn bool
+		wantStatus       setup.Status
+		wantIs           error
+		wantHint         bool
 	}{
 		{
 			name:       "in_sync_passes",
@@ -100,6 +101,14 @@ func TestClockSyncCheck_VerdictMatrix(t *testing.T) {
 			wantStatus: setup.StatusFail,
 			wantIs:     setup.ErrClockUnsynchronised,
 			wantHint:   true,
+		},
+		{
+			name:             "probe_failure_warn_downgrades_probe_error_only",
+			probe:            stubProbe(true, 0, probeErr),
+			probeFailureWarn: true,
+			wantStatus:       setup.StatusWarn,
+			wantIs:           setup.ErrClockUnsynchronised,
+			wantHint:         true,
 		},
 		{
 			name:       "not_synced_fails",
@@ -145,11 +154,12 @@ func TestClockSyncCheck_VerdictMatrix(t *testing.T) {
 			t.Parallel()
 
 			check := setup.NewClockSyncCheck(setup.ClockSyncCheckConfig{
-				Probe:     tc.probe,
-				Required:  true,
-				MaxDrift:  60 * time.Second,
-				Timeout:   2 * time.Second,
-				AllowSkew: tc.allowSkew,
+				Probe:            tc.probe,
+				Required:         true,
+				MaxDrift:         60 * time.Second,
+				Timeout:          2 * time.Second,
+				AllowSkew:        tc.allowSkew,
+				ProbeFailureWarn: tc.probeFailureWarn,
 			})
 			res := check.Run(context.Background())
 			require.Equal(t, tc.wantStatus, res.Status, "verdict")

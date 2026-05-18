@@ -324,10 +324,11 @@ func defaultRunPreflightFor(deps *initDeps) func(ctx context.Context) setup.Repo
 	return func(ctx context.Context) setup.Report {
 		reg := setup.NewRegistry()
 		reg.MustRegister(setup.NewClockSyncCheck(setup.ClockSyncCheckConfig{
-			Required:  config.DefaultRequireNTPSync,
-			MaxDrift:  config.DefaultMaxClockDrift,
-			Timeout:   server.DefaultClockSyncTimeout,
-			AllowSkew: deps.serverAllowClockSkew,
+			Required:         config.DefaultRequireNTPSync,
+			MaxDrift:         config.DefaultMaxClockDrift,
+			Timeout:          server.DefaultClockSyncTimeout,
+			AllowSkew:        deps.serverAllowClockSkew,
+			ProbeFailureWarn: true,
 		}))
 		return reg.Run(ctx)
 	}

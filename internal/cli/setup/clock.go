@@ -48,8 +48,14 @@ type ClockSyncCheckConfig struct {
 	// AllowSkew downgrades a would-be [StatusFail] to [StatusWarn].
 	// The CLI sets this from `--allow-clock-skew` (Plan AC-8 /
 	// Task 4.2). hush never auto-sudos to fix the clock — this flag
-	// is the only override path.
+	// is the only override path for confirmed unsynchronised/drifted clocks.
 	AllowSkew bool
+
+	// ProbeFailureWarn downgrades probe execution failures (for example
+	// macOS killing `sntp` even after the operator manually resynced) to
+	// [StatusWarn] without weakening the confirmed not-synced / drift-over
+	// verdicts. This is intended for setup UX only; serve keeps the hard gate.
+	ProbeFailureWarn bool
 }
 
 // ClockSyncCheck is the preflight [Check] that wraps a [ClockProbe]
@@ -106,7 +112,7 @@ func (c ClockSyncCheck) Run(ctx context.Context) SetupCheckResult {
 	synced, drift, err := c.cfg.Probe(probeCtx)
 	switch {
 	case err != nil:
-		return c.verdict(fmt.Errorf("probe failed: %w", ErrClockUnsynchronised), "probe: "+err.Error())
+		return c.probeFailureVerdict(fmt.Errorf("probe failed: %w", ErrClockUnsynchronised), "probe: "+err.Error())
 	case !synced:
 		return c.verdict(
 			fmt.Errorf("host clock not NTP-synchronised: %w", ErrClockUnsynchronised),
@@ -127,6 +133,19 @@ func (c ClockSyncCheck) Run(ctx context.Context) SetupCheckResult {
 // the same wrapped sentinel so handlePreflightReport (and the
 // serve-side override path) can emit a `clock_skew_override` audit
 // event from a single err value.
+func (c ClockSyncCheck) probeFailureVerdict(err error, detail string) SetupCheckResult {
+	if c.cfg.ProbeFailureWarn {
+		res := warn(c.Name(), detail)
+		res.Err = err
+		var rh RemedyHinter
+		if errors.As(err, &rh) {
+			res.RemedyHint = rh.RemedyHint()
+		}
+		return res
+	}
+	return c.verdict(err, detail)
+}
+
 func (c ClockSyncCheck) verdict(err error, detail string) SetupCheckResult {
 	name := c.Name()
 	if c.cfg.AllowSkew {
