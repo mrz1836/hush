@@ -59,7 +59,7 @@ SDD-31 (macos-arm64 + linux-amd64).
 **Performance Goals**: N/A. Single TOML parse on test run (<10 ms);
 single file-read for grep test (<5 ms).
 
-**Constraints**: 
+**Constraints**:
 - Zero operator-specific identifiers anywhere in the three files
   delivered or touched by this chunk (FR-007, FR-011).
 - Every CONFIG-SCHEMA.md §Supervisor-config field appears in the
@@ -71,7 +71,7 @@ single file-read for grep test (<5 ms).
   per-binary Keychain ACL contract (AC-6) and the
   `[child].command[0]`-as-ACL-bound-path note (FR-006).
 
-**Scale/Scope**: 
+**Scale/Scope**:
 - 1 new TOML file (~120 lines including comments).
 - 1 new test function (≤30 lines) added to an existing test file —
   `internal/supervise/config/example_test.go` (NEW, package-co-located).

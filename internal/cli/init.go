@@ -525,7 +525,7 @@ func newInitClientCmd() *cobra.Command {
 // All output goes to stderr (operator messages); stdout is intentionally
 // unused so machine-piped consumers see an empty data stream on success.
 //
-//nolint:gocognit,gocyclo,cyclop // sequential bootstrap flow; complexity is structural per data-model §1
+//nolint:gocognit,gocyclo,cyclop,nestif // sequential bootstrap flow; complexity is structural per data-model §1
 func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *initDeps) error {
 	if !deps.platformACL() {
 		_ = stderr.WriteText(initMsgPlatformUnsupported, runtime.GOOS)
@@ -705,7 +705,7 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 	//    Keychain guard is preserved below so the explicit error
 	//    message contract continues to hold when the operator chose
 	//    `--on-existing=fail`.
-	decisions, recoveryErr := recoverExistingArtifacts(ctx, in, stderr, deps, vaultPath, configPath, stateDir, keychainItems, explicitStateDir)
+	decisions, recoveryErr := recoverExistingArtifacts(ctx, in, stderr, deps, vaultPath, configPath, stateDir, keychainItems)
 	if recoveryErr != nil {
 		return recoveryErr
 	}
@@ -841,6 +841,8 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 //   - default (including [onExistingRecreate] after an inline delete)
 //     — emit the hush-authored pre-explanation and Store the supplied
 //     token under the configured ACL.
+//
+//nolint:gocognit,gocyclo,nestif // matrix dispatch over decision × ACL recovery is structural
 func storeBotTokenForDecision(
 	ctx context.Context,
 	deps *initDeps,
@@ -899,7 +901,7 @@ func emitKeychainPreExplain(stderr *Stream, purpose, service, account string) {
 
 // runInitClient is the orchestration entry-point for `hush init client`.
 //
-//nolint:gocognit,gocyclo,cyclop // sequential bootstrap flow; complexity is structural
+//nolint:gocognit,gocyclo,cyclop,nestif // sequential bootstrap flow; complexity is structural
 func runInitClient(ctx context.Context, stdout, stderr *Stream, in *os.File, cmd *cobra.Command, deps *initDeps) error {
 	if !deps.platformACL() {
 		_ = stderr.WriteText(initMsgPlatformUnsupported, runtime.GOOS)
@@ -1044,6 +1046,7 @@ type clientRegistryJSONEntry struct {
 	PublicKey   string `json:"public_key"`
 }
 
+//nolint:gocognit // read-modify-write over heterogeneous registry states
 func upsertClientRegistry(path, fingerprint string, pub *ecdsa.PublicKey) error {
 	raw, err := os.ReadFile(path) //nolint:gosec // operator-supplied registry path
 	var entries []clientRegistryJSONEntry

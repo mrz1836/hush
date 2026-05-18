@@ -112,7 +112,6 @@ func recoverExistingArtifacts(
 	deps *initDeps,
 	vaultPath, configPath, stateDir string,
 	keychainItems serverKeychainItemNames,
-	explicitStateDir bool,
 ) (recoveryDecisions, error) {
 	decisions := newRecoveryDecisions()
 

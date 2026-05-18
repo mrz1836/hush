@@ -12,6 +12,8 @@ import (
 // on macOS. Regression: `systemsetup -getusingnetworktime` can print
 // administrator-access text for non-root users, which made guided setup fail even
 // after `sudo sntp -sS time.apple.com` succeeded.
+//
+//nolint:gocognit // table-driven test exercises many sntp parsing branches
 func TestDefaultClockSyncProbe_Darwin_Parses(t *testing.T) {
 	old := execClockOffset
 	t.Cleanup(func() { execClockOffset = old })

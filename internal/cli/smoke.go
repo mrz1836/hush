@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,6 +22,13 @@ import (
 	"github.com/mrz1836/hush/internal/vault/securebytes"
 )
 
+var (
+	errSmokeSecretMissing   = errors.New("hush: smoke: fake secret value was not returned")
+	errSmokeServerNotStop   = errors.New("hush: smoke: temporary server did not stop cleanly")
+	errSmokeServerEarlyExit = errors.New("hush: smoke: temporary server exited before health check")
+	errSmokeServerTimeout   = errors.New("hush: smoke: timed out waiting for temporary server health")
+)
+
 const (
 	smokeSecretName  = "HUSH_SMOKE_TEST"
 	smokeSecretValue = "hello-from-hush"
@@ -29,7 +37,7 @@ const (
 const (
 	smokeMsgStart             = "hush: smoke: starting fake-secret smoke test"
 	smokeMsgInitServer        = "hush: smoke: initialized server state at %s"
-	smokeMsgSecretAdded       = "hush: smoke: added fake secret %s"
+	smokeMsgSecretAdded       = "hush: smoke: added fake secret %s" //nolint:gosec // G101 false positive: log format string, not a credential
 	smokeMsgClientEnrolled    = "hush: smoke: enrolled client machine-%d"
 	smokeMsgServeStarting     = "hush: smoke: starting temporary server at %s"
 	smokeMsgApprove           = "hush: smoke: approve the %s request in Discord now"
@@ -113,6 +121,7 @@ func newSmokeCmd() *cobra.Command {
 	return cmd
 }
 
+//nolint:gocognit,gocyclo // orchestrates a long end-to-end smoke flow; splitting harms readability
 func runSmoke(ctx context.Context, stdout, stderr *Stream, in *os.File, deps smokeDeps, opts smokeOptions) error {
 	if !deps.isTTY(in) {
 		_ = stderr.WriteText(initMsgNoTTY)
@@ -188,15 +197,15 @@ func runSmoke(ctx context.Context, stdout, stderr *Stream, in *os.File, deps smo
 	}
 
 	cfgPath := filepath.Join(stateDir, "config.toml")
-	if err := smokeInitServer(ctx, stderr, in, deps, opts, stateDir, passphrase); err != nil {
-		return err
+	if initErr := smokeInitServer(ctx, stderr, in, deps, opts, stateDir, passphrase); initErr != nil {
+		return initErr
 	}
 	_ = stderr.WriteText(smokeMsgInitServer, stateDir)
-	if err := smokeAddSecret(ctx, stderr, in, deps, cfgPath, stateDir, passphrase); err != nil {
-		return err
+	if addErr := smokeAddSecret(ctx, stderr, in, deps, cfgPath, stateDir, passphrase); addErr != nil {
+		return addErr
 	}
 	_ = stderr.WriteText(smokeMsgSecretAdded, smokeSecretName)
-	clientKeyFile, err := smokeInitClient(ctx, stderr, in, deps, cfgPath, stateDir, passphrase, opts.machineIndex)
+	clientKeyFile, err := smokeInitClient(ctx, stderr, in, deps, stateDir, passphrase, opts.machineIndex)
 	if err != nil {
 		return err
 	}
@@ -225,9 +234,9 @@ func runSmoke(ctx context.Context, stdout, stderr *Stream, in *os.File, deps smo
 		})
 	}()
 	_ = stderr.WriteText(smokeMsgServeStarting, serverURL)
-	if err := waitForSmokeServer(ctx, deps.httpClient, serverURL, serveErrCh); err != nil {
+	if waitErr := waitForSmokeServer(ctx, deps.httpClient, serverURL, serveErrCh); waitErr != nil {
 		cancelServe()
-		return err
+		return waitErr
 	}
 
 	_ = stderr.WriteText(smokeMsgApprove, smokeSecretName)
@@ -267,7 +276,7 @@ func runSmoke(ctx context.Context, stdout, stderr *Stream, in *os.File, deps smo
 	}
 	if !strings.Contains(requestOut.String(), smokeSecretValue) {
 		cancelServe()
-		return fmt.Errorf("hush: smoke: fake secret value was not returned")
+		return errSmokeSecretMissing
 	}
 	_ = stdout.WriteText(smokeMsgSuccess, smokeSecretName, smokeSecretValue)
 	cancelServe()
@@ -277,7 +286,7 @@ func runSmoke(ctx context.Context, stdout, stderr *Stream, in *os.File, deps smo
 			return err
 		}
 	case <-time.After(5 * time.Second):
-		return fmt.Errorf("hush: smoke: temporary server did not stop cleanly")
+		return errSmokeServerNotStop
 	}
 	return nil
 }
@@ -313,7 +322,7 @@ func smokeAddSecret(ctx context.Context, stderr *Stream, in *os.File, deps smoke
 	return runSecretAdd(ctx, stderr, in, secretDeps, []string{smokeSecretName})
 }
 
-func smokeInitClient(ctx context.Context, stderr *Stream, in *os.File, deps smokeDeps, cfgPath, stateDir, passphrase string, machineIndex uint32) (string, error) {
+func smokeInitClient(ctx context.Context, stderr *Stream, in *os.File, deps smokeDeps, stateDir, passphrase string, machineIndex uint32) (string, error) {
 	initDeps, err := deps.initDepsFactory()
 	if err != nil {
 		return "", err
@@ -324,7 +333,7 @@ func smokeInitClient(ctx context.Context, stderr *Stream, in *os.File, deps smok
 	initDeps.clientRegistry = filepath.Join(stateDir, "clients.json")
 	initDeps.clientKeyFile = keyFile
 	cmd := newInitClientCmd()
-	cmd.Flags().Set("machine-index", fmt.Sprintf("%d", machineIndex)) //nolint:errcheck // value is generated uint32
+	_ = cmd.Flags().Set("machine-index", fmt.Sprintf("%d", machineIndex))
 	return keyFile, runInitClient(ctx, newStream(io.Discard, false, true), stderr, in, cmd, initDeps)
 }
 
@@ -371,6 +380,7 @@ func fixedPassphraseSource(passphrase string) passphraseSource {
 	}
 }
 
+//nolint:gocognit,gocyclo // tight polling loop with multiple termination paths
 func waitForSmokeServer(ctx context.Context, client *http.Client, serverURL string, serveErrCh <-chan error) error {
 	if client == nil {
 		client = &http.Client{Timeout: 2 * time.Second}
@@ -383,11 +393,11 @@ func waitForSmokeServer(ctx context.Context, client *http.Client, serverURL stri
 		select {
 		case err := <-serveErrCh:
 			if err == nil {
-				return fmt.Errorf("hush: smoke: temporary server exited before health check")
+				return errSmokeServerEarlyExit
 			}
 			return err
 		case <-deadline.C:
-			return fmt.Errorf("hush: smoke: timed out waiting for temporary server health")
+			return errSmokeServerTimeout
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-tick.C:
@@ -444,7 +454,8 @@ func newSmokeCleanCmd() *cobra.Command {
 	return cmd
 }
 
-func runSmokeClean(_ *Stream, stderr *Stream, deps smokeDeps, opts smokeCleanOptions) error {
+//nolint:gocognit,gocyclo // per-target cleanup loop branches on archive/destroy/missing
+func runSmokeClean(_, stderr *Stream, deps smokeDeps, opts smokeCleanOptions) error {
 	targets := opts.stateDirs
 	if len(targets) == 0 {
 		targets = []string{"~/.hush-smoke", "~/.hush-t278-validation"}
@@ -453,30 +464,30 @@ func runSmokeClean(_ *Stream, stderr *Stream, deps smokeDeps, opts smokeCleanOpt
 		return fmt.Errorf("%w: --destroy requires --confirm 'destroy smoke'", errMissingFlag)
 	}
 	for _, raw := range targets {
-		path, err := expandTilde(raw)
-		if err != nil {
-			return err
+		path, expandErr := expandTilde(raw)
+		if expandErr != nil {
+			return expandErr
 		}
-		if err := validateSmokeCleanTarget(path); err != nil {
-			return err
+		if validateErr := validateSmokeCleanTarget(path); validateErr != nil {
+			return validateErr
 		}
-		if _, err := os.Stat(path); err != nil {
-			if os.IsNotExist(err) {
+		if _, statErr := os.Stat(path); statErr != nil {
+			if os.IsNotExist(statErr) {
 				_ = stderr.WriteText(smokeMsgCleanAbsentFmt, path)
 				continue
 			}
-			return err
+			return statErr
 		}
 		if opts.destroy {
-			if err := os.RemoveAll(path); err != nil {
-				return err
+			if removeErr := os.RemoveAll(path); removeErr != nil {
+				return removeErr
 			}
 			_ = stderr.WriteText(smokeMsgCleanDestroyedFmt, path)
 			continue
 		}
-		archived, err := archiveSmokeStateDir(path, deps.nowFn())
-		if err != nil {
-			return err
+		archived, archiveErr := archiveSmokeStateDir(path, deps.nowFn())
+		if archiveErr != nil {
+			return archiveErr
 		}
 		if archived != "" {
 			_ = stderr.WriteText(smokeMsgCleanArchivedFmt, path, archived)

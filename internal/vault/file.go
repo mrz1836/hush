@@ -53,6 +53,7 @@ var (
 	ErrDuplicateName  = errors.New("hush/vault: duplicate secret name")
 	ErrFileTooLarge   = errors.New("hush/vault: file too large")
 	ErrInvalidName    = errors.New("hush/vault: invalid secret name or description")
+	ErrInvalidSaltLen = errors.New("vault: invalid salt length")
 )
 
 // Secret is one named, described, value-bearing entry in the vault.
@@ -201,7 +202,7 @@ func SaveWithSalt(ctx context.Context, path string, vaultKey *securebytes.Secure
 		return err
 	}
 	if len(salt) != saltLen {
-		return fmt.Errorf("vault: salt must be %d bytes, got %d", saltLen, len(salt))
+		return fmt.Errorf("%w: must be %d bytes, got %d", ErrInvalidSaltLen, saltLen, len(salt))
 	}
 
 	// Pre-pass: validate names/descriptions before any filesystem touch.

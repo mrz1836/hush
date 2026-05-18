@@ -209,20 +209,6 @@ func (d *deterministicReader) Read(p []byte) (int, error) {
 	return len(p), nil
 }
 
-type panicStoreKeychain struct{}
-
-func (panicStoreKeychain) Store(context.Context, string, string, *securebytes.SecureBytes, string) error {
-	panic("Store should not be called for explicit state-dir init")
-}
-
-func (panicStoreKeychain) Retrieve(context.Context, string, string) (*securebytes.SecureBytes, error) {
-	return nil, keychain.ErrKeychainItemNotFound
-}
-
-func (panicStoreKeychain) Delete(context.Context, string, string) error {
-	return keychain.ErrKeychainItemNotFound
-}
-
 type denyStoreKeychain struct{}
 
 func (denyStoreKeychain) Store(context.Context, string, string, *securebytes.SecureBytes, string) error {
