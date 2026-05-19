@@ -1393,3 +1393,46 @@ func TestEmitServerNextCommands_EnvTokenMode(t *testing.T) {
 	require.Contains(t, transcript, "--reload-on-vault-change")
 	require.NotContains(t, transcript, testBotTokenInput)
 }
+
+func TestInitServer_ReusedConfigUsesConfiguredDedicatedKeychainPath(t *testing.T) {
+	fx := newInitFixture(t)
+	dedicatedPath := filepath.Join(fx.tempDir, "hush.keychain-db")
+	cfgBody := buildServerDecodedFromDefaults(serverInputs{
+		listenAddr:           testListenAddrInput,
+		pathPrefix:           "TESTPREFIX12",
+		ownerID:              testOwnerIDInput,
+		applicationID:        testApplicationIDIn,
+		stateDir:             fx.tempDir,
+		approvalChannelID:    "111111111111111111",
+		auditChannelID:       "222222222222222222",
+		botTokenKeychain:     "hush-discord",
+		botTokenKeychainPath: dedicatedPath,
+	})
+	require.NoError(t, writeConfigTOMLAtomic(filepath.Join(fx.tempDir, "config.toml"), cfgBody))
+	require.NoError(t, os.WriteFile(filepath.Join(fx.tempDir, "secrets.vault"), []byte("existing-vault"), 0o600))
+
+	fx.deps.stateDirRoot = fx.tempDir
+	fx.deps.serverInputs.stateDir = fx.tempDir
+	fx.deps.promptLine = func(_ *os.File, _ io.Writer, label string) (string, error) {
+		return "", fmt.Errorf("unexpected non-secret prompt %q", label)
+	}
+	fx.deps.promptRecovery = scriptedRecoveryReader(t, []rune{'r', 'r'})
+	fx.deps.keychain = denyStoreKeychain{}
+	dedicatedKC := keychain.NewFake()
+	t.Cleanup(dedicatedKC.Destroy)
+	var factoryPaths []string
+	fx.deps.keychainFactory = func(path string) (keychain.Keychain, error) {
+		factoryPaths = append(factoryPaths, path)
+		return dedicatedKC, nil
+	}
+
+	require.NoError(t, runInitServer(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, fx.deps))
+	require.Equal(t, []string{dedicatedPath}, factoryPaths)
+	stored, err := dedicatedKC.Retrieve(context.Background(), "hush-discord", kcAccountServer)
+	require.NoError(t, err)
+	defer stored.Destroy()
+	require.NoError(t, stored.Use(func(b []byte) {
+		require.Equal(t, testBotTokenInput, string(b))
+	}))
+	require.NotContains(t, fx.stderr.String(), "login Keychain")
+}

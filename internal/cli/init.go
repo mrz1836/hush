@@ -636,6 +636,18 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 	var approvalChannelID, auditChannelID string
 	explicitStateDir := strings.TrimSpace(deps.serverInputs.stateDir) != ""
 
+	// Resolve target paths before prompting so an existing reusable config can
+	// supply its own non-secret fields. This keeps reruns from asking for
+	// listen/application/channel IDs that are already present on disk.
+	stateDir, err := resolveStateDir(deps.stateDirRoot)
+	if err != nil {
+		return err
+	}
+	vaultPath := filepath.Join(stateDir, "secrets.vault")
+	configPath := filepath.Join(stateDir, "config.toml")
+	keychainItems := defaultServerKeychainItems()
+	existingCfg, _ := config.LoadServer(ctx, configPath)
+
 	if deps.serverNonInteractive {
 		pass, err = securebytes.New([]byte(deps.serverPassphrase))
 		if err != nil {
@@ -694,6 +706,13 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 		appID = strings.TrimSpace(deps.serverInputs.applicationID)
 		approvalChannelID = strings.TrimSpace(deps.serverInputs.approvalChannelID)
 		auditChannelID = strings.TrimSpace(deps.serverInputs.auditChannelID)
+		if existingCfg != nil {
+			listenAddr = firstNonEmpty(listenAddr, existingCfg.Server.ListenAddr.String())
+			ownerID = firstNonEmpty(ownerID, existingCfg.Server.DiscordOwnerID)
+			appID = firstNonEmpty(appID, existingCfg.Discord.ApplicationID)
+			approvalChannelID = firstNonEmpty(approvalChannelID, existingCfg.Server.DiscordApprovalChannelID)
+			auditChannelID = firstNonEmpty(auditChannelID, existingCfg.Server.DiscordAuditChannelID)
+		}
 
 		if listenAddr == "" {
 			listenAddr, err = promptRequired(deps.promptLine, in, stderr.w, promptListenAddr, "listen_addr")
@@ -765,15 +784,6 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 		_ = stderr.WriteText(initMsgFieldRequiredFmt, "application_id")
 		return errMissingFlag
 	}
-
-	// 3. Resolve target paths.
-	stateDir, err := resolveStateDir(deps.stateDirRoot)
-	if err != nil {
-		return err
-	}
-	vaultPath := filepath.Join(stateDir, "secrets.vault")
-	configPath := filepath.Join(stateDir, "config.toml")
-	keychainItems := defaultServerKeychainItems()
 
 	// 4. Existence handling — classifier-first (Plan AC-9 / Task 2.4).
 	//    The classifier inspects vault / config / state-dir, and the
@@ -891,10 +901,18 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 		_ = stderr.WriteText(initMsgExplicitStateKeychain)
 		autoEnvTokenMode := false
 		if botToken != nil {
-			var storeErr error
-			autoEnvTokenMode, dedicatedKeychainPath, storeErr = storeBotTokenForDecision(ctx, deps, stderr, in, keychainItems, botToken, stateDir, binPath, decisions)
+			handled, configuredPath, storeErr := storeBotTokenUsingConfiguredKeychainPath(ctx, deps, stderr, botToken, loadedCfg, keychainItems.discordService, binPath)
 			if storeErr != nil {
 				return storeErr
+			}
+			if handled {
+				dedicatedKeychainPath = configuredPath
+			} else {
+				var decisionStoreErr error
+				autoEnvTokenMode, dedicatedKeychainPath, decisionStoreErr = storeBotTokenForDecision(ctx, deps, stderr, in, keychainItems, botToken, stateDir, binPath, decisions)
+				if decisionStoreErr != nil {
+					return decisionStoreErr
+				}
 			}
 		}
 		if dedicatedKeychainPath != "" {
@@ -966,11 +984,42 @@ func emitServerNextCommands(stderr *Stream, configPath string, cfg *config.Serve
 	_ = stderr.WriteText(initMsgServerNextCommandsFmt, serveCmd, initClientCmd, secretAddCmd, requestCmd)
 }
 
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		v = strings.TrimSpace(v)
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 func shellQuote(s string) string {
 	if s == "" {
 		return "''"
 	}
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+func storeBotTokenUsingConfiguredKeychainPath(
+	ctx context.Context,
+	deps *initDeps,
+	stderr *Stream,
+	botToken *securebytes.SecureBytes,
+	cfg *config.Server,
+	service, binPath string,
+) (bool, string, error) {
+	if cfg == nil || strings.TrimSpace(cfg.Discord.BotKeychainPath) == "" {
+		return false, "", nil
+	}
+	path := strings.TrimSpace(cfg.Discord.BotKeychainPath)
+	if err := storeBotTokenInDedicatedKeychain(ctx, deps, stderr, botToken, path, service, binPath); err != nil {
+		if errors.Is(err, keychain.ErrKeychainItemExists) {
+			return true, path, nil
+		}
+		return true, path, err
+	}
+	return true, path, nil
 }
 
 // storeBotTokenForDecision honors the per-artifact recovery decision
