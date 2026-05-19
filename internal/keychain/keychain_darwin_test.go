@@ -224,6 +224,19 @@ func TestKeychainDarwin_EnsureDedicatedKeychainConstructsCommands(t *testing.T) 
 	}, runs)
 }
 
+func TestKeychainDarwin_EnsureDedicatedKeychainTightensMode(t *testing.T) {
+	t.Parallel()
+	k := newDarwinForTest()
+	k.keychainPath = filepath.Join(t.TempDir(), "hush.keychain-db")
+	require.NoError(t, os.WriteFile(k.keychainPath, []byte("test-keychain"), 0o644))
+	k.runFn = func(*exec.Cmd) error { return nil }
+
+	require.NoError(t, k.EnsureDedicatedKeychain(context.Background()))
+	info, err := os.Stat(k.keychainPath)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+}
+
 func TestKeychainDarwin_RepairACLConstructedCommand(t *testing.T) {
 	t.Parallel()
 	k := newDarwinForTest()

@@ -192,3 +192,27 @@ func TestZshSafeSnippetsGuard_PlantedBadLineWouldFail(t *testing.T) {
 	require.Len(t, hits, 1,
 		"the planted bash-only line must be flagged by the same matcher the guard uses")
 }
+
+// TestOperationsDocs_RequestSnippetIsCopyPasteSafe locks the dogfooded
+// learning-path request shape. A prior doc/generated-command regression
+// printed `--exec 'printenv YOUR_SECRET'` and omitted --ttl/--max-uses/--reason,
+// which could make `hush request` appear to do nothing useful for a new user.
+func TestOperationsDocs_RequestSnippetIsCopyPasteSafe(t *testing.T) {
+	t.Parallel()
+	root := repoRootFromSetupPkg(t)
+	body, err := os.ReadFile(filepath.Join(root, "docs", "OPERATIONS.md")) //nolint:gosec // repo-local doc guard
+	require.NoError(t, err)
+	text := string(body)
+
+	for _, want := range []string{
+		"--ttl 5m",
+		"--max-uses 1",
+		"--reason 'smoke test'",
+		"--exec printenv -- YOUR_SECRET",
+		"Do not quote `printenv YOUR_SECRET` as one string",
+		"Tightens the dedicated Keychain file mode to `0600`",
+	} {
+		require.Contains(t, text, want)
+	}
+	require.NotContains(t, text, "--exec 'printenv YOUR_SECRET'")
+}

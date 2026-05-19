@@ -167,9 +167,35 @@ func (k *darwinKeychain) EnsureDedicatedKeychain(ctx context.Context) error {
 			return fmt.Errorf("hush/keychain: create-keychain %q: %w", k.keychainPath, err)
 		}
 	}
+	if err := tightenDedicatedKeychainMode(k.keychainPath); err != nil {
+		return err
+	}
 	cmd := exec.CommandContext(ctx, k.binary, "unlock-keychain", k.keychainPath) //nolint:gosec // fixed argv; interactive macOS prompt owns the password
 	if err := k.runFn(cmd); err != nil {
 		return fmt.Errorf("hush/keychain: unlock-keychain %q: %w", k.keychainPath, err)
+	}
+	return nil
+}
+
+func tightenDedicatedKeychainMode(keychainPath string) error {
+	if keychainPath == "" {
+		return nil
+	}
+	info, err := os.Stat(keychainPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("hush/keychain: stat dedicated keychain %q: %w", keychainPath, err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil
+	}
+	if info.Mode().Perm() <= 0o600 {
+		return nil
+	}
+	if err := os.Chmod(keychainPath, 0o600); err != nil {
+		return fmt.Errorf("hush/keychain: chmod dedicated keychain %q: %w", keychainPath, err)
 	}
 	return nil
 }
