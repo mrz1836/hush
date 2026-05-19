@@ -32,6 +32,13 @@ type Keychain interface {
 	Delete(ctx context.Context, service, account string) error
 }
 
+// DedicatedKeychainManager is implemented by path-aware macOS
+// keychains that can create/unlock their backing file on demand.
+// Callers only use it for the explicit hush-keychain escape hatch.
+type DedicatedKeychainManager interface {
+	EnsureDedicatedKeychain(ctx context.Context) error
+}
+
 // Sentinel errors returned by Keychain implementations.
 var (
 	// ErrKeychainItemNotFound is returned by Retrieve and Delete
@@ -62,10 +69,16 @@ var (
 // future audit hooks. Today the implementations do not log through it;
 // no secret value is ever passed to the logger.
 func New(logger *slog.Logger) (Keychain, error) {
+	return NewAtPath(logger, "")
+}
+
+// NewAtPath returns the platform-native Keychain implementation and,
+// on macOS, targets the supplied keychain file path when non-empty.
+func NewAtPath(logger *slog.Logger, keychainPath string) (Keychain, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return newPlatformKeychain(logger)
+	return newPlatformKeychain(logger, keychainPath)
 }
 
 // PerBinaryACLSupported reports whether the current platform's

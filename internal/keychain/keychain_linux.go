@@ -43,7 +43,7 @@ type linuxKeychain struct {
 	backend keyringBackend
 }
 
-func newPlatformKeychain(logger *slog.Logger) (Keychain, error) {
+func newPlatformKeychain(logger *slog.Logger, _ string) (Keychain, error) {
 	return &linuxKeychain{logger: logger, backend: realKeyring{}}, nil
 }
 

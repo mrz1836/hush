@@ -7,7 +7,9 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -54,10 +56,11 @@ func itoa(n int) string {
 
 func newDarwinForTest() *darwinKeychain {
 	return &darwinKeychain{
-		logger:   slog.Default(),
-		binary:   "/usr/bin/security",
-		runFn:    func(*exec.Cmd) error { return nil },
-		outputFn: func(*exec.Cmd) ([]byte, error) { return nil, nil },
+		logger:       slog.Default(),
+		binary:       "/usr/bin/security",
+		runFn:        func(*exec.Cmd) error { return nil },
+		outputFn:     func(*exec.Cmd) ([]byte, error) { return nil, nil },
+		keychainPath: "",
 	}
 }
 
@@ -89,6 +92,33 @@ func TestKeychainDarwin_ConstructedSecurityCommand(t *testing.T) {
 	}, captured)
 
 	require.NotContains(t, captured, "-A", "no allow-all flag")
+}
+
+func TestKeychainDarwin_ConstructedSecurityCommandWithPath(t *testing.T) {
+	t.Parallel()
+	k := newDarwinForTest()
+	k.keychainPath = "/tmp/hush.keychain-db"
+
+	var captured []string
+	k.outputFn = func(cmd *exec.Cmd) ([]byte, error) {
+		captured = append([]string(nil), cmd.Args...)
+		return nil, nil
+	}
+
+	val, err := securebytes.New([]byte("payload-bytes"))
+	require.NoError(t, err)
+	defer val.Destroy()
+
+	require.NoError(t, k.Store(context.Background(), "svc", "acct", val, "/abs/hush"))
+	require.Equal(t, []string{
+		"/usr/bin/security",
+		"add-generic-password",
+		"-s", "svc",
+		"-a", "acct",
+		"-T", "/abs/hush",
+		"-w", "payload-bytes",
+		"/tmp/hush.keychain-db",
+	}, captured)
 }
 
 func TestKeychainDarwin_StoreReturnsItemExistsOn45(t *testing.T) {
@@ -177,6 +207,67 @@ func TestKeychainDarwin_DeleteSucceedsAndIsNotIdempotent(t *testing.T) {
 	require.True(t, errors.Is(err, ErrKeychainItemNotFound))
 }
 
+func TestKeychainDarwin_EnsureDedicatedKeychainConstructsCommands(t *testing.T) {
+	t.Parallel()
+	k := newDarwinForTest()
+	k.keychainPath = "/tmp/hush.keychain-db"
+	var runs [][]string
+	k.runFn = func(cmd *exec.Cmd) error {
+		runs = append(runs, append([]string(nil), cmd.Args...))
+		return nil
+	}
+
+	require.NoError(t, k.EnsureDedicatedKeychain(context.Background()))
+	require.Equal(t, [][]string{
+		{"/usr/bin/security", "create-keychain", "/tmp/hush.keychain-db"},
+		{"/usr/bin/security", "unlock-keychain", "/tmp/hush.keychain-db"},
+	}, runs)
+}
+
+func TestKeychainDarwin_RepairACLConstructedCommand(t *testing.T) {
+	t.Parallel()
+	k := newDarwinForTest()
+	var captured []string
+	k.outputFn = func(cmd *exec.Cmd) ([]byte, error) {
+		captured = append([]string(nil), cmd.Args...)
+		return nil, nil
+	}
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	wantKeychain := filepath.Join(home, "Library", "Keychains", "login.keychain-db")
+
+	require.NoError(t, k.RepairACL(context.Background(), "svc", "acct"))
+	require.Equal(t, []string{
+		"/usr/bin/security",
+		"set-generic-password-partition-list",
+		"-S", "apple-tool:,apple:",
+		"-s", "svc",
+		"-a", "acct",
+		wantKeychain,
+	}, captured)
+}
+
+func TestKeychainDarwin_RepairACLUsesCustomKeychainPath(t *testing.T) {
+	t.Parallel()
+	k := newDarwinForTest()
+	k.keychainPath = "/tmp/hush.keychain-db"
+	var captured []string
+	k.outputFn = func(cmd *exec.Cmd) ([]byte, error) {
+		captured = append([]string(nil), cmd.Args...)
+		return nil, nil
+	}
+
+	require.NoError(t, k.RepairACL(context.Background(), "svc", "acct"))
+	require.Equal(t, []string{
+		"/usr/bin/security",
+		"set-generic-password-partition-list",
+		"-S", "apple-tool:,apple:",
+		"-s", "svc",
+		"-a", "acct",
+		"/tmp/hush.keychain-db",
+	}, captured)
+}
+
 func TestKeychainDarwin_StoreUsesPasswordArgToAvoidRawPrompt(t *testing.T) {
 	t.Parallel()
 	k := newDarwinForTest()
@@ -204,7 +295,7 @@ func TestPerBinaryACLSupported_Darwin(t *testing.T) {
 
 func TestNewPlatformKeychain_Darwin(t *testing.T) {
 	t.Parallel()
-	kc, err := newPlatformKeychain(slog.Default())
+	kc, err := newPlatformKeychain(slog.Default(), "")
 	require.NoError(t, err)
 	require.NotNil(t, kc)
 	_, ok := kc.(*darwinKeychain)

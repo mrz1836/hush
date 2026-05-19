@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/mrz1836/hush/internal/vault/securebytes"
@@ -43,18 +45,20 @@ type outputRunner func(*exec.Cmd) ([]byte, error)
 // darwinKeychain is the macOS implementation. Operations shell out
 // to /usr/bin/security with a fixed argv vector.
 type darwinKeychain struct {
-	logger   *slog.Logger
-	binary   string
-	runFn    runner
-	outputFn outputRunner
+	logger       *slog.Logger
+	binary       string
+	keychainPath string
+	runFn        runner
+	outputFn     outputRunner
 }
 
-func newPlatformKeychain(logger *slog.Logger) (Keychain, error) {
+func newPlatformKeychain(logger *slog.Logger, keychainPath string) (Keychain, error) {
 	return &darwinKeychain{
-		logger:   logger,
-		binary:   securityBin,
-		runFn:    (*exec.Cmd).Run,
-		outputFn: (*exec.Cmd).CombinedOutput,
+		logger:       logger,
+		binary:       securityBin,
+		keychainPath: keychainPath,
+		runFn:        (*exec.Cmd).Run,
+		outputFn:     (*exec.Cmd).CombinedOutput,
 	}, nil
 }
 
@@ -79,13 +83,15 @@ func (k *darwinKeychain) Store(ctx context.Context, service, account string, val
 	}
 	defer func() { password = "" }()
 
-	cmd := exec.CommandContext(ctx, k.binary, //nolint:gosec // fixed argv; see Store doc for -w password trade-off
+	args := []string{
 		"add-generic-password",
 		"-s", service,
 		"-a", account,
 		"-T", acl,
 		"-w", password,
-	)
+	}
+	args = appendKeychainArg(args, k.keychainPath)
+	cmd := exec.CommandContext(ctx, k.binary, args...) //nolint:gosec // fixed argv; see Store doc for -w password trade-off
 	out, err := k.outputFn(cmd)
 	if err != nil {
 		return mapSecurityError(err, "store", string(out))
@@ -95,12 +101,14 @@ func (k *darwinKeychain) Store(ctx context.Context, service, account string, val
 
 // Retrieve fetches the stored secret via find-generic-password.
 func (k *darwinKeychain) Retrieve(ctx context.Context, service, account string) (*securebytes.SecureBytes, error) {
-	cmd := exec.CommandContext(ctx, k.binary, //nolint:gosec // fixed argv
+	args := []string{
 		"find-generic-password",
 		"-s", service,
 		"-a", account,
 		"-w",
-	)
+	}
+	args = appendKeychainArg(args, k.keychainPath)
+	cmd := exec.CommandContext(ctx, k.binary, args...) //nolint:gosec // fixed argv
 	out, err := k.outputFn(cmd)
 	if err != nil {
 		return nil, mapSecurityError(err, "retrieve", string(out))
@@ -114,16 +122,64 @@ func (k *darwinKeychain) Retrieve(ctx context.Context, service, account string) 
 
 // Delete removes the keychain item.
 func (k *darwinKeychain) Delete(ctx context.Context, service, account string) error {
-	cmd := exec.CommandContext(ctx, k.binary, //nolint:gosec // fixed argv
+	args := []string{
 		"delete-generic-password",
 		"-s", service,
 		"-a", account,
-	)
+	}
+	args = appendKeychainArg(args, k.keychainPath)
+	cmd := exec.CommandContext(ctx, k.binary, args...) //nolint:gosec // fixed argv
 	out, err := k.outputFn(cmd)
 	if err != nil {
 		return mapSecurityError(err, "delete", string(out))
 	}
 	return nil
+}
+
+// RepairACL refreshes the item partition list so the current hush binary can
+// read the existing Keychain item again. It does not touch the item value.
+func (k *darwinKeychain) RepairACL(ctx context.Context, service, account string) error {
+	keychainPath := k.keychainPath
+	if keychainPath == "" {
+		keychainPath = loginKeychainPath()
+	}
+	cmd := exec.CommandContext(ctx, k.binary, //nolint:gosec // fixed argv
+		"set-generic-password-partition-list",
+		"-S", "apple-tool:,apple:",
+		"-s", service,
+		"-a", account,
+		keychainPath,
+	)
+	out, err := k.outputFn(cmd)
+	if err != nil {
+		return mapSecurityError(err, "repair-acl", string(out))
+	}
+	return nil
+}
+
+func (k *darwinKeychain) EnsureDedicatedKeychain(ctx context.Context) error {
+	if k.keychainPath == "" {
+		return nil
+	}
+	if _, err := os.Stat(k.keychainPath); errors.Is(err, os.ErrNotExist) {
+		cmd := exec.CommandContext(ctx, k.binary, "create-keychain", k.keychainPath) //nolint:gosec // fixed argv; interactive macOS prompt owns the password
+		if err := k.runFn(cmd); err != nil {
+			return fmt.Errorf("hush/keychain: create-keychain %q: %w", k.keychainPath, err)
+		}
+	}
+	cmd := exec.CommandContext(ctx, k.binary, "unlock-keychain", k.keychainPath) //nolint:gosec // fixed argv; interactive macOS prompt owns the password
+	if err := k.runFn(cmd); err != nil {
+		return fmt.Errorf("hush/keychain: unlock-keychain %q: %w", k.keychainPath, err)
+	}
+	return nil
+}
+
+func loginKeychainPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "~/Library/Keychains/login.keychain-db"
+	}
+	return filepath.Join(home, "Library", "Keychains", "login.keychain-db")
 }
 
 // mapSecurityError maps the exit code from /usr/bin/security to a
@@ -162,6 +218,13 @@ func mapSecurityError(err error, op string, output ...string) error {
 }
 
 // stripTrailingNewline removes exactly one trailing \n if present.
+func appendKeychainArg(args []string, keychainPath string) []string {
+	if keychainPath == "" {
+		return args
+	}
+	return append(args, keychainPath)
+}
+
 func stripTrailingNewline(b []byte) []byte {
 	if n := len(b); n > 0 && b[n-1] == '\n' {
 		return b[:n-1]

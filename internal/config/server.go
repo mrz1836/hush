@@ -47,6 +47,7 @@ type ServerSection struct {
 // BotTokenKeychainItem is a Keychain item NAME, not the token itself (Constitution X).
 type DiscordSection struct {
 	BotTokenKeychainItem string // e.g. "hush-discord" — Keychain item name only
+	BotKeychainPath      string // optional dedicated keychain path for bot-token storage
 	ApplicationID        string // Discord app/bot ID — non-secret snowflake
 }
 
@@ -102,6 +103,7 @@ type serverSectionDecoded struct {
 
 type discordSectionDecoded struct {
 	BotTokenKeychainItem string `toml:"bot_token_keychain_item"`
+	BotKeychainPath      string `toml:"bot_keychain_path,omitempty"`
 	ApplicationID        string `toml:"application_id"`
 }
 
@@ -320,6 +322,7 @@ func materialize(d serverDecoded) (*Server, error) { //nolint:cyclop,gocognit,go
 
 	// ---- [discord] ----
 	s.Discord.BotTokenKeychainItem = d.Discord.BotTokenKeychainItem
+	s.Discord.BotKeychainPath = d.Discord.BotKeychainPath
 	s.Discord.ApplicationID = d.Discord.ApplicationID
 
 	// ---- [crypto] ----
