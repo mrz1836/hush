@@ -66,8 +66,8 @@ func newPlatformKeychain(logger *slog.Logger) (Keychain, error) {
 // "password data for new item" prompt. That prompt is exactly the UX hush must
 // hide behind its guided panels, so Store passes the value as the `-w` argument.
 // This briefly exposes the token to local process-list observers on the trusted
-// vault host; the alternative is an unavoidable Apple prompt that repeatedly
-// failed T-278 validation. Keep this bridge isolated here so a future native
+// vault host; the alternative is an unavoidable Apple prompt that breaks the
+// guided setup UX. Keep this bridge isolated here so a future native
 // Security.framework implementation can remove the argv exposure without
 // touching CLI flow.
 func (k *darwinKeychain) Store(ctx context.Context, service, account string, value *securebytes.SecureBytes, acl string) error {

@@ -164,12 +164,11 @@ func mustAddrPortFromURL(t *testing.T, raw string) netip.AddrPort {
 	return ap
 }
 
-func TestSmokeClean_ArchivesKnownSmokeDirsByDefault(t *testing.T) {
+func TestSmokeClean_ArchivesDefaultSmokeDirOnly(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	for _, name := range []string{".hush-smoke", ".hush-t278-validation"} {
-		require.NoError(t, os.Mkdir(filepath.Join(home, name), 0o700))
-	}
+	require.NoError(t, os.Mkdir(filepath.Join(home, ".hush-smoke"), 0o700))
+	require.NoError(t, os.Mkdir(filepath.Join(home, ".hush-release-validation"), 0o700))
 	deps := productionSmokeDeps()
 	deps.nowFn = func() time.Time { return time.Date(2026, 5, 18, 14, 0, 0, 0, time.UTC) }
 	stderr := &strings.Builder{}
@@ -177,9 +176,22 @@ func TestSmokeClean_ArchivesKnownSmokeDirsByDefault(t *testing.T) {
 	require.NoError(t, err)
 	require.NoDirExists(t, filepath.Join(home, ".hush-smoke"))
 	require.DirExists(t, filepath.Join(home, ".hush-smoke.bak-20260518-140000"))
-	require.NoDirExists(t, filepath.Join(home, ".hush-t278-validation"))
-	require.DirExists(t, filepath.Join(home, ".hush-t278-validation.bak-20260518-140000"))
+	require.DirExists(t, filepath.Join(home, ".hush-release-validation"))
 	require.Contains(t, stderr.String(), "archived")
+}
+
+func TestSmokeClean_ArchivesExplicitGenericTestDir(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), ".hush-release-validation")
+	require.NoError(t, os.Mkdir(dir, 0o700))
+	deps := productionSmokeDeps()
+	deps.nowFn = func() time.Time { return time.Date(2026, 5, 18, 14, 0, 0, 0, time.UTC) }
+	err := runSmokeClean(newStream(io.Discard, false, true), newStream(io.Discard, false, true), deps, smokeCleanOptions{
+		stateDirs: []string{dir},
+	})
+	require.NoError(t, err)
+	require.NoDirExists(t, dir)
+	require.DirExists(t, dir+".bak-20260518-140000")
 }
 
 func TestSmokeClean_DestroyRequiresConfirmation(t *testing.T) {

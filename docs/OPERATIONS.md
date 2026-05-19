@@ -46,13 +46,15 @@ Clean smoke/test artifacts safely:
 hush smoke clean
 ```
 
-By default this archives `~/.hush-smoke` and the historical dogfood state
-`~/.hush-t278-validation` if present. It refuses to touch real `~/.hush`
-state. To permanently delete smoke state instead of archiving, use the
-explicit confirmation gate:
+By default this archives only `~/.hush-smoke`. To clean another isolated
+test or validation vault, pass it explicitly with `--state-dir`; the command
+accepts generic smoke/test/validation state names and refuses to touch real
+`~/.hush` state. To permanently delete smoke state instead of archiving, use
+the explicit confirmation gate:
 
 ```bash
 hush smoke clean --destroy --confirm 'destroy smoke'
+hush smoke clean --state-dir ~/.hush-release-validation
 ```
 
 ### Manual setup path

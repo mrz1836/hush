@@ -30,7 +30,6 @@
 //   - [Archive] — atomic move-to-`.bak-<RFC3339>` helper.
 //   - [Err*] sentinel errors with a [RemedyHint] method per type.
 //
-// Phase 1 of T-278 ships these types and tests; later phases of the
-// same todo wire them into `internal/cli/init.go` and add platform
-// implementations of each Check.
+// The guided setup flow wires these types into `internal/cli/init.go`
+// and adds platform implementations of each Check.
 package setup

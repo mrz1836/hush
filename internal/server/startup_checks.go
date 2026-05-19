@@ -60,7 +60,7 @@ func (s *Server) runStartupChecks(ctx context.Context) error {
 // When [Deps.AllowClockSkew] is set, a would-be failure is downgraded to
 // a logged warning and a single [AuditClockSkewOverride] event; the
 // chassis continues startup. /hz still reports clock_in_sync=false so
-// downstream tooling can see the truth (T-278 Plan AC-8 / Task 4.2).
+// downstream tooling can see the truth.
 func (s *Server) checkClockSync(ctx context.Context) error {
 	if !s.cfg.Security.RequireNTPSync {
 		s.clockInSync.Store(true)

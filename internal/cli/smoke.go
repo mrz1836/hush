@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -32,7 +33,11 @@ var (
 const (
 	smokeSecretName  = "HUSH_SMOKE_TEST"
 	smokeSecretValue = "hello-from-hush"
+
+	defaultSmokeStateDir = "~/.hush-smoke"
 )
+
+var explicitSmokeCleanTargetPattern = regexp.MustCompile(`^\.hush-[A-Za-z0-9._-]*(smoke|test|validation)[A-Za-z0-9._-]*$`)
 
 const (
 	smokeMsgStart             = "hush: smoke: starting fake-secret smoke test"
@@ -99,7 +104,7 @@ func productionSmokeDeps() smokeDeps {
 }
 
 func newSmokeCmd() *cobra.Command {
-	opts := smokeOptions{stateDir: "~/.hush-smoke", machineIndex: 1}
+	opts := smokeOptions{stateDir: defaultSmokeStateDir, machineIndex: 1}
 	cmd := &cobra.Command{
 		Use:   "smoke",
 		Short: "Run the guided fake-secret end-to-end smoke test",
@@ -448,7 +453,7 @@ func newSmokeCleanCmd() *cobra.Command {
 			return runSmokeClean(out.stdout, out.stderr, productionSmokeDeps(), opts)
 		},
 	}
-	cmd.Flags().StringArrayVar(&opts.stateDirs, "state-dir", nil, "Smoke/test state dir to clean; repeatable (defaults to ~/.hush-smoke and ~/.hush-t278-validation)")
+	cmd.Flags().StringArrayVar(&opts.stateDirs, "state-dir", nil, "Smoke/test state dir to clean; repeatable (defaults to ~/.hush-smoke only)")
 	cmd.Flags().BoolVar(&opts.destroy, "destroy", false, "Permanently delete instead of archiving (requires --confirm 'destroy smoke')")
 	cmd.Flags().StringVar(&opts.confirm, "confirm", "", "Required confirmation phrase for --destroy")
 	return cmd
@@ -458,7 +463,7 @@ func newSmokeCleanCmd() *cobra.Command {
 func runSmokeClean(_, stderr *Stream, deps smokeDeps, opts smokeCleanOptions) error {
 	targets := opts.stateDirs
 	if len(targets) == 0 {
-		targets = []string{"~/.hush-smoke", "~/.hush-t278-validation"}
+		targets = []string{defaultSmokeStateDir}
 	}
 	if opts.destroy && opts.confirm != "destroy smoke" {
 		return fmt.Errorf("%w: --destroy requires --confirm 'destroy smoke'", errMissingFlag)
@@ -497,14 +502,12 @@ func runSmokeClean(_, stderr *Stream, deps smokeDeps, opts smokeCleanOptions) er
 }
 
 func validateSmokeCleanTarget(path string) error {
-	clean := filepath.Clean(path)
-	base := filepath.Base(clean)
-	switch {
-	case base == ".hush-smoke" || strings.HasPrefix(base, ".hush-smoke-"):
+	base := filepath.Base(filepath.Clean(path))
+	if base == ".hush-smoke" || strings.HasPrefix(base, ".hush-smoke-") {
 		return nil
-	case base == ".hush-t278-validation" || strings.HasPrefix(base, ".hush-t278-validation-"):
-		return nil
-	default:
-		return fmt.Errorf("%w: smoke clean refuses non-smoke state dir %q", errMissingFlag, path)
 	}
+	if explicitSmokeCleanTargetPattern.MatchString(base) {
+		return nil
+	}
+	return fmt.Errorf("%w: smoke clean refuses non-smoke/test state dir %q", errMissingFlag, path)
 }

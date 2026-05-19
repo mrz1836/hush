@@ -194,9 +194,9 @@ type Deps struct {
 
 	// AllowClockSkew downgrades a would-be clock-sync startup failure
 	// to a logged warning + a single [AuditClockSkewOverride] audit
-	// event. Set from `hush serve --allow-clock-skew` (T-278 Plan
-	// AC-8 / Task 4.2). hush never auto-sudos to fix the clock; this
-	// flag is the only override path on the serve side.
+	// event. Set from `hush serve --allow-clock-skew`. hush never
+	// auto-sudos to fix the clock; this flag is the only override path
+	// on the serve side.
 	AllowClockSkew bool
 }
 

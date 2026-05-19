@@ -28,8 +28,8 @@ const (
 
 // CheckOrder is the locked execution order the [Registry] honors.
 //
-// The sequence mirrors the plan in T-278: cheap, deterministic
-// checks run first (binary, config, state dir, file modes) so the
+// Cheap, deterministic checks run first (binary, config, state dir,
+// file modes) so the
 // guided flow exits with the most actionable error possible before
 // any user-visible delay. Network-touching or OS-dialog-touching
 // checks (Keychain, Tailscale, listen port, clock sync) run in the
@@ -62,7 +62,7 @@ var ErrUnknownCheck = errors.New("hush/setup: unknown check slot")
 // Registry is the deterministic preflight runner. It accepts one
 // [Check] per slot in [CheckOrder] and runs them in that fixed
 // order on [Run]. Unregistered slots are skipped (not failed) so
-// later T-278 phases can wire checks in one at a time.
+// later guided-setup work can wire checks in one at a time.
 type Registry struct {
 	checks map[CheckName]Check
 }

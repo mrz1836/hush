@@ -128,9 +128,9 @@ func newServeCmd() *cobra.Command {
 				approverFactory:  newProductionBotApprover,
 			}
 			// --allow-clock-skew downgrades the clock-sync startup check
-			// from fail to a logged warning + a single audit event
-			// (T-278 Plan AC-8 / Task 4.2). hush never auto-sudos to fix
-			// the clock; this flag is the only override path.
+			// from fail to a logged warning + a single audit event. hush
+			// never auto-sudos to fix the clock; this flag is the only
+			// override path.
 			deps.allowClockSkew, _ = cmd.Flags().GetBool("allow-clock-skew")
 			return runServe(cmd.Context(), out.stdout, out.stderr, deps)
 		},
