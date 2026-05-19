@@ -125,13 +125,15 @@ existing port 22 + 5900 grant).
   IP; mismatch → 401.
 - `POST /h/{prefix}/revoke/{jti}` immediately marks a token as exhausted.
 
-### FR-10 — Atomic vault writes + SIGHUP hot-reload
+### FR-10 — Atomic vault writes + hot-reload
 `hush secret` subcommands write the new vault to a temp file in the same
 directory, atomically rename, and set mode `0600`. If a running server is
 detected, send SIGHUP. Server SIGHUP handler decrypts the new vault into a
 **new** `Vault`, atomically swaps `atomic.Pointer[Vault]`, then explicitly
 zeros the old vault's `SecureBytes`. In-flight requests using the old vault
-complete safely.
+complete safely. Operators can also start `hush serve --reload-on-vault-change`
+to watch `secrets.vault` and trigger the same reload path automatically after
+vault rewrites.
 
 ### FR-11 — `hush supervise` daemon lifecycle
 `hush supervise --config <path>` runs a state machine

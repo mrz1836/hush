@@ -97,6 +97,7 @@ const (
 	initMsgExplicitStateKeychain    = "hush: init: --state-dir set; storing Discord bot token in macOS Keychain for serve. Vault passphrase is not stored for this learning/smoke path."
 	initMsgWriteFailFmt             = "hush: init: write %s: %v"
 	initMsgServerComplete           = "hush: init: server bootstrap complete"
+	initMsgServerNextCommandsFmt    = "hush: init: next commands\n  1. Start the vault server:\n     %s\n  2. Enroll this machine as a client:\n     %s\n  3. Add a secret:\n     %s\n  4. Request the secret for a command:\n     %s"
 
 	// initMsgKeychainPreExplainFmt is the hush-authored explanation
 	// printed before every Keychain write call. The placeholders are
@@ -796,7 +797,8 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 	// 9. Round-trip-validate the config we just wrote (or the one
 	// the operator chose to reuse — either way, hush serve will
 	// read this file).
-	if _, err := config.LoadServer(ctx, configPath); err != nil {
+	loadedCfg, err := config.LoadServer(ctx, configPath)
+	if err != nil {
 		return fmt.Errorf("hush/cli: init: round-trip-validate config: %w", err)
 	}
 
@@ -811,6 +813,7 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 				return err
 			}
 		}
+		emitServerNextCommands(stderr, configPath, loadedCfg, decisions.modeFor(setup.ArtifactKeychainToken) == onExistingEnvToken || botToken == nil)
 		_ = stderr.WriteText(initMsgServerComplete)
 		return nil
 	}
@@ -825,8 +828,38 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 	if err := storeBotTokenForDecision(ctx, deps, stderr, in, keychainItems, botToken, binPath, decisions); err != nil {
 		return err
 	}
+	emitServerNextCommands(stderr, configPath, loadedCfg, decisions.modeFor(setup.ArtifactKeychainToken) == onExistingEnvToken)
 	_ = stderr.WriteText(initMsgServerComplete)
 	return nil
+}
+
+func emitServerNextCommands(stderr *Stream, configPath string, cfg *config.Server, envTokenMode bool) {
+	if stderr == nil || cfg == nil {
+		return
+	}
+	configArg := shellQuote(configPath)
+	stateDir := cfg.Server.StateDir
+	clientRegistry := cfg.Server.ClientRegistry
+	if strings.TrimSpace(clientRegistry) == "" {
+		clientRegistry = filepath.Join(stateDir, "clients.json")
+	}
+	clientKeyFile := filepath.Join(stateDir, "client-machine-1.key")
+	serverURL := "http://" + cfg.Server.ListenAddr.String() + "/h/" + cfg.Server.PathPrefix
+	serveCmd := "hush --config " + configArg + " serve --reload-on-vault-change"
+	if envTokenMode {
+		serveCmd = "HUSH_DISCORD_BOT_TOKEN=<your-bot-token> " + serveCmd
+	}
+	initClientCmd := "hush --config " + configArg + " init client --machine-index 1 --client-registry " + shellQuote(clientRegistry) + " --client-key-file " + shellQuote(clientKeyFile)
+	secretAddCmd := "hush --config " + configArg + " secret add YOUR_SECRET"
+	requestCmd := "hush --config " + configArg + " request --machine-index 1 --client-key-file " + shellQuote(clientKeyFile) + " --server " + shellQuote(serverURL) + " --scope YOUR_SECRET --exec " + shellQuote("printenv YOUR_SECRET")
+	_ = stderr.WriteText(initMsgServerNextCommandsFmt, serveCmd, initClientCmd, secretAddCmd, requestCmd)
+}
+
+func shellQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
 // storeBotTokenForDecision honors the per-artifact recovery decision

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/creack/pty"
 
@@ -174,7 +175,7 @@ func TestStripPOSIXLineEnd(t *testing.T) {
 // TestLoadBotToken_ItemNameValidation asserts invalid item names
 // fail before any subprocess runs.
 func TestLoadBotToken_ItemNameValidation(t *testing.T) {
-	t.Parallel()
+	t.Setenv("HUSH_DISCORD_BOT_TOKEN", "")
 	bad := []string{
 		"foo;rm -rf /",
 		"foo bar",
@@ -301,5 +302,62 @@ func TestRunServe_MissingConfig_ExitInputErr(t *testing.T) {
 	got := mapErr(err)
 	if got != ExitNotFound && got != ExitInputErr {
 		t.Errorf("mapErr = %d, want ExitInputErr or ExitNotFound", got)
+	}
+}
+
+func TestWatchVaultChanges_ReloadsAfterVaultRewrite(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "secrets.vault")
+	requireWriteFile(t, path, []byte("old"))
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	reloaded := make(chan struct{}, 1)
+	watchVaultChanges(ctx, nil, path, 10*time.Millisecond, 10*time.Millisecond, func(context.Context) error {
+		reloaded <- struct{}{}
+		return nil
+	})
+
+	requireWriteFile(t, path, []byte("new-value"))
+	select {
+	case <-reloaded:
+	case <-time.After(time.Second):
+		t.Fatal("vault change watcher did not trigger reload")
+	}
+}
+
+func TestWatchVaultChanges_DebouncesRapidRewrites(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "secrets.vault")
+	requireWriteFile(t, path, []byte("old"))
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	reloaded := make(chan struct{}, 4)
+	watchVaultChanges(ctx, nil, path, 5*time.Millisecond, 75*time.Millisecond, func(context.Context) error {
+		reloaded <- struct{}{}
+		return nil
+	})
+
+	requireWriteFile(t, path, []byte("new-1"))
+	time.Sleep(15 * time.Millisecond)
+	requireWriteFile(t, path, []byte("new-2-longer"))
+
+	select {
+	case <-reloaded:
+	case <-time.After(time.Second):
+		t.Fatal("vault change watcher did not trigger reload")
+	}
+	select {
+	case <-reloaded:
+		t.Fatal("rapid rewrites produced duplicate reloads")
+	case <-time.After(150 * time.Millisecond):
+	}
+}
+
+func requireWriteFile(t *testing.T, path string, body []byte) {
+	t.Helper()
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatalf("write %s: %v", path, err)
 	}
 }

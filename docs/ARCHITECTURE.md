@@ -79,7 +79,7 @@ without re-verifying.
 
 | Component | Binary surface | Responsibility |
 |-----------|----------------|----------------|
-| **Vault server** (`hush serve`) | `internal/server` | HTTP server on Tailscale; mlocked secret storage; JWT issue + validate; SIGHUP atomic reload; Discord-bot integration. |
+| **Vault server** (`hush serve`) | `internal/server` + `internal/cli` watcher | HTTP server on Tailscale; mlocked secret storage; JWT issue + validate; SIGHUP atomic reload; optional `--reload-on-vault-change` auto-reload; Discord-bot integration. |
 | **Vault file** | `internal/vault` | AES-256-GCM + Argon2id encrypted JSON of secrets. `HUSH` magic, version byte, salt, GCM nonce, ciphertext+tag. |
 | **Key hierarchy** | `internal/keys` | BIP32 derivation from passphrase. **No key files on disk.** |
 | **JWT/session** | `internal/token` | ES256K signing/verification, multi-use tracking, IP binding, cleanup goroutine, revocation table. |
@@ -108,7 +108,7 @@ has its own `## \`internal/<pkg>\`` section in PACKAGE-MAP.md).
 ### 5.1 Vault layer
 Argon2id-derived master seed → BIP32 derivation → AES-256-GCM-encrypted vault
 file. mlocked memory; explicit zeroing; `[]byte`-only secret handling. Atomic
-write + SIGHUP atomic swap via `atomic.Pointer[Vault]`.
+write + SIGHUP atomic swap via `atomic.Pointer[Vault]`. When `hush serve --reload-on-vault-change` is enabled, the CLI watches `secrets.vault` for debounced atomic rewrites and invokes the same reload path automatically.
 
 ### 5.2 Identity + session layer
 - BIP32 HD key tree (`m/44'/7743'/...`)

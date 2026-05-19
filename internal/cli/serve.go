@@ -100,12 +100,15 @@ func mapSessionType(t server.SessionType) token.SessionType {
 
 // serveDeps groups the testable seams threaded into runServe.
 type serveDeps struct {
-	configPath       string
-	verbose          bool
-	allowClockSkew   bool
-	passphraseSource passphraseSource
-	approverFactory  approverFactory
-	listener         net.Listener
+	configPath          string
+	verbose             bool
+	allowClockSkew      bool
+	reloadOnVaultChange bool
+	reloadWatchInterval time.Duration
+	reloadWatchDebounce time.Duration
+	passphraseSource    passphraseSource
+	approverFactory     approverFactory
+	listener            net.Listener
 
 	// Chassis-internal test seams. Production paths leave these
 	// nil; the integration test overrides each to bypass the
@@ -132,10 +135,12 @@ func newServeCmd() *cobra.Command {
 			// never auto-sudos to fix the clock; this flag is the only
 			// override path.
 			deps.allowClockSkew, _ = cmd.Flags().GetBool("allow-clock-skew")
+			deps.reloadOnVaultChange, _ = cmd.Flags().GetBool("reload-on-vault-change")
 			return runServe(cmd.Context(), out.stdout, out.stderr, deps)
 		},
 	}
 	cmd.Flags().Bool("allow-clock-skew", false, "Downgrade a failing clock-sync startup check to a logged warning + audit event (no auto-sudo)")
+	cmd.Flags().Bool("reload-on-vault-change", false, "Automatically reload the vault when secrets.vault changes")
 	return cmd
 }
 
@@ -152,6 +157,9 @@ func runServe(ctx context.Context, stdout, stderr *Stream, deps serveDeps) error
 	}
 	if deps.allowClockSkew {
 		verbose("serve: --allow-clock-skew override active; clock-sync fail will downgrade to warn + audit event")
+	}
+	if deps.reloadOnVaultChange {
+		verbose("serve: --reload-on-vault-change active; vault changes will trigger reload")
 	}
 
 	// 1. Resolve config path (~ expansion).
@@ -291,10 +299,127 @@ func runServe(ctx context.Context, stdout, stderr *Stream, deps serveDeps) error
 	defer signalStop()
 	verbose("server: ready")
 
-	// 11. Run the chassis. Returns nil on clean shutdown.
+	// 11. Optionally watch the vault file and trigger the same atomic
+	// reload path used by SIGHUP. Returns nil on clean shutdown.
+	var watchCancel context.CancelFunc
+	var watchDone <-chan struct{}
+	if deps.reloadOnVaultChange {
+		interval := deps.reloadWatchInterval
+		if interval <= 0 {
+			interval = time.Second
+		}
+		debounce := deps.reloadWatchDebounce
+		if debounce <= 0 {
+			debounce = 500 * time.Millisecond
+		}
+		watchCtx, cancel := context.WithCancel(signalCtx)
+		watchCancel = cancel
+		watchDone = watchVaultChanges(watchCtx, logger, vaultPath, interval, debounce, func(reloadCtx context.Context) error {
+			return srv.ReloadVault(reloadCtx, vaultPath, vaultEncKey)
+		})
+	}
+
+	// 12. Run the chassis.
 	runErr := srv.Run(signalCtx)
+	if watchCancel != nil {
+		watchCancel()
+		<-watchDone
+	}
 	auditCancel()
 	return runErr
+}
+
+//nolint:gocognit,gocyclo // watcher loop coordinates ctx, stat, debounce, and reload branches in one goroutine.
+func watchVaultChanges(
+	ctx context.Context,
+	logger *slog.Logger,
+	path string,
+	interval time.Duration,
+	debounce time.Duration,
+	reload func(context.Context) error,
+) <-chan struct{} {
+	done := make(chan struct{})
+	if interval <= 0 {
+		interval = time.Second
+	}
+	if debounce <= 0 {
+		debounce = 500 * time.Millisecond
+	}
+	last := vaultFileSignature{}
+	if sig, err := statVaultFile(path); err == nil {
+		last = sig
+	} else if logger != nil {
+		logger.WarnContext(ctx, "vault change watcher initial stat failed", "path", path, "err", err.Error())
+	}
+	go func() {
+		defer close(done)
+
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+
+			next, err := statVaultFile(path)
+			if err != nil {
+				if logger != nil {
+					logger.WarnContext(ctx, "vault change watcher stat failed", "path", path, "err", err.Error())
+				}
+				continue
+			}
+			if !next.changedFrom(last) {
+				continue
+			}
+			last = next
+
+			timer := time.NewTimer(debounce)
+			select {
+			case <-ctx.Done():
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				return
+			case <-timer.C:
+			}
+			if settled, statErr := statVaultFile(path); statErr == nil {
+				last = settled
+			}
+
+			if err := reload(ctx); err != nil {
+				if logger != nil {
+					logger.ErrorContext(ctx, "vault auto-reload failed", "path", path, "err", err.Error())
+				}
+				continue
+			}
+			if logger != nil {
+				logger.InfoContext(ctx, "vault auto-reloaded", "path", path)
+			}
+		}
+	}()
+	return done
+}
+
+type vaultFileSignature struct {
+	size    int64
+	modTime time.Time
+}
+
+func statVaultFile(path string) (vaultFileSignature, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return vaultFileSignature{}, err
+	}
+	return vaultFileSignature{size: info.Size(), modTime: info.ModTime()}, nil
+}
+
+func (s vaultFileSignature) changedFrom(other vaultFileSignature) bool {
+	return s.size != other.size || !s.modTime.Equal(other.modTime)
 }
 
 // resolvePassphrase implements the FR-008 priority order: stdin pipe

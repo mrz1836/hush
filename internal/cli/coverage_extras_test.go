@@ -194,6 +194,9 @@ func TestServeCmdShape(t *testing.T) {
 	if cmd == nil || cmd.RunE == nil || cmd.Use == "" {
 		t.Fatal("serve command malformed")
 	}
+	if cmd.Flags().Lookup("reload-on-vault-change") == nil {
+		t.Fatal("serve command missing --reload-on-vault-change")
+	}
 }
 
 // TestRunHealth_TimeoutMessage drives a slow server to exercise the
@@ -270,7 +273,10 @@ func TestNewRevokeCmd_RunE_FailsCloseConnection(t *testing.T) {
 // helper returns errBotTokenMissing when the helper subprocess fails
 // (e.g. keychain item not present in the test environment).
 func TestLoadBotToken_KeychainAbsent(t *testing.T) {
-	t.Parallel()
+	// Force the keychain path. Developer shells often export a real
+	// HUSH_DISCORD_BOT_TOKEN, but this is a unit test and must never
+	// construct a live Discord session or trigger firewall prompts.
+	t.Setenv("HUSH_DISCORD_BOT_TOKEN", "")
 	_, err := loadBotToken(t.Context(), "hush-nonexistent-test-item")
 	if err == nil {
 		t.Skip("keychain unexpectedly contained the test item")
@@ -284,7 +290,11 @@ func TestLoadBotToken_KeychainAbsent(t *testing.T) {
 // approver factory surfaces the keychain error when the configured
 // item is absent.
 func TestNewProductionBotApprover_BadKeychain(t *testing.T) {
-	t.Parallel()
+	// Force the missing-keychain branch. If a developer has
+	// HUSH_DISCORD_BOT_TOKEN in their environment, newProductionBotApprover
+	// would otherwise build a real discordgo session and call Open(), which
+	// makes cli.test try to reach discord.com.
+	t.Setenv("HUSH_DISCORD_BOT_TOKEN", "")
 	cfg := &config.Server{
 		Server: config.ServerSection{
 			DiscordOwnerID: "100000000000000000",

@@ -60,9 +60,9 @@ hush smoke clean --state-dir ~/.hush-release-validation
 ### Manual setup path
 
 ```bash
-hush init server          # guided / interactive (default)
+hush init server                         # guided / interactive (default)
+hush serve --reload-on-vault-change      # binds Tailscale interface, brokers approvals
 hush secret add OPENAI_API_KEY
-hush serve                # binds Tailscale interface, brokers approvals
 ```
 
 `hush init server` is the bootstrap entry point for the vault host. It is
@@ -122,15 +122,17 @@ The minimum prerequisites are:
    appears without that explanation immediately above it. If the login
    Keychain is locked or refuses the bot-token write, hush offers the
    env-token fallback so setup can continue.
-6. **Bootstrap completion.** `config.toml`, `secrets.vault`, and the state
-   dir exist with the required modes. On macOS, the `hush-discord`
-   Keychain item exists unless you explicitly chose env-token fallback.
+6. **Bootstrap completion + exact next commands.** `config.toml`,
+   `secrets.vault`, and the state dir exist with the required modes. On
+   macOS, the `hush-discord` Keychain item exists unless you explicitly chose
+   env-token fallback. The final panel prints copy/paste commands using the
+   real config path, `listen_addr`, generated `path_prefix`, client registry,
+   and suggested client key-file path.
 
-When it finishes, add any initial secrets with `hush secret add …`, then run
-`hush serve`. The server loads the vault into memory at startup; if you add
-secrets after `serve` is already running, restart `serve` or send SIGHUP to
-reload before requesting those secrets. Then enroll an agent host
-(`hush init client …`).
+When it finishes, follow the printed commands. The recommended serve command
+uses `hush serve --reload-on-vault-change`, so secrets added after startup are
+auto-reloaded without a restart or manual SIGHUP. If you run serve without that
+flag, the server still supports manual hot reload by SIGHUP.
 
 ### Keychain ACL denial during setup
 

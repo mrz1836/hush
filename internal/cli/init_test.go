@@ -1248,3 +1248,37 @@ func TestParseMachineIndex_AcceptsRange(t *testing.T) {
 		require.Error(t, err, "input %q should fail", in)
 	}
 }
+
+func TestInitServer_PrintsConcreteNextCommands(t *testing.T) {
+	fx := newInitFixture(t)
+	require.NoError(t, runInitServer(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, fx.deps))
+
+	configPath := filepath.Join(fx.tempDir, "config.toml")
+	body, err := os.ReadFile(configPath) //nolint:gosec // temp test fixture
+	require.NoError(t, err)
+	matches := regexp.MustCompile(`(?m)^path_prefix = ['"]([^'"]+)['"]`).FindStringSubmatch(string(body))
+	require.Len(t, matches, 2)
+	prefix := matches[1]
+
+	transcript := fx.stderr.String()
+	require.Contains(t, transcript, "hush: init: next commands")
+	require.Contains(t, transcript, "hush --config '"+configPath+"' serve --reload-on-vault-change")
+	require.Contains(t, transcript, "--client-registry '"+filepath.Join(fx.tempDir, "clients.json")+"'")
+	require.Contains(t, transcript, "--client-key-file '"+filepath.Join(fx.tempDir, "client-machine-1.key")+"'")
+	require.Contains(t, transcript, "--server 'http://"+testListenAddrInput+"/h/"+prefix+"'")
+	require.NotContains(t, transcript, testBotTokenInput)
+}
+
+func TestEmitServerNextCommands_EnvTokenMode(t *testing.T) {
+	fx := newInitFixture(t)
+	require.NoError(t, runInitServer(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, fx.deps))
+	cfg, err := config.LoadServer(context.Background(), filepath.Join(fx.tempDir, "config.toml"))
+	require.NoError(t, err)
+
+	var stderr bytes.Buffer
+	emitServerNextCommands(newStream(&stderr, false, true), filepath.Join(fx.tempDir, "config.toml"), cfg, true)
+	transcript := stderr.String()
+	require.Contains(t, transcript, "HUSH_DISCORD_BOT_TOKEN=<your-bot-token> hush --config")
+	require.Contains(t, transcript, "--reload-on-vault-change")
+	require.NotContains(t, transcript, testBotTokenInput)
+}
