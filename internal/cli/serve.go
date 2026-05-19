@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -560,7 +561,7 @@ var errBotTokenSubprocess = errors.New("bot token keychain subprocess failed")
 var botTokenItemRe = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,128}$`)
 
 // loadBotToken reads the Discord bot token from the OS keychain. On
-// Darwin: `security find-generic-password -s <item> -w`. On Linux:
+// Darwin: `security find-generic-password -s <item> -w [keychain]`. On Linux:
 // `secret-tool lookup service hush attribute <item>`. Returns the
 // token wrapped in *securebytes.SecureBytes.
 //
@@ -570,21 +571,16 @@ var botTokenItemRe = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,128}$`)
 // touching Keychain — this is the explicit operator opt-in for hosts
 // where Keychain ACLs are unrepairable. Keychain remains the default
 // when the env var is unset.
-func loadBotToken(ctx context.Context, item string) (*securebytes.SecureBytes, error) {
+func loadBotToken(ctx context.Context, item, keychainPath string) (*securebytes.SecureBytes, error) {
 	if envToken, ok := os.LookupEnv("HUSH_DISCORD_BOT_TOKEN"); ok && envToken != "" {
 		return securebytes.New([]byte(envToken))
 	}
 	if !botTokenItemRe.MatchString(item) {
 		return nil, fmt.Errorf("%w: invalid item name", errBotTokenMissing)
 	}
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
-		cmd = exec.CommandContext(ctx, "security", "find-generic-password", "-s", item, "-w") //nolint:gosec // fixed argv; item validated by regex
-	case "linux":
-		cmd = exec.CommandContext(ctx, "secret-tool", "lookup", "service", "hush", "attribute", item) //nolint:gosec // fixed argv; item validated by regex
-	default:
-		return nil, fmt.Errorf("%w: unsupported platform %s", errBotTokenSubprocess, runtime.GOOS)
+	cmd, err := botTokenLookupCmd(ctx, item, keychainPath)
+	if err != nil {
+		return nil, err
 	}
 	out, err := cmd.Output()
 	if err != nil {
@@ -604,13 +600,28 @@ func loadBotToken(ctx context.Context, item string) (*securebytes.SecureBytes, e
 	return securebytes.New(out)
 }
 
+func botTokenLookupCmd(ctx context.Context, item, keychainPath string) (*exec.Cmd, error) {
+	switch runtime.GOOS {
+	case "darwin":
+		args := []string{"find-generic-password", "-s", item, "-w"}
+		if strings.TrimSpace(keychainPath) != "" {
+			args = append(args, keychainPath)
+		}
+		return exec.CommandContext(ctx, "security", args...), nil //nolint:gosec // fixed argv; item validated by regex
+	case "linux":
+		return exec.CommandContext(ctx, "secret-tool", "lookup", "service", "hush", "attribute", item), nil //nolint:gosec // fixed argv; item validated by regex
+	default:
+		return nil, fmt.Errorf("%w: unsupported platform %s", errBotTokenSubprocess, runtime.GOOS)
+	}
+}
+
 // newProductionBotApprover is the production approverFactory: reads
 // the bot token from the OS keychain, constructs a
 // *discord.BotApprover, wraps it in the translation adapter, and
 // returns the chassis-facing Approver + the Connected() probe used
 // by /hz.
 func newProductionBotApprover(ctx context.Context, cfg *config.Server, logger *slog.Logger) (server.Approver, func() bool, error) {
-	tokenSB, err := loadBotToken(ctx, cfg.Discord.BotTokenKeychainItem)
+	tokenSB, err := loadBotToken(ctx, cfg.Discord.BotTokenKeychainItem, cfg.Discord.BotKeychainPath)
 	if err != nil {
 		return nil, nil, err
 	}

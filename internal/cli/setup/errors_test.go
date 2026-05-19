@@ -36,7 +36,7 @@ func TestSetupErrors_MessagesAndRemedies(t *testing.T) {
 			name:           "ErrTokenDenied",
 			err:            setup.ErrTokenDenied,
 			wantMsg:        "hush/setup: discord bot token denied by keychain",
-			wantHintSubstr: "set-generic-password-partition-list",
+			wantHintSubstr: "hush keychain repair",
 		},
 		{
 			name:           "ErrTokenBad",

@@ -88,7 +88,7 @@ var (
 	// NOT silently switch to env-token mode (Plan Q3=a+b).
 	ErrTokenDenied = &remedyError{
 		msg:    "hush/setup: discord bot token denied by keychain",
-		remedy: "either repair the ACL with `security set-generic-password-partition-list -S apple-tool:,apple: -s hush-discord -a <account>` and re-run, or pick the delete-and-recreate option in the guided flow",
+		remedy: "run `hush keychain doctor`, then `hush keychain repair` (wraps `security set-generic-password-partition-list`) to refresh the ACL, or pick delete-and-recreate in the guided flow",
 	}
 
 	// ErrTokenBad fires when a token retrieved from Keychain or

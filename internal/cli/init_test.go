@@ -223,6 +223,44 @@ func (denyStoreKeychain) Delete(context.Context, string, string) error {
 	return keychain.ErrKeychainItemNotFound
 }
 
+type recoverableStoreKeychain struct {
+	inner         *keychain.FakeKeychain
+	service       string
+	account       string
+	failRemaining int
+	failErr       error
+	storeCalls    int
+}
+
+func newRecoverableStoreKeychain(t *testing.T, service, account string, failCount int) *recoverableStoreKeychain {
+	t.Helper()
+	return newRecoverableStoreKeychainWithErr(t, service, account, failCount, keychain.ErrKeychainPermissionDenied)
+}
+
+func newRecoverableStoreKeychainWithErr(t *testing.T, service, account string, failCount int, failErr error) *recoverableStoreKeychain {
+	t.Helper()
+	inner := keychain.NewFake()
+	t.Cleanup(inner.Destroy)
+	return &recoverableStoreKeychain{inner: inner, service: service, account: account, failRemaining: failCount, failErr: failErr}
+}
+
+func (r *recoverableStoreKeychain) Store(ctx context.Context, service, account string, value *securebytes.SecureBytes, acl string) error {
+	r.storeCalls++
+	if service == r.service && account == r.account && r.failRemaining > 0 {
+		r.failRemaining--
+		return r.failErr
+	}
+	return r.inner.Store(ctx, service, account, value, acl)
+}
+
+func (r *recoverableStoreKeychain) Retrieve(ctx context.Context, service, account string) (*securebytes.SecureBytes, error) {
+	return r.inner.Retrieve(ctx, service, account)
+}
+
+func (r *recoverableStoreKeychain) Delete(ctx context.Context, service, account string) error {
+	return r.inner.Delete(ctx, service, account)
+}
+
 // ---- Server-mode tests ----------------------------------------------------
 
 func TestInitServer_RefusesShortPassphrase(t *testing.T) {
@@ -478,14 +516,22 @@ func TestInitServer_ExplicitStateDirAllowsExistingDefaultKeychainItems(t *testin
 	require.Contains(t, fx.stderr.String(), initMsgServerComplete)
 }
 
-func TestInitServer_DefaultStateStillFailsWhenKeychainDenied(t *testing.T) {
+func TestInitServer_NonInteractiveKeychainDeniedFailsClearly(t *testing.T) {
 	t.Parallel()
 	fx := newInitFixture(t)
-	fx.deps.keychain = denyStoreKeychain{}
+	fx.deps.serverNonInteractive = true
+	fx.deps.serverPassphrase = testGoodPassphrase
+	fx.deps.serverBotToken = testBotTokenInput
+	fx.deps.serverInputs.listenAddr = testListenAddrInput
+	fx.deps.serverInputs.ownerID = testOwnerIDInput
+	fx.deps.serverInputs.applicationID = testApplicationIDIn
+	fx.deps.keychain = newRecoverableStoreKeychain(t, "hush-discord", kcAccountServer, 1)
 
 	err := runInitServer(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, fx.deps)
-	require.True(t, errors.Is(err, keychain.ErrKeychainPermissionDenied))
-	require.Contains(t, fx.stderr.String(), "keychain store failed")
+	require.ErrorIs(t, err, errKeychainStoreNonInteractive)
+	require.Equal(t, ExitPerm, mapErr(err))
+	require.Contains(t, fx.stderr.String(), "re-run interactively to retry/approve")
+	require.NotContains(t, fx.stderr.String(), testBotTokenInput)
 }
 
 func TestInitServer_ExplicitStateKeychainStoreDeniedCanUseEnvFallback(t *testing.T) {
@@ -496,13 +542,78 @@ func TestInitServer_ExplicitStateKeychainStoreDeniedCanUseEnvFallback(t *testing
 	fx.deps.serverInputs.stateDir = explicitDir
 	fx.deps.keychain = denyStoreKeychain{}
 	fx.deps.promptSecret = scriptedSecretReader(t, []string{testGoodPassphrase, testGoodPassphrase, testBotTokenInput})
-	fx.deps.promptRecovery = scriptedRecoveryReader(t, []rune{keychainACLChoiceEnvToken})
+	fx.deps.promptRecovery = scriptedRecoveryReader(t, []rune{keychainStoreRecoveryEnvToken})
 
 	err := runInitServer(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, fx.deps)
 	require.NoError(t, err)
-	require.Contains(t, fx.stderr.String(), "continuing with explicit env-token fallback")
-	require.Contains(t, fx.stderr.String(), "no token file was written")
-	require.Contains(t, fx.stderr.String(), initMsgServerComplete)
+	transcript := fx.stderr.String()
+	require.Contains(t, transcript, "env-token fallback selected")
+	require.Contains(t, transcript, "hush keychain doctor will say missing because no token was stored")
+	require.Contains(t, transcript, initMsgServerComplete)
+}
+
+func TestInitServer_InteractiveKeychainStoreRetrySucceeds(t *testing.T) {
+	t.Parallel()
+	fx := newInitFixture(t)
+	storeKC := newRecoverableStoreKeychain(t, "hush-discord", kcAccountServer, 1)
+	fx.deps.keychain = storeKC
+	fx.deps.promptRecovery = scriptedRecoveryReader(t, []rune{keychainStoreRecoveryRetry})
+
+	err := runInitServer(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, fx.deps)
+	require.NoError(t, err)
+	transcript := fx.stderr.String()
+	require.Contains(t, transcript, "the token is still only in memory right now")
+	require.Contains(t, transcript, "Keychain write succeeded")
+	require.NotContains(t, transcript, testBotTokenInput)
+
+	got, err := storeKC.inner.Retrieve(context.Background(), "hush-discord", kcAccountServer)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = got.Destroy() })
+	require.NoError(t, got.Use(func(b []byte) {
+		require.Equal(t, testBotTokenInput, string(b))
+	}))
+}
+
+func TestInitServer_LockedKeychainRetryUnlocksThenStores(t *testing.T) {
+	t.Parallel()
+	fx := newInitFixture(t)
+	storeKC := newRecoverableStoreKeychainWithErr(t, "hush-discord", kcAccountServer, 1, keychain.ErrKeychainLocked)
+	fx.deps.keychain = storeKC
+	fx.deps.promptRecovery = scriptedRecoveryReader(t, []rune{keychainStoreRecoveryRetry})
+	unlockCalls := 0
+	fx.deps.unlockLoginKeychain = func(context.Context) error {
+		unlockCalls++
+		return nil
+	}
+
+	err := runInitServer(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, fx.deps)
+	require.NoError(t, err)
+	require.Equal(t, 1, unlockCalls)
+	transcript := fx.stderr.String()
+	require.Contains(t, transcript, "hush will ask macOS to unlock")
+	require.Contains(t, transcript, "Keychain write succeeded")
+	require.NotContains(t, transcript, testBotTokenInput)
+}
+
+func TestInitServer_LockedKeychainUnlockFailureExplainsOutOfSyncLoginKeychain(t *testing.T) {
+	t.Parallel()
+	fx := newInitFixture(t)
+	storeKC := newRecoverableStoreKeychainWithErr(t, "hush-discord", kcAccountServer, 2, keychain.ErrKeychainLocked)
+	fx.deps.keychain = storeKC
+	fx.deps.promptRecovery = scriptedRecoveryReader(t, []rune{keychainStoreRecoveryRetry, keychainStoreRecoveryEnvToken})
+	fx.deps.unlockLoginKeychain = func(context.Context) error { return errors.New("security unlock-keychain: exit status 51") }
+
+	err := runInitServer(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, fx.deps)
+	require.NoError(t, err)
+	transcript := fx.stderr.String()
+	require.Contains(t, transcript, "login Keychain unlock failed")
+	require.Contains(t, transcript, "exit status 51")
+	require.Contains(t, transcript, "nothing was written")
+	require.Contains(t, transcript, "current Mac login password")
+	require.Contains(t, transcript, "older login Keychain password")
+	require.Contains(t, transcript, "Keychain Access or System Settings")
+	require.Contains(t, transcript, "env-token fallback selected")
+	require.NotContains(t, transcript, testBotTokenInput)
 }
 
 func TestInitServer_RefusesPreExistingVault(t *testing.T) {

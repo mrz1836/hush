@@ -306,7 +306,7 @@ func TestT273_Fixture4_ServeStartsViaEnvTokenWhenKeychainUnavailable(t *testing.
 	const envToken = "T273-serve-fixture4-env-token"
 	t.Setenv("HUSH_DISCORD_BOT_TOKEN", envToken)
 
-	tok, err := loadBotToken(t.Context(), "hush-T273-serve-fixture4-nonexistent")
+	tok, err := loadBotToken(t.Context(), "hush-T273-serve-fixture4-nonexistent", "")
 	if err != nil {
 		t.Fatalf("loadBotToken under env-var fallback: %v", err)
 	}

@@ -306,13 +306,20 @@ func mapErr(err error) int {
 		return ExitPerm
 	}
 
-	// init-specific failures all collapse to ExitErr.
+	// init / keychain doctor-repair failures.
 	switch {
 	case errors.Is(err, errVaultExists),
 		errors.Is(err, errConfigExists),
 		errors.Is(err, errKeychainItemExists),
 		errors.Is(err, errPlatformACLUnsupported):
 		return ExitErr
+	case errors.Is(err, errKeychainDoctorMissing):
+		return ExitNotFound
+	case errors.Is(err, errKeychainDoctorDenied),
+		errors.Is(err, errKeychainRepairFailed),
+		errors.Is(err, errKeychainStoreNonInteractive),
+		errors.Is(err, errKeychainStoreRecoveryExhausted):
+		return ExitPerm
 	}
 
 	// Context-cancellation surfaces as ExitErr (operator cancelled or

@@ -259,7 +259,7 @@ func TestT273_Fixture4_EnvTokenFallbackWhenKeychainDenied(t *testing.T) {
 	// non-existent item, and no error fires).
 	const envToken = "T273-fixture4-env-token"
 	t.Setenv("HUSH_DISCORD_BOT_TOKEN", envToken)
-	tok, err := loadBotToken(context.Background(), "hush-nonexistent-item-T273-f4")
+	tok, err := loadBotToken(context.Background(), "hush-nonexistent-item-T273-f4", "")
 	require.NoError(t, err, "loadBotToken must succeed via env-var when Keychain is unavailable")
 	t.Cleanup(func() { _ = tok.Destroy() })
 	require.NoError(t, tok.Use(func(b []byte) {

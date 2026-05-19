@@ -53,6 +53,7 @@ func newRootCmd(initialOut *outputContext) *cobra.Command {
 	root.AddCommand(newVersionCmd())
 	root.AddCommand(newRevokeCmd())
 	root.AddCommand(newInitCmd())
+	root.AddCommand(newKeychainCmd())
 	root.AddCommand(newRequestCmd())
 	root.AddCommand(newSecretCmd())
 	root.AddCommand(newSmokeCmd())

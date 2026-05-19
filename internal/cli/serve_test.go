@@ -185,7 +185,7 @@ func TestLoadBotToken_ItemNameValidation(t *testing.T) {
 		"",
 	}
 	for _, item := range bad {
-		_, err := loadBotToken(t.Context(), item)
+		_, err := loadBotToken(t.Context(), item, "")
 		if err == nil {
 			t.Errorf("loadBotToken(%q) succeeded, want error", item)
 		}
@@ -195,7 +195,7 @@ func TestLoadBotToken_ItemNameValidation(t *testing.T) {
 func TestLoadBotToken_EnvFallbackBeforeKeychain(t *testing.T) {
 	t.Setenv("HUSH_DISCORD_BOT_TOKEN", "smoke-token")
 
-	got, err := loadBotToken(t.Context(), "hush-nonexistent-test-item")
+	got, err := loadBotToken(t.Context(), "hush-nonexistent-test-item", "")
 	if err != nil {
 		t.Fatalf("loadBotToken: %v", err)
 	}
