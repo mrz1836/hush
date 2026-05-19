@@ -321,6 +321,12 @@ func runServe(ctx context.Context, stdout, stderr *Stream, deps serveDeps) error
 
 	// 12. Run the chassis.
 	runErr := srv.Run(signalCtx)
+	if errors.Is(runErr, server.ErrClockUnsynchronised) {
+		_ = stderr.WriteText("hush: serve: clock-sync startup check failed.\n")
+		_ = stderr.WriteText("  fix:  run `sudo sntp -sS time.apple.com`, then retry.\n")
+		_ = stderr.WriteText("  test: for a local learning vault, retry with `--allow-clock-skew`.\n")
+		_ = stderr.WriteText("  why:  production serve refuses stale host clocks because approvals and JWTs are time-bound.\n")
+	}
 	if watchCancel != nil {
 		watchCancel()
 		<-watchDone

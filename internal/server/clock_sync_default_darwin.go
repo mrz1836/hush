@@ -31,25 +31,40 @@ var execClockOffset = func(ctx context.Context) (string, error) {
 // time.apple.com`, which works without administrator privileges. Drift is parsed
 // from sntp's leading signed seconds value, e.g. `+0.029191 +/- ...`.
 func DefaultClockSyncProbe(ctx context.Context) (bool, time.Duration, error) {
-	probeCtx, cancel := context.WithTimeout(ctx, DefaultClockSyncTimeout)
-	defer cancel()
-
-	out, err := execClockOffset(probeCtx)
-	trimmed := strings.TrimSpace(out)
-	if err != nil {
-		if trimmed == "" {
-			return false, 0, fmt.Errorf("server: clock_sync: sntp: %w", err)
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		probeCtx, cancel := context.WithTimeout(ctx, DefaultClockSyncTimeout)
+		out, err := execClockOffset(probeCtx)
+		cancel()
+		trimmed := strings.TrimSpace(out)
+		if err != nil {
+			if trimmed == "" {
+				lastErr = fmt.Errorf("server: clock_sync: sntp: %w", err)
+			} else if drift, parseErr := parseSNTPDrift(trimmed); parseErr == nil {
+				return true, drift, nil
+			} else {
+				lastErr = fmt.Errorf("server: clock_sync: sntp: %w: %s", err, trimmed)
+			}
+			continue
 		}
-		return false, 0, fmt.Errorf("server: clock_sync: sntp: %w: %s", err, trimmed)
+		drift, parseErr := parseSNTPDrift(trimmed)
+		if parseErr != nil {
+			lastErr = parseErr
+			continue
+		}
+		return true, drift, nil
 	}
+	return false, 0, lastErr
+}
 
+func parseSNTPDrift(trimmed string) (time.Duration, error) {
 	m := sntpOffsetRE.FindStringSubmatch(trimmed)
 	if len(m) < 2 {
-		return false, 0, fmt.Errorf("%w: sntp %q", ErrClockProbeUnexpectedOutput, trimmed)
+		return 0, fmt.Errorf("%w: sntp %q", ErrClockProbeUnexpectedOutput, trimmed)
 	}
 	seconds, parseErr := strconv.ParseFloat(m[1], 64)
 	if parseErr != nil {
-		return false, 0, fmt.Errorf("%w: sntp %q", ErrClockProbeUnexpectedOutput, trimmed)
+		return 0, fmt.Errorf("%w: sntp %q", ErrClockProbeUnexpectedOutput, trimmed)
 	}
-	return true, time.Duration(seconds * float64(time.Second)), nil
+	return time.Duration(seconds * float64(time.Second)), nil
 }
