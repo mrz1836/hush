@@ -413,7 +413,7 @@ func sortedKeys(m map[string]bool) []string {
 	return out
 }
 
-func TestRequest_RequiredFlagsMarked(t *testing.T) {
+func TestRequest_RequiredFlagsRegisteredButValidatedByRunE(t *testing.T) {
 	t.Parallel()
 	cmd := newRequestCmd()
 	required := []string{flagReqServer, flagReqScope, flagReqReason, flagReqTTL, flagReqMaxUses, flagReqMachineIndex}
@@ -422,9 +422,38 @@ func TestRequest_RequiredFlagsMarked(t *testing.T) {
 		if f == nil {
 			t.Fatalf("flag %q not registered", name)
 		}
-		if len(f.Annotations[cobraRequiredAnnotation]) == 0 {
-			t.Errorf("flag %q is not marked required", name)
+		if len(f.Annotations[cobraRequiredAnnotation]) != 0 {
+			t.Errorf("flag %q should be validated in RunE, not by cobra required annotations", name)
 		}
+	}
+}
+
+func TestRequest_ParseAndValidateFlags_MissingCoreFlagsAreLoud(t *testing.T) {
+	t.Parallel()
+	cmd := newRequestCmd()
+	cmd.SetArgs([]string{"--exec=printenv"})
+
+	_, err := parseAndValidateFlags(cmd, nil)
+	if !errors.Is(err, errMissingFlag) {
+		t.Fatalf("err=%v want errMissingFlag", err)
+	}
+	for _, want := range []string{"--server", "--scope", "--reason", "--ttl", "--max-uses", "--machine-index"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("err=%q missing %s", err.Error(), want)
+		}
+	}
+	if mapErr(err) != ExitInputErr {
+		t.Errorf("mapErr=%d want %d", mapErr(err), ExitInputErr)
+	}
+}
+
+func TestRequest_EmitValidationStderrMissingCoreFlags(t *testing.T) {
+	t.Parallel()
+	var stderr bytes.Buffer
+	err := fmt.Errorf("%w: --ttl, --max-uses, --machine-index", errMissingFlag)
+	emitValidationStderr(newStream(&stderr, false, true), err)
+	if got := stderr.String(); !strings.Contains(got, "hush: request: missing required flag(s): --ttl, --max-uses, --machine-index") {
+		t.Fatalf("stderr=%q", got)
 	}
 }
 

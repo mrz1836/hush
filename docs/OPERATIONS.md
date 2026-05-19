@@ -75,6 +75,27 @@ token storage layout, or the file-mode contract before running it — the
 guided flow walks each decision interactively and explains the
 consequences before any destructive choice.
 
+At the end, `hush init server` prints four copy/paste commands. Prefer those
+commands over hand-written ones: they include the generated server URL, the
+client key-file path for the learning path, and the request flags needed to
+make approval failures loud instead of ambiguous. The request command should
+look like this shape:
+
+```bash
+hush --config '<state_dir>/config.toml' request \
+  --machine-index 1 \
+  --client-key-file '<state_dir>/client-machine-1.key' \
+  --server 'http://<tailscale-ip>:<port>/h/<path-prefix>' \
+  --scope YOUR_SECRET \
+  --ttl 5m \
+  --max-uses 1 \
+  --reason 'smoke test' \
+  --exec printenv -- YOUR_SECRET
+```
+
+Do not quote `printenv YOUR_SECRET` as one string; `--exec` is the program and
+arguments after `--` are passed to that program.
+
 The minimum prerequisites are:
 
 1. The hush binary is on `$PATH` (`hush version` works).
@@ -206,9 +227,12 @@ What hush does when you choose `[h]`:
 1. Creates `<state_dir>/hush.keychain-db` if it does not exist.
 2. Lets macOS `security` prompt for the dedicated Keychain password. Hush does
    not collect or log that password.
-3. Stores the Discord bot token as service `hush-discord`, account
+3. Tightens the dedicated Keychain file mode to `0600` before storing the
+   token, because macOS may create `hush.keychain-db` as `0644` and hush's
+   startup file-mode check intentionally refuses that.
+4. Stores the Discord bot token as service `hush-discord`, account
    `hush-server`, ACL-restricted to the current hush binary.
-4. Writes `bot_keychain_path = "<state_dir>/hush.keychain-db"` in
+5. Writes `bot_keychain_path = "<state_dir>/hush.keychain-db"` in
    `config.toml`, so future `hush serve`, `hush keychain doctor`, and
    `hush keychain repair` use the dedicated Keychain automatically.
 
@@ -248,7 +272,7 @@ Approve a session, wrap a shell, work inside it.
 
 Primary path:
 - `hush request --exec zsh`
-- for a one-shot check with args: `hush request --scope OPENAI_API_KEY --exec printenv -- OPENAI_API_KEY`
+- for a one-shot check with args: `hush request --scope OPENAI_API_KEY --ttl 5m --max-uses 1 --reason 'manual check' --exec printenv -- OPENAI_API_KEY`
 
 Intent:
 - one approval covers a bounded human work session

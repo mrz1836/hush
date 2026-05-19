@@ -245,9 +245,6 @@ func newRequestCmd() *cobra.Command {
 	cmd.Flags().String(flagReqExec, "", "Program to exec with secrets injected as env vars (mutually exclusive with --format)")
 	cmd.Flags().String(flagReqFormat, "", "Delivery format; only literal value `eval` accepted (mutually exclusive with --exec)")
 
-	for _, name := range []string{flagReqServer, flagReqScope, flagReqReason, flagReqTTL, flagReqMaxUses, flagReqMachineIndex} {
-		_ = cmd.MarkFlagRequired(name)
-	}
 	return cmd
 }
 
@@ -256,6 +253,8 @@ func newRequestCmd() *cobra.Command {
 // rendering.
 func emitValidationStderr(stderr *Stream, err error) {
 	switch {
+	case errors.Is(err, errMissingFlag):
+		_ = stderr.WriteText("hush: request: missing required flag(s): %s", strings.TrimPrefix(err.Error(), errMissingFlag.Error()+": "))
 	case errors.Is(err, errMissingExecOrFormat):
 		_ = stderr.WriteText("hush: request: must specify --exec or --format eval")
 	case errors.Is(err, errExecAndFormatBothSet):
@@ -277,7 +276,9 @@ func parseAndValidateFlags(cmd *cobra.Command, args []string) (requestFlags, err
 	reason, _ := cmd.Flags().GetString(flagReqReason)
 	ttl, _ := cmd.Flags().GetDuration(flagReqTTL)
 	maxUses, _ := cmd.Flags().GetInt(flagReqMaxUses)
+	maxUsesSet := cmd.Flags().Changed(flagReqMaxUses)
 	machineIndex, _ := cmd.Flags().GetUint32(flagReqMachineIndex)
+	machineIndexSet := cmd.Flags().Changed(flagReqMachineIndex)
 	clientKeyFile, _ := cmd.Flags().GetString(flagReqClientKeyFile)
 	execProgram, _ := cmd.Flags().GetString(flagReqExec)
 	formatMode, _ := cmd.Flags().GetString(flagReqFormat)
@@ -306,6 +307,10 @@ func parseAndValidateFlags(cmd *cobra.Command, args []string) (requestFlags, err
 		formatMode:    formatMode,
 	}
 
+	if missing := missingRequestFlags(flags, maxUsesSet, machineIndexSet); len(missing) > 0 {
+		return flags, fmt.Errorf("%w: %s", errMissingFlag, strings.Join(missing, ", "))
+	}
+
 	// Mutual exclusion comes first — neither vs both. No I/O on any
 	// failure path.
 	switch {
@@ -331,6 +336,29 @@ func parseAndValidateFlags(cmd *cobra.Command, args []string) (requestFlags, err
 	}
 
 	return flags, nil
+}
+
+func missingRequestFlags(flags requestFlags, maxUsesSet, machineIndexSet bool) []string {
+	missing := make([]string, 0, 6)
+	if flags.server == "" {
+		missing = append(missing, "--"+flagReqServer)
+	}
+	if len(flags.scope) == 0 {
+		missing = append(missing, "--"+flagReqScope)
+	}
+	if strings.TrimSpace(flags.reason) == "" {
+		missing = append(missing, "--"+flagReqReason)
+	}
+	if flags.ttl <= 0 {
+		missing = append(missing, "--"+flagReqTTL)
+	}
+	if !maxUsesSet {
+		missing = append(missing, "--"+flagReqMaxUses)
+	}
+	if !machineIndexSet {
+		missing = append(missing, "--"+flagReqMachineIndex)
+	}
+	return missing
 }
 
 // runRequest is the orchestration entry point. State transitions:

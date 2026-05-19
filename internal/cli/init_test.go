@@ -1375,6 +1375,8 @@ func TestInitServer_PrintsConcreteNextCommands(t *testing.T) {
 	require.Contains(t, transcript, "--client-registry '"+filepath.Join(fx.tempDir, "clients.json")+"'")
 	require.Contains(t, transcript, "--client-key-file '"+filepath.Join(fx.tempDir, "client-machine-1.key")+"'")
 	require.Contains(t, transcript, "--server 'http://"+testListenAddrInput+"/h/"+prefix+"'")
+	require.Contains(t, transcript, "--ttl 5m --max-uses 1 --reason 'smoke test' --exec printenv -- YOUR_SECRET")
+	require.NotContains(t, transcript, "--exec 'printenv YOUR_SECRET'")
 	require.NotContains(t, transcript, testBotTokenInput)
 }
 

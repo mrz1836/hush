@@ -962,7 +962,7 @@ func emitServerNextCommands(stderr *Stream, configPath string, cfg *config.Serve
 	}
 	initClientCmd := "hush --config " + configArg + " init client --machine-index 1 --client-registry " + shellQuote(clientRegistry) + " --client-key-file " + shellQuote(clientKeyFile)
 	secretAddCmd := "hush --config " + configArg + " secret add YOUR_SECRET"
-	requestCmd := "hush --config " + configArg + " request --machine-index 1 --client-key-file " + shellQuote(clientKeyFile) + " --server " + shellQuote(serverURL) + " --scope YOUR_SECRET --exec " + shellQuote("printenv YOUR_SECRET")
+	requestCmd := "hush --config " + configArg + " request --machine-index 1 --client-key-file " + shellQuote(clientKeyFile) + " --server " + shellQuote(serverURL) + " --scope YOUR_SECRET --ttl 5m --max-uses 1 --reason " + shellQuote("smoke test") + " --exec printenv -- YOUR_SECRET"
 	_ = stderr.WriteText(initMsgServerNextCommandsFmt, serveCmd, initClientCmd, secretAddCmd, requestCmd)
 }
 
