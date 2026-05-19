@@ -72,8 +72,9 @@ Enrol the agent host:
 
 ```bash
 hush init client --machine-index 1
+HUSH_SERVER="$(hush --config ~/.hush/config.toml server-url)"
 hush request \
-  --server "http://<vault-host-tailscale-ip>:7743/h/<path-prefix>" \
+  --server "$HUSH_SERVER" \
   --machine-index 1 --scope OPENAI_API_KEY \
   --max-uses 1 --ttl 5m --reason "smoke test" \
   --exec printenv -- OPENAI_API_KEY
