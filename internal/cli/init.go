@@ -92,12 +92,20 @@ const (
 	initMsgMachineIndexInvalid      = "hush: init: --machine-index must be a non-negative integer"
 	initMsgFieldRequiredFmt         = "hush: init: %s is required"
 	initMsgKeychainStoreFailFmt     = "hush: init: keychain store failed: %v"
-	initMsgClientKeyFileFallbackFmt = "hush: init: keychain store failed: %v\n  fallback: wrote client key file instead; use --client-key-file with hush request."
-	initMsgKeychainLockedStoreFmt   = "hush: init: macOS login Keychain appears locked or refused the write: %v\n  next: run `security unlock-keychain ~/Library/Keychains/login.keychain-db`, then re-run `hush init server`."
-	initMsgExplicitStateKeychain    = "hush: init: --state-dir set; storing Discord bot token in macOS Keychain for serve. Vault passphrase is not stored for this learning/smoke path."
-	initMsgWriteFailFmt             = "hush: init: write %s: %v"
-	initMsgServerComplete           = "hush: init: server bootstrap complete"
-	initMsgServerNextCommandsFmt    = "hush: init: next commands\n  1. Start the vault server:\n     %s\n  2. Enroll this machine as a client:\n     %s\n  3. Add a secret:\n     %s\n  4. Request the secret for a command:\n     %s"
+	initMsgClientKeyFileFallbackFmt = "hush: init: macOS Keychain was unavailable for the client key, so hush used the requested key-file fallback.\n" +
+		"  detail: %v\n" +
+		"  ok:     client enrolled successfully; use --client-key-file with hush request."
+	initMsgClientKeyFileSelected = "hush: init: --client-key-file set; storing the client key in that file and skipping macOS Keychain.\n" +
+		"  ok: use --client-key-file with hush request."
+	initMsgKeychainLockedStoreFmt  = "hush: init: macOS login Keychain appears locked or refused the write: %v\n  next: run `security unlock-keychain ~/Library/Keychains/login.keychain-db`, then re-run `hush init server`."
+	initMsgBotTokenEnvAutoFallback = "hush: init: macOS Keychain refused the Discord bot-token write; continuing with explicit env-token fallback.\n" +
+		"  ok:   no token file was written.\n" +
+		"  next: run `HUSH_DISCORD_BOT_TOKEN='<your-…ken>' hush --config <config> serve ...` for this session.\n" +
+		"  note: Keychain remains the preferred long-term storage when available."
+	initMsgExplicitStateKeychain = "hush: init: --state-dir set; storing Discord bot token in macOS Keychain for serve. Vault passphrase is not stored for this learning/smoke path."
+	initMsgWriteFailFmt          = "hush: init: write %s: %v"
+	initMsgServerComplete        = "hush: init: server bootstrap complete"
+	initMsgServerNextCommandsFmt = "hush: init: next commands\n  1. Start the vault server:\n     %s\n  2. Enroll this machine as a client:\n     %s\n  3. Add a secret:\n     %s\n  4. Request the secret for a command:\n     %s"
 
 	// initMsgKeychainPreExplainFmt is the hush-authored explanation
 	// printed before every Keychain write call. The placeholders are
@@ -808,12 +816,15 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 	// isolated path; the operator supplies it at serve time.
 	if explicitStateDir {
 		_ = stderr.WriteText(initMsgExplicitStateKeychain)
+		autoEnvTokenMode := false
 		if botToken != nil {
-			if err := storeBotTokenForDecision(ctx, deps, stderr, in, keychainItems, botToken, binPath, decisions); err != nil {
-				return err
+			var storeErr error
+			autoEnvTokenMode, storeErr = storeBotTokenForDecision(ctx, deps, stderr, in, keychainItems, botToken, binPath, decisions)
+			if storeErr != nil {
+				return storeErr
 			}
 		}
-		emitServerNextCommands(stderr, configPath, loadedCfg, decisions.modeFor(setup.ArtifactKeychainToken) == onExistingEnvToken || botToken == nil)
+		emitServerNextCommands(stderr, configPath, loadedCfg, autoEnvTokenMode || decisions.modeFor(setup.ArtifactKeychainToken) == onExistingEnvToken || botToken == nil)
 		_ = stderr.WriteText(initMsgServerComplete)
 		return nil
 	}
@@ -825,10 +836,11 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 		_ = stderr.WriteText(initMsgKeychainStoreFailFmt, err)
 		return err
 	}
-	if err := storeBotTokenForDecision(ctx, deps, stderr, in, keychainItems, botToken, binPath, decisions); err != nil {
+	autoEnvTokenMode, err := storeBotTokenForDecision(ctx, deps, stderr, in, keychainItems, botToken, binPath, decisions)
+	if err != nil {
 		return err
 	}
-	emitServerNextCommands(stderr, configPath, loadedCfg, decisions.modeFor(setup.ArtifactKeychainToken) == onExistingEnvToken)
+	emitServerNextCommands(stderr, configPath, loadedCfg, autoEnvTokenMode || decisions.modeFor(setup.ArtifactKeychainToken) == onExistingEnvToken)
 	_ = stderr.WriteText(initMsgServerComplete)
 	return nil
 }
@@ -880,43 +892,28 @@ func storeBotTokenForDecision(
 	ctx context.Context,
 	deps *initDeps,
 	stderr *Stream,
-	in *os.File,
+	_ *os.File,
 	keychainItems serverKeychainItemNames,
 	botToken *securebytes.SecureBytes,
 	binPath string,
 	decisions recoveryDecisions,
-) error {
+) (bool, error) {
 	switch decisions.modeFor(setup.ArtifactKeychainToken) {
 	case onExistingReuse, onExistingRepair:
-		return nil
+		return false, nil
 	case onExistingEnvToken:
-		return nil
+		return true, nil
 	default:
 		emitKeychainPreExplain(stderr, "Discord bot token", keychainItems.discordService, kcAccountServer)
 		if err := deps.keychain.Store(ctx, keychainItems.discordService, kcAccountServer, botToken, binPath); err != nil {
 			if !isRecoverableBotTokenStoreError(err) {
 				_ = stderr.WriteText(initMsgKeychainStoreFailFmt, err)
-				return err
+				return false, err
 			}
-			if errors.Is(err, keychain.ErrKeychainLocked) {
-				_ = stderr.WriteText(initMsgKeychainLockedStoreFmt, err)
-			} else {
-				_ = stderr.WriteText(initMsgKeychainStoreFailFmt, err)
-			}
-
-			decision, recoverErr := resolveKeychainACL(ctx, in, stderr, deps, keychainItems.discordService, kcAccountServer)
-			if recoverErr != nil {
-				return recoverErr
-			}
-			if decision == onExistingEnvToken || decision == onExistingReuse || decision == onExistingRepair {
-				return nil
-			}
-			if retryErr := deps.keychain.Store(ctx, keychainItems.discordService, kcAccountServer, botToken, binPath); retryErr != nil {
-				_ = stderr.WriteText(initMsgKeychainStoreFailFmt, retryErr)
-				return retryErr
-			}
+			_ = stderr.WriteText(initMsgBotTokenEnvAutoFallback)
+			return true, nil
 		}
-		return nil
+		return false, nil
 	}
 }
 
@@ -997,8 +994,11 @@ func runInitClient(ctx context.Context, stdout, stderr *Stream, in *os.File, cmd
 	}
 
 	account := fmt.Sprintf("machine-%d", machineIndex)
-	if guardErr := guardKeychainAbsent(ctx, deps.keychain, kcServiceClient, account, stderr); guardErr != nil {
-		return guardErr
+	useClientKeyFile := strings.TrimSpace(deps.clientKeyFile) != ""
+	if !useClientKeyFile {
+		if guardErr := guardKeychainAbsent(ctx, deps.keychain, kcServiceClient, account, stderr); guardErr != nil {
+			return guardErr
+		}
 	}
 
 	binPath, err := deps.binaryPath()
@@ -1038,17 +1038,14 @@ func runInitClient(ctx context.Context, stdout, stderr *Stream, in *os.File, cmd
 	}
 	defer func() { _ = priv.Destroy() }()
 
-	if err := deps.keychain.Store(ctx, kcServiceClient, account, priv, binPath); err != nil {
-		if strings.TrimSpace(deps.clientKeyFile) == "" {
-			_ = stderr.WriteText(initMsgKeychainStoreFailFmt, err)
-			return err
-		}
-		_ = stderr.WriteText(initMsgClientKeyFileFallbackFmt, err)
-	}
-	if strings.TrimSpace(deps.clientKeyFile) != "" {
+	if useClientKeyFile {
+		_ = stderr.WriteText(initMsgClientKeyFileSelected)
 		if err := writeClientKeyFile(deps.clientKeyFile, priv); err != nil {
 			return err
 		}
+	} else if err := deps.keychain.Store(ctx, kcServiceClient, account, priv, binPath); err != nil {
+		_ = stderr.WriteText(initMsgKeychainStoreFailFmt, err)
+		return err
 	}
 
 	if strings.TrimSpace(deps.clientRegistry) != "" {

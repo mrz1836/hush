@@ -500,8 +500,8 @@ func TestInitServer_ExplicitStateKeychainStoreDeniedCanUseEnvFallback(t *testing
 
 	err := runInitServer(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, fx.deps)
 	require.NoError(t, err)
-	require.Contains(t, fx.stderr.String(), "Use HUSH_DISCORD_BOT_TOKEN env-var instead")
-	require.Contains(t, fx.stderr.String(), initMsgKeychainEnvTokenFallbackFmt)
+	require.Contains(t, fx.stderr.String(), "continuing with explicit env-token fallback")
+	require.Contains(t, fx.stderr.String(), "no token file was written")
 	require.Contains(t, fx.stderr.String(), initMsgServerComplete)
 }
 
@@ -689,7 +689,7 @@ func TestInitClient_KeyFileFallbackWhenKeychainDenied(t *testing.T) {
 
 	err := runClientWithFlags(context.Background(), fx, "1")
 	require.NoError(t, err)
-	require.Contains(t, fx.stderr.String(), "fallback: wrote client key file instead")
+	require.Contains(t, fx.stderr.String(), "--client-key-file set")
 
 	raw, err := os.ReadFile(keyFile)
 	require.NoError(t, err)
@@ -709,10 +709,8 @@ func TestInitClient_NonInteractiveRegistersClient(t *testing.T) {
 	err := runClientWithFlags(context.Background(), fx, "1")
 	require.NoError(t, err)
 
-	got, err := fx.keychain.Retrieve(context.Background(), kcServiceClient, "machine-1")
-	require.NoError(t, err)
-	defer got.Destroy()
-	require.Equal(t, 32, got.Len())
+	_, err = fx.keychain.Retrieve(context.Background(), kcServiceClient, "machine-1")
+	require.True(t, errors.Is(err, keychain.ErrKeychainItemNotFound))
 
 	raw, err := os.ReadFile(registry)
 	require.NoError(t, err)

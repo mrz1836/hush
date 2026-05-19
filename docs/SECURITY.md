@@ -106,29 +106,28 @@ under service `hush-discord`, ACL-restricted to the hush binary via
 `-T /usr/local/bin/hush`. This is the recommended posture and the path
 `hush init server` takes when no Keychain failure is detected.
 
-`HUSH_DISCORD_BOT_TOKEN` (env-var mode) is a **supported fallback**, not a
-peer default. Use Keychain when possible. The env-token path exists for two
-documented situations:
-
-- The host has no Keychain available (e.g. Linux vault host).
-- The Keychain item exists but the OS denies the read (ACL drift, exit 51 /
-  `errSecAuthFailed` / `errSecInteractionNotAllowed`) and the operator
-  consciously picks the env-token branch from the guided flow's recovery
-  menu.
+If Keychain refuses the bot-token write during setup, hush does **not** write a
+plaintext token file. It falls back to an explicit one-session
+`HUSH_DISCORD_BOT_TOKEN=... hush serve ...` command. This is less slick than
+Keychain, but it keeps the bot token out of repo/config/state files while the
+Keychain path is repaired.
 
 Why Keychain is preferred:
 
 | Property | Keychain | `HUSH_DISCORD_BOT_TOKEN` env-var |
 |----------|----------|----------------------------------|
-| Per-binary ACL | Yes — only `/usr/local/bin/hush` can read it without a system prompt. | No — any process running as the same user can read the env. |
+| Per-binary ACL | Yes — only `/usr/local/bin/hush` can read it without a system prompt. | No — any process running as the same user can read the env for the lifetime of the process. |
+| Secret at rest | Not in hush files. | Not in hush files if used only as a one-session command/env. |
 | Visibility in `ps eww` / `/proc/{pid}/environ` | Not exposed. | Exposed for the lifetime of the serving process. |
-| Survives reboot | Yes. | Only if exported from a login profile (which we explicitly avoid — secrets on disk are the threat we are eliminating). |
-| Bootstrap UX | One-time `security` ACL prompt. | Must be exported in the operator's terminal before every `hush serve`. |
+| Survives reboot | Yes. | No, unless exported from a login profile — which hush explicitly avoids. |
+| Bootstrap UX | One-time `security` ACL prompt. | Manual serve-time export until Keychain is fixed. |
 
-`hush init server` enforces this positioning: env-token mode is offered
-only as a labelled menu item (`[3] Use HUSH_DISCORD_BOT_TOKEN env-var
-instead (recommended only if Keychain is unavailable)`) after a Keychain
-failure, never as a silent default.
+`hush init server` enforces this positioning without writing plaintext token
+files. If a bot-token Keychain write is refused, hush prints an explicit
+env-token fallback. If an existing Keychain item is readable, Keychain remains
+the default. If an existing item is unreadable, the recovery panel still offers
+ACL repair for operators who want to restore Keychain as the long-term storage
+path.
 
 #### Keychain ACL repair reference
 

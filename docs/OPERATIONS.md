@@ -120,14 +120,15 @@ The minimum prerequisites are:
    being stored, and tells you what to click in the Apple prompt that
    follows. The bare Apple "password data for new item" prompt never
    appears without that explanation immediately above it. If the login
-   Keychain is locked or refuses the bot-token write, hush offers the
-   env-token fallback so setup can continue.
+   Keychain is locked or refuses the bot-token write, hush does **not** write a
+   plaintext token file; it falls back to an explicit one-session
+   `HUSH_DISCORD_BOT_TOKEN=... hush serve ...` command.
 6. **Bootstrap completion + exact next commands.** `config.toml`,
    `secrets.vault`, and the state dir exist with the required modes. On
-   macOS, the `hush-discord` Keychain item exists unless you explicitly chose
-   env-token fallback. The final panel prints copy/paste commands using the
-   real config path, `listen_addr`, generated `path_prefix`, client registry,
-   and suggested client key-file path.
+   macOS, the bot token is either in Keychain or supplied explicitly via the
+   serve environment. The final panel prints copy/paste commands using the real
+   config path, `listen_addr`, generated `path_prefix`, client registry, and
+   suggested client key-file path.
 
 When it finishes, follow the printed commands. The recommended serve command
 uses `hush serve --reload-on-vault-change`, so secrets added after startup are
@@ -136,10 +137,11 @@ flag, the server still supports manual hot reload by SIGHUP.
 
 ### Keychain ACL denial during setup
 
-If the existing `hush-discord` Keychain item is present but macOS refuses
+If an existing `hush-discord` Keychain item is present but macOS refuses
 the read (Darwin exit 51 / `errSecAuthFailed` /
-`errSecInteractionNotAllowed`), hush surfaces a recovery panel with three
-options and **never silently switches to env-token mode**:
+`errSecInteractionNotAllowed`), hush surfaces a recovery panel. Prefer the
+fallback when you just need setup to continue; use ACL repair only when you are
+intentionally restoring Keychain as the long-term storage path:
 
 | Choice | What it does |
 |--------|--------------|
@@ -236,7 +238,7 @@ opt-out for scripted / test / CI callers. In non-interactive mode every
 input must come from flags or `--input-file` (a `0600` JSON document with
 the same field set the prompts populate).
 
-Client enrollment with a fallback key file:
+Client enrollment with an explicit key file:
 
 ```bash
 hush init client \
@@ -245,10 +247,11 @@ hush init client \
   --client-key-file ~/.hush/client-machine-1.key
 ```
 
-On macOS, hush first tries to store the client key in Keychain. If Keychain
-is locked but `--client-key-file` is present, hush writes the key file and
-prints an explicit fallback message. Use the same `--client-key-file` on
-`hush request`.
+When `--client-key-file` is present, hush writes the client key there and skips
+macOS Keychain entirely. This is the recommended learning/smoke path because it
+is deterministic and avoids Keychain prompts. Use the same `--client-key-file`
+on `hush request`. If you omit `--client-key-file`, hush stores the client key
+in macOS Keychain and fails closed if Keychain refuses the write.
 
 Relevant flags for `hush init server`:
 
