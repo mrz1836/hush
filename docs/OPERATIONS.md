@@ -116,13 +116,16 @@ The minimum prerequisites are:
    free port such as `7744` if `7743` is already in use.
 4. **Vault passphrase.** Entered with no echo. Confirmed once.
 5. **Keychain writes (macOS).** Each Keychain write is preceded by a
-   hush-authored explanation panel that names the item, says what is
-   being stored, and tells you what to click in the Apple prompt that
-   follows. The bare Apple "password data for new item" prompt never
-   appears without that explanation immediately above it. If the login
-   Keychain is locked or refuses the bot-token write, hush does **not** write a
-   plaintext token file; it falls back to an explicit one-session
-   `HUSH_DISCORD_BOT_TOKEN=... hush serve ...` command.
+   hush-authored explanation panel that names the item, says what is being
+   stored, and tells you what to click in the Apple prompt that follows. The
+   bare Apple "password data for new item" prompt never appears without that
+   explanation immediately above it. If the login Keychain is locked or refuses
+   the bot-token write, hush does **not** write a plaintext token file. It first
+   offers a calm retry path so you can unlock/approve the Keychain while the
+   token is still only in memory. Env-token fallback stays available, but only
+   as a deliberate secondary choice. If the item already exists but macOS
+   denies read access, run `hush keychain doctor` first and `hush keychain
+   repair` to refresh the ACL for the current binary.
 6. **Bootstrap completion + exact next commands.** `config.toml`,
    `secrets.vault`, and the state dir exist with the required modes. On
    macOS, the bot token is either in Keychain or supplied explicitly via the
@@ -135,20 +138,88 @@ uses `hush serve --reload-on-vault-change`, so secrets added after startup are
 auto-reloaded without a restart or manual SIGHUP. If you run serve without that
 flag, the server still supports manual hot reload by SIGHUP.
 
-### Keychain ACL denial during setup
+### Keychain store / ACL recovery during setup
 
-If an existing `hush-discord` Keychain item is present but macOS refuses
-the read (Darwin exit 51 / `errSecAuthFailed` /
-`errSecInteractionNotAllowed`), hush surfaces a recovery panel. Prefer the
-fallback when you just need setup to continue; use ACL repair only when you are
-intentionally restoring Keychain as the long-term storage path:
+The earlier config/vault reuse / repair / archive prompts are separate from
+this later bot-token Keychain step. You can succeed on config and vault, then
+still hit a macOS Keychain failure when hush stores the Discord token.
+
+There are three different Keychain recovery paths:
+
+- **Initial store failed** — you pasted the Discord bot token, but macOS refused
+  to create the `hush-discord` item. If the login Keychain is locked, choosing
+  `[r]` asks macOS to unlock the login Keychain, then retries the write while
+  the token is still only in memory. If you choose env fallback instead,
+  `hush keychain doctor` will report `missing` because no token was stored.
+- **Login Keychain is unusable** — if the login Keychain password is unknown or
+  out of sync, choose `[h]` to create/use a dedicated hush Keychain at
+  `<state_dir>/hush.keychain-db`. This does not reset, delete, or modify
+  `login.keychain-db`; hush stores the bot token in the dedicated Keychain and
+  writes `bot_keychain_path` to the config so future `serve`, `doctor`, and
+  `repair` commands target the same file.
+- **Existing item denied** — the `hush-discord` item already exists, but the
+  current hush binary cannot read it. Use `hush keychain doctor` to confirm and
+  `hush keychain repair` to refresh the ACL for the current binary.
+
+If an existing `hush-discord` Keychain item is present but macOS refuses the
+read (Darwin exit 51 / `errSecAuthFailed` / `errSecInteractionNotAllowed`),
+hush surfaces a recovery panel. The default path is to repair/retry Keychain;
+env-token fallback is still available, but it is visually secondary and must be
+chosen on purpose. The new `hush keychain doctor` / `hush keychain repair`
+commands expose the same diagnosis and repair path directly:
 
 | Choice | What it does |
 |--------|--------------|
-| `[1]` ACL repair | Prints the exact `security set-generic-password-partition-list` command to fix the ACL. Re-runs only the Keychain check afterwards. |
+| `[1]` Retry / ACL repair | Retry after you unlock or approve the macOS prompt, or run `hush keychain repair` to refresh the ACL. Re-checks the Keychain afterwards. |
 | `[2]` Delete + recreate | Destructive. Removes the existing item and stores a new one. Requires typing `delete` to confirm. The deletion is audit-logged. |
-| `[3]` Env-token fallback | Skips the Keychain write and instructs you to export `HUSH_DISCORD_BOT_TOKEN` before `hush serve`. Supported, but secondary — use Keychain when possible. See `docs/SECURITY.md` §2.4 for the trade-off. |
+| `[3]` Env-token fallback | Skips the Keychain write and instructs you to export `HUSH_DISCORD_BOT_TOKEN` before `hush serve`. Deliberate secondary escape hatch only. After using it, `hush keychain doctor` will report missing because no token was stored; rerun `hush init server` to store it later. See `docs/SECURITY.md` §2.4 for the trade-off. |
 | `[q]` Quit | Exits cleanly without modifying anything. |
+
+#### Unlock failure (exit 51)
+
+If `security unlock-keychain ~/Library/Keychains/login.keychain-db` exits 51
+after you enter your current Mac password, that is a login Keychain mismatch,
+not a hush secret leak. The prompt is for the macOS login Keychain; after
+password changes or machine migrations, it may still be using an older
+password. Hush never collects that password.
+
+Try one of these:
+
+- Retry with the correct/older login Keychain password.
+- Fix the login Keychain in Keychain Access or System Settings, then retry.
+- Choose `[h]` in the hush recovery prompt to create/use a dedicated hush
+  Keychain at `<state_dir>/hush.keychain-db` without touching
+  `login.keychain-db`.
+- Use env-token fallback for this session only.
+
+If you do not know the Keychain password, resetting the login Keychain is an
+OS-level destructive repair outside hush, and hush will not automate it.
+
+#### Dedicated hush Keychain
+
+The dedicated hush Keychain is the recommended escape hatch when the macOS
+login Keychain is broken but you still want durable, OS-managed storage for the
+Discord bot token.
+
+What hush does when you choose `[h]`:
+
+1. Creates `<state_dir>/hush.keychain-db` if it does not exist.
+2. Lets macOS `security` prompt for the dedicated Keychain password. Hush does
+   not collect or log that password.
+3. Stores the Discord bot token as service `hush-discord`, account
+   `hush-server`, ACL-restricted to the current hush binary.
+4. Writes `bot_keychain_path = "<state_dir>/hush.keychain-db"` in
+   `config.toml`, so future `hush serve`, `hush keychain doctor`, and
+   `hush keychain repair` use the dedicated Keychain automatically.
+
+Operational notes:
+
+- Do not delete `hush.keychain-db`; it contains the durable bot-token item.
+- The file is not plaintext, but it is still sensitive state. Keep it inside a
+  `0700` state directory.
+- If you forget the dedicated Keychain password, recreate that dedicated
+  Keychain and rerun `hush init server`; this does not affect your macOS login
+  Keychain.
 
 Each branch is documented in detail in `docs/SECURITY.md` §2.4 ("Bot token
 storage") so the security trade-offs are kept next to the threat model.
@@ -219,13 +290,13 @@ remedy below is exactly what the binary prints.
 | Sentinel | Meaning | Remedy hint |
 |----------|---------|-------------|
 | `ErrTokenAbsent` | Discord bot token cannot be located in the Keychain and `HUSH_DISCORD_BOT_TOKEN` is empty. | Run `hush init server` and follow the guided flow to store the bot token, or export `HUSH_DISCORD_BOT_TOKEN` before retrying. |
-| `ErrTokenDenied` | Keychain item exists but the OS denied the read (exit 51 / errSecAuthFailed / errSecInteractionNotAllowed). | Repair the ACL via `security set-generic-password-partition-list -S apple-tool:,apple: -s hush-discord -a <account>` and re-run, **or** pick the delete-and-recreate option in the guided flow. Hush never silently switches to env-token mode here. |
+| `ErrTokenDenied` | Keychain item exists but the OS denied the read (exit 51 / errSecAuthFailed / errSecInteractionNotAllowed). | Run `hush keychain doctor` to confirm the denial, then `hush keychain repair` to refresh the ACL, **or** pick the delete-and-recreate option in the guided flow. Hush never silently switches to env-token mode here. |
 | `ErrTokenBad` | A token was retrieved but failed structural / Discord-side validation. | Rotate the token in the Discord developer portal and re-run `hush init server` to store the new value. |
 | `ErrBindConflict` | Configured listen address is off-CGNAT, already bound, or routes through a non-Tailscale interface. | Pick an unused Tailscale CGNAT address (`tailscale ip -4`) with a free port and re-run `hush init server`. |
 | `ErrStateStale` | Partial config / vault / state-dir artifacts the classifier marks `repairable`. | Re-run `hush init server` and pick reuse / repair / archive per artifact, or pass `--on-existing=archive` for the non-interactive path. |
 | `ErrArtifactCollision` | An existing artifact maps 1:1 to one the guided flow is about to create but has incompatible contents. | Archive the colliding artifact to `<path>.bak-<RFC3339>` via the archive option, or move it aside manually before re-running. |
 | `ErrClockUnsynchronised` | Host clock is outside the allowed skew window. | Platform-aware: `sudo sntp -sS time.apple.com` (Darwin), `sudo chronyc makestep` or `sudo ntpdate -u pool.ntp.org` (Linux). Override knowingly with `--allow-clock-skew`. |
-| `ErrKeychainPermissionDenied` | Generic "OS denied" verdict on a non-token Keychain item. | Open Keychain Access, locate the offending item, and grant `/usr/local/bin/hush` read access; then re-run. |
+| `ErrKeychainPermissionDenied` | Generic "OS denied" verdict on a non-token Keychain item. | Open Keychain Access, locate the offending item, and grant the current hush binary path read access; then re-run. |
 
 The sentinels are stable: callers can branch on them via `errors.Is`.
 

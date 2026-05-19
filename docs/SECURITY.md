@@ -68,7 +68,7 @@ find ~ -name "signing.key" -o -name "*.pem" -o -name "*.key"
 | Vault file stolen from disk/backup | AES-256-GCM. Useless without passphrase. Safe to back up. |
 | Audit trail tampered with | Every event ECDSA-signed and hash-chained. Modification breaks the chain. |
 | Port scanner discovers vault API | Random API path prefix. Standard probes get 404. |
-| Malware reads Keychain for vault passphrase | **Mitigated.** Keychain items created with `-T /usr/local/bin/hush` ACL. Other processes trigger a system Keychain prompt. Management commands require interactive TTY passphrase. |
+| Malware reads Keychain for vault passphrase | **Mitigated.** Keychain items created with a per-binary `-T` ACL for the installed hush binary path. Other processes trigger a system Keychain prompt. Management commands require interactive TTY passphrase. |
 | Discord bot token stolen → auto-approve sessions | **Mitigated.** Bot token in Keychain by default (see §2.4 for the env-token fallback positioning). Server monitors WebSocket disconnect — unexpected disconnect → WARN log + audit + refusal of new `/claim`. Attacker's competing bot would have to keep displacing the real one, which is detectable. |
 | Discord API outage → no new sessions | **Accepted.** Existing sessions continue. New sessions blocked with 503. Plan TTLs for full-day coverage. |
 | Rogue process runs `hush secret add` on vault host | **Mitigated.** Management commands refuse piped stdin and Keychain reads. Only an interactive TTY can modify secrets. |
@@ -101,39 +101,79 @@ find ~ -name "signing.key" -o -name "*.pem" -o -name "*.key"
 
 ### 2.4 Bot token storage (macOS Keychain default, env-token fallback)
 
+This section is only about the Discord bot token. The earlier config/vault
+reuse and repair prompts are separate; they can succeed even if the later bot-token store hits a macOS Keychain problem.
+
 On macOS the Discord bot token is stored in the **OS Keychain by default**,
-under service `hush-discord`, ACL-restricted to the hush binary via
-`-T /usr/local/bin/hush`. This is the recommended posture and the path
-`hush init server` takes when no Keychain failure is detected.
+under service `hush-discord`, ACL-restricted to the current hush binary path
+(for example the dev install path from `command -v hush`). This is the
+recommended posture and the path `hush init server` takes when no Keychain
+failure is detected.
 
 If Keychain refuses the bot-token write during setup, hush does **not** write a
-plaintext token file. It falls back to an explicit one-session
-`HUSH_DISCORD_BOT_TOKEN=... hush serve ...` command. This is less slick than
-Keychain, but it keeps the bot token out of repo/config/state files while the
-Keychain path is repaired.
+plaintext token file. It first offers a retry path so you can unlock or approve
+the Keychain while the token is still only in memory. If you deliberately pick
+fallback, hush uses an explicit one-session `HUSH_DISCORD_BOT_TOKEN=... hush
+serve ...` command. That keeps the bot token out of repo/config/state files
+while the Keychain path is repaired.
 
 Why Keychain is preferred:
 
 | Property | Keychain | `HUSH_DISCORD_BOT_TOKEN` env-var |
 |----------|----------|----------------------------------|
-| Per-binary ACL | Yes — only `/usr/local/bin/hush` can read it without a system prompt. | No — any process running as the same user can read the env for the lifetime of the process. |
+| Per-binary ACL | Yes — only the current hush binary path can read it without a system prompt. | No — any process running as the same user can read the env for the lifetime of the process. |
 | Secret at rest | Not in hush files. | Not in hush files if used only as a one-session command/env. |
 | Visibility in `ps eww` / `/proc/{pid}/environ` | Not exposed. | Exposed for the lifetime of the serving process. |
 | Survives reboot | Yes. | No, unless exported from a login profile — which hush explicitly avoids. |
 | Bootstrap UX | One-time `security` ACL prompt. | Manual serve-time export until Keychain is fixed. |
 
 `hush init server` enforces this positioning without writing plaintext token
-files. If a bot-token Keychain write is refused, hush prints an explicit
-env-token fallback. If an existing Keychain item is readable, Keychain remains
-the default. If an existing item is unreadable, the recovery panel still offers
-ACL repair for operators who want to restore Keychain as the long-term storage
-path.
+files. If a bot-token Keychain write is refused, hush shows a retry-first panel;
+env-token fallback remains available but must be chosen explicitly. If the login
+Keychain is locked, retry asks macOS to unlock the login Keychain first, then
+stores the token while it is still only in memory. If an existing Keychain item
+is readable, Keychain remains the default. If an existing item is unreadable,
+use `hush keychain doctor` to confirm the state and `hush keychain repair` to
+refresh the ACL for the current binary.
+
+#### Unlock failure (exit 51)
+
+If `security unlock-keychain ~/Library/Keychains/login.keychain-db` returns
+exit 51 after the current Mac password is entered, that is usually a login
+Keychain password mismatch, not a hush bug. The prompt is for the macOS login
+Keychain itself; after password changes or migration, it may still require an
+older password.
+
+Hush never captures or stores that password. The safe responses are:
+
+- Retry with the correct/older login Keychain password.
+- Choose the dedicated hush Keychain option (`[h]`) to store the bot token in
+  `<state_dir>/hush.keychain-db` without touching `login.keychain-db`.
+- Repair the login Keychain in Keychain Access or System Settings.
+- Use env-token fallback for this session only.
+
+If the Keychain password is unknown, resetting the login Keychain is an
+OS-level destructive repair outside hush and is intentionally not automated.
+
+#### Initial store failure vs. dedicated Keychain vs. existing-item repair
+
+- Initial store failure means no `hush-discord` item was created. Retry/unlock
+  is the right fix while the pasted token is still in memory. `hush keychain
+  repair` cannot repair a missing item.
+- Dedicated hush Keychain means hush stores the bot token in
+  `<state_dir>/hush.keychain-db` and records that path as `bot_keychain_path` in
+  config. Future `serve`, `doctor`, and `repair` commands target that Keychain
+  path directly. This avoids a broken login Keychain without writing plaintext
+  token files or resetting macOS Keychain state.
+- Existing-item repair means the item exists but current hush cannot read it.
+  `hush keychain doctor` reports that state, and `hush keychain repair` refreshes
+  the macOS ACL without asking for the Discord token again.
 
 #### Keychain ACL repair reference
 
-When the existing `hush-discord` Keychain item is unreadable, the guided
-flow renders an ACL-denial panel and offers ACL repair as choice `[1]`.
-The exact `security` command the panel emits is:
+When the existing `hush-discord` Keychain item is unreadable, the guided flow
+renders an ACL-denial panel and offers ACL repair as choice `[1]`. The exact
+`security` command the panel emits is:
 
 ```bash
 security set-generic-password-partition-list \
@@ -142,14 +182,15 @@ security set-generic-password-partition-list \
   ~/Library/Keychains/login.keychain-db
 ```
 
-Substitute the `-a` account for whatever the original item was created
-with (the panel prints the exact pair). After running it, return to the
-guided flow and pick `[1]` again to re-check the Keychain — hush re-runs
-only the Keychain readability check from the preflight registry.
+Substitute the `-a` account for whatever the original item was created with
+(the panel prints the exact pair). After running it, return to the guided flow
+and pick `[1]` again, or run `hush keychain repair` directly; hush re-runs only
+the Keychain readability check from the preflight registry.
 
-If repair is not feasible, choice `[2]` (delete-and-recreate, requires
-typing `delete` to confirm; audit-logged) and choice `[3]` (env-token
-fallback per the table above) remain available.
+If repair is not feasible, choice `[2]` (delete-and-recreate, requires typing
+`delete` to confirm; audit-logged) and choice `[3]` (env-token fallback per the
+table above) remain available. After env-token fallback, `hush keychain doctor`
+will report missing because nothing was stored in Keychain.
 
 For the operational walkthrough, see `docs/OPERATIONS.md` §1
 ("First-run setup") and §4 ("Structured error reference").

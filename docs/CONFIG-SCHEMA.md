@@ -39,6 +39,9 @@ client_registry = "~/.hush/clients.json"
 
 [discord]
 bot_token_keychain_item = "hush-discord"
+# Optional. Set by `hush init server` when the operator chooses a dedicated
+# hush Keychain instead of the macOS login Keychain.
+# bot_keychain_path = "~/.hush/hush.keychain-db"
 application_id = "345678901234567890"
 
 [crypto]
@@ -125,6 +128,23 @@ Required fields:
   - rules:
     - keychain entry name only, not the token itself
     - implementation loads the token from Keychain at runtime
+
+Optional fields:
+
+- `bot_keychain_path`
+  - type: string path
+  - example: `~/.hush/hush.keychain-db`
+  - purpose:
+    - macOS-only dedicated Keychain file for the Discord bot-token item
+    - used when the login Keychain is locked, out of sync, or otherwise
+      unsuitable for hush
+  - rules:
+    - contains no token bytes; it is only the Keychain database path
+    - should live under the hush state directory
+    - generated automatically by `hush init server` when the operator chooses
+      the dedicated hush Keychain recovery option
+    - future `hush serve`, `hush keychain doctor`, and `hush keychain repair`
+      target this path when present
 
 - `application_id`
   - type: string
