@@ -132,6 +132,7 @@ Must not contain:
 |------------|----------|-------------------|
 | `serve` | `hush serve --reload-on-vault-change` | Brings the vault online. Resolves passphrase via `stdin pipe → TTY prompt → ExitInputErr` (never `os.Getenv`). Composes the chassis from already-locked surfaces. SIGTERM/SIGINT graceful shutdown via `signal.NotifyContext`. Optional `--reload-on-vault-change` watches `secrets.vault` and triggers the same atomic reload path as SIGHUP after debounced vault rewrites. |
 | `health` | `hush health --server <url>` | 5 s-bounded `GET /hz`. TTY: per-dimension table; pipe: server's JSON body verbatim. Partial-health → full summary + `ExitErr` (FR-017a). Connection-refused/timeout literal-text contract per SDD-14 contract §6. |
+| `server-url` | `hush --config <path> server-url` | Loads server config and prints the canonical `http://<listen_addr>/h/<path_prefix>` URL to stdout. Intended for copy/paste and scripts so operators never parse TOML with `sed`. |
 | `version` | `hush version` | Prints build metadata. TTY: human lines. Pipe: locked JSON shape `{"version","commit","date"}` with `dev`/`unknown`/`unknown` placeholders. Always `ExitOK`. |
 | `revoke` | `hush revoke --server <url> --jti <uuid>` | Builds canonical `{jti, nonce, timestamp}`, signs via `internal/transport/sign`, POSTs to `/revoke`. Status → exit code: 200→0, 401/403→3, 404→4, 5xx/network→1. |
 

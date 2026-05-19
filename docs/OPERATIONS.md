@@ -78,8 +78,10 @@ consequences before any destructive choice.
 At the end, `hush init server` prints four copy/paste commands. Prefer those
 commands over hand-written ones: they include the generated server URL, the
 client key-file path for the learning path, and the request flags needed to
-make approval failures loud instead of ambiguous. The request command should
-look like this shape:
+make approval failures loud instead of ambiguous. Later, if you need the URL
+again for scripts, use `hush --config '<state_dir>/config.toml' server-url`
+instead of parsing TOML with `sed`. The request command should look like this
+shape:
 
 ```bash
 hush --config '<state_dir>/config.toml' request \

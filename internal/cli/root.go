@@ -49,6 +49,7 @@ func newRootCmd(initialOut *outputContext) *cobra.Command {
 	_ = initialOut // initialOut is only used as a pre-parse fallback
 
 	root.AddCommand(newServeCmd())
+	root.AddCommand(newServerURLCmd())
 	root.AddCommand(newHealthCmd())
 	root.AddCommand(newVersionCmd())
 	root.AddCommand(newRevokeCmd())
