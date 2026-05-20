@@ -182,6 +182,20 @@ func TestDiscordMirror_NoRetryOnFailure(t *testing.T) {
 	if err := w.Append(context.Background(), "x", nil); err != nil {
 		t.Fatalf("Append: %v", err)
 	}
+
+	// Append returns once the event is on disk, but writer.process hands the
+	// event to the mirror *after* that ack, and the mirror publishes
+	// asynchronously. Wait for the publish to land before canceling —
+	// otherwise cancel() races the mirror's drain and the event is dropped
+	// unsent (stub.Calls stays 0).
+	deadline := time.Now().Add(2 * time.Second)
+	for stub.Calls() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("mirror never attempted publish")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+
 	cancel()
 	if err := wait(); err != nil {
 		t.Fatalf("Run: %v", err)

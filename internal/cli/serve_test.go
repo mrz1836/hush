@@ -339,8 +339,12 @@ func TestWatchVaultChanges_DebouncesRapidRewrites(t *testing.T) {
 		return nil
 	})
 
+	// Two back-to-back rewrites. A wall-clock gap between them would be
+	// fragile: time.Sleep only guarantees a minimum, so under CI scheduling
+	// load a small sleep can exceed the debounce window and split the writes
+	// into separate debounce cycles, producing two reloads. Writing them
+	// consecutively keeps both comfortably inside one debounce window.
 	requireWriteFile(t, path, []byte("new-1"))
-	time.Sleep(15 * time.Millisecond)
 	requireWriteFile(t, path, []byte("new-2-longer"))
 
 	select {
