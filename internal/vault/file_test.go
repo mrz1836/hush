@@ -176,7 +176,7 @@ func TestVault_RoundTrip_1Secret(t *testing.T) {
 	}
 }
 
-//nolint:gocognit // multi-secret round-trip test; complexity is structural
+//nolint:gocognit,gocyclo // multi-secret round-trip test; complexity is structural
 func TestVault_RoundTrip_5Secrets(t *testing.T) {
 	t.Parallel()
 	dir := makeTestDir(t)
