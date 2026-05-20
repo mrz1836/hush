@@ -47,10 +47,11 @@ builds:
     binary: hush
     env:
       - CGO_ENABLED=0
+    # hush is Unix-only: keychain, process supervision, Unix-domain-socket
+    # IPC and mlock have no Windows implementation.
     goos:
       - linux
       - darwin
-      - windows
     goarch:
       - amd64
       - arm64
