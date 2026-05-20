@@ -582,7 +582,9 @@ func TestWatchdog_PrecompiledPatternsReused(t *testing.T) {
 	cancel, done := startRun(t, wd)
 	defer func() { cancel(); <-done }()
 
+	drainDone := make(chan struct{})
 	go func() {
+		defer close(drainDone)
 		for {
 			select {
 			case <-alerts:
@@ -595,6 +597,14 @@ func TestWatchdog_PrecompiledPatternsReused(t *testing.T) {
 	for range 10000 {
 		wd.Ingest([]byte("always-matching line"))
 	}
+
+	// Quiesce the watchdog and its alert-drain goroutine before
+	// measuring allocations: testing.AllocsPerRun samples a global
+	// malloc counter, so any goroutine allocating concurrently
+	// inflates the result (observed as 42 allocs/run under CI load).
+	cancel()
+	<-done
+	<-drainDone
 
 	allocs := testing.AllocsPerRun(50, func() {
 		_ = originalRe.MatchString("always-matching line")
