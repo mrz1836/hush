@@ -53,7 +53,7 @@ func TestLeakSafety_AllFixtures_SecondRun(t *testing.T) {
 		t.Errorf("fresh stub should have 0 calls, got %d", len(calls))
 	}
 
-	// The sync.Once-cached seed is intentionally stable across tests (SC-001).
+	// The sync.Once-cached seed is intentionally stable across tests.
 	reference := NewTestKeys(t)
 	second := NewTestKeys(t)
 	if !bytes.Equal(reference, second) {

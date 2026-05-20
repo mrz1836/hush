@@ -1,10 +1,9 @@
-// SDD-24 — Supervisor orchestration glue: refresh path.
+// Supervisor orchestration glue: refresh path.
 //
 // lifecycle_refresh.go owns the claimRefreshLoop goroutine (consumes
 // refreshTickCh and submits a fresh signed /claim), the refresh-result
-// dispatch arm of mainLoop (Store.setToken atomic swap, child PID unchanged
-// per FR-026-011), and the state-conditional status-socket refresh-verb
-// dispatcher (Plan §10 / spec Clarification 4).
+// dispatch arm of mainLoop (Store.setToken atomic swap, child PID unchanged),
+// and the state-conditional status-socket refresh-verb dispatcher.
 
 package supervise
 
@@ -29,7 +28,7 @@ var (
 // rejectStateError is the typed ack returned by dispatchRefreshVerb on
 // pre-running states (boot-retry / fetching / stopped). Carries the state
 // name so the status-socket handler can serialize it as {"ok":false,
-// "error":"<state>"} per Plan §10.
+// "error":"<state>"}.
 type rejectStateError struct {
 	state string
 }
@@ -68,7 +67,7 @@ func (l *Lifecycle) performRefreshClaim(ctx context.Context) refreshResult {
 	resp, status, errBody, err := l.doClaimRequest(ctx)
 	switch {
 	case err != nil:
-		// Network / decode failure → treat as timeout per FR-026-012.
+		// Network / decode failure → treat as timeout.
 		return refreshResult{err: fmt.Errorf("supervise: refresh transport: %w", err)}
 	case status == http.StatusOK:
 		// Stash the new JWT into Store synchronously here so mainLoop's
@@ -99,8 +98,7 @@ func (l *Lifecycle) performRefreshClaim(ctx context.Context) refreshResult {
 	}
 }
 
-// dispatchRefreshResult is mainLoop's arm for refresh outcomes. Per
-// FR-026-011 / FR-026-012:
+// dispatchRefreshResult is mainLoop's arm for refresh outcomes:
 //   - nil err          → already swapped in performRefreshClaim
 //   - deny             → AlertClassRefreshDenied; session preserved
 //   - timeout          → AlertClassRefreshTimeout; session preserved
@@ -142,8 +140,7 @@ func (l *Lifecycle) handleStatusRefreshVerb(ctx context.Context) error {
 	}
 }
 
-// dispatchRefreshVerb is mainLoop's arm for the status-socket refresh verb.
-// Per Plan §10 (spec Clarification 4):
+// dispatchRefreshVerb is mainLoop's arm for the status-socket refresh verb:
 //   - StateAwaitingApproval → drive the full refill+validate+restart
 //   - StateRunning / StateGraceRestart → coalesce with in-flight refill
 //   - StateFetching / StateStopped → reject with state ack

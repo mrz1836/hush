@@ -9,7 +9,7 @@
 //   - DiscordStub   — programmable Discord approval stub; satisfies Approver
 //   - NewDiscordStub — constructs a DiscordStub and registers t.Cleanup
 //   - ApprovalCall  — one recorded call entry on DiscordStub
-//   - Approver      — minimal interface; widened by SDD-11 in internal/discord
+//   - Approver      — minimal interface; widened in internal/discord
 //   - FakeClock     — atomic, injectable monotonic clock for tests
 //   - NewFakeClock  — constructs a FakeClock anchored at the supplied instant
 //   - NewSilentLogger — slog.Logger discarding everything below WARN

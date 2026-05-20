@@ -20,8 +20,8 @@
 //     empty audit file passes trivially via audit.Verify nil-on-missing.
 //   - Contract C: first supervisor only would have a socket — not
 //     opened here because the scenario stops at the acquire step;
-//     spec FR-006 carve-out (second supervisor "never opened a
-//     socket") applies.
+//     the carve-out (second supervisor "never opened a socket")
+//     applies.
 //   - Contract D: AssertSentinelAbsent runs against the captured
 //     LogCapture buffer and the second acquirer's error message.
 

@@ -28,7 +28,7 @@ type AlertPayload struct {
 }
 
 // TestDiscord wraps testutil.DiscordStub with the per-scenario state
-// SDD-25 needs:
+// the suite needs:
 //
 //   - Connectivity-sequence driver for Scenario 10 (Discord unavailable).
 //   - Supervise-side alert recorder satisfying supervise.Alerts.

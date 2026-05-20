@@ -15,9 +15,9 @@ import (
 
 // Supervisor is the fully-materialized per-supervisor configuration. It is
 // read-only after Load returns; consumers MUST NOT mutate any field, including
-// slice and map elements. No field carries a secret value (Constitution X /
-// FR-014); the reference fields hold non-secret labels only — scoped secret
-// names, validator type names, env-var names, log-pattern strings.
+// slice and map elements. No field carries a secret value; the reference
+// fields hold non-secret labels only — scoped secret names, validator type
+// names, env-var names, log-pattern strings.
 type Supervisor struct {
 	Name                   string
 	Reason                 string
@@ -69,8 +69,7 @@ type Watchdog struct {
 
 // Validator is the constrained-string typedef used for [validators] map
 // values. A Validator value held by a successfully loaded *Supervisor is
-// guaranteed to be in the package-level allow-list; SC-005 asserts this
-// invariant.
+// guaranteed to be in the package-level allow-list.
 type Validator string
 
 // ---- Wire-shape (decoded) types — INTERNAL ----------------------------------
@@ -97,7 +96,7 @@ type supervisorDecoded struct {
 	Scope                  []string `toml:"scope"`
 
 	// Distinguish "scope absent" from "scope = []" so the scope-empty validator
-	// fires the same sentinel for both per FR-008.
+	// fires the same sentinel for both.
 	scopePresent bool
 
 	Child      childDecoded      `toml:"child"`
@@ -191,7 +190,7 @@ func decodeStrict(f *os.File) (supervisorDecoded, error) {
 // paths, runs per-field and cross-field validation, and constructs the public
 // Supervisor value. Returns (nil, err) on any failure.
 //
-//nolint:cyclop,gocognit,gocyclo,funlen // rule-engine: long by design, mirrors SDD-06 materialize
+//nolint:cyclop,gocognit,gocyclo,funlen // rule-engine: long by design
 func materialize(d supervisorDecoded) (*Supervisor, error) {
 	s := &Supervisor{}
 
@@ -254,8 +253,8 @@ func materialize(d supervisorDecoded) (*Supervisor, error) {
 	}
 	s.CacheSecretsForRestart = cacheEnabled
 
-	// Grace-cache: contradiction-guard FIRST (per research.md R-005), then
-	// cap-enforcement, then default-application.
+	// Grace-cache: contradiction-guard FIRST, then cap-enforcement, then
+	// default-application.
 	if d.CacheGraceTTL != nil && !cacheEnabled {
 		return nil, fmt.Errorf("%w", ErrGraceTTLWithoutCache)
 	}
@@ -306,7 +305,7 @@ func materialize(d supervisorDecoded) (*Supervisor, error) {
 	}
 	s.LogLevel = logLevel
 
-	// scope: absence and emptiness both → ErrScopeEmpty (FR-008).
+	// scope: absence and emptiness both → ErrScopeEmpty.
 	if !d.scopePresent || len(d.Scope) == 0 {
 		return nil, fmt.Errorf("%w", ErrScopeEmpty)
 	}
@@ -356,7 +355,7 @@ func materialize(d supervisorDecoded) (*Supervisor, error) {
 		s.Validators[secretName] = Validator(validatorName)
 	}
 
-	// [watchdog] — section absent ≡ all fields absent (Clarification 4 / R-008).
+	// [watchdog] — section absent ≡ all fields absent.
 	wd := d.Watchdog
 	if wd == nil {
 		wd = &watchdogDecoded{}

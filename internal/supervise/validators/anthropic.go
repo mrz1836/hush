@@ -9,7 +9,7 @@ import (
 )
 
 // anthropicValidator implements Validator for Anthropic API keys
-// (header: x-api-key). Endpoint pinned at R-003a.
+// (header: x-api-key).
 type anthropicValidator struct {
 	name    string
 	url     string

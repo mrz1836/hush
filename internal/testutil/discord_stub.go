@@ -44,7 +44,7 @@ type ApprovalCall struct {
 }
 
 // Approver is the narrow interface DiscordStub satisfies.
-// SDD-11 will define the production Approver in internal/discord.
+// The production Approver is defined in internal/discord.
 type Approver interface {
 	RequestApproval(ctx context.Context, req ApprovalRequest) (Decision, error)
 }

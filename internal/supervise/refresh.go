@@ -27,9 +27,8 @@ const refresherTickInterval = time.Minute
 
 // Refresher schedules at most one refill callback fire per configured
 // local-time window per calendar day, plus at most one T-30 fallback
-// fire per session (FR-021-7 / FR-021-8). Run blocks until ctx is
-// cancelled. Single-shot — Run returns a sentinel error on second
-// call (RF-7).
+// fire per session. Run blocks until ctx is cancelled. Single-shot —
+// Run returns a sentinel error on second call.
 type Refresher struct {
 	window string
 	ttl    time.Duration
@@ -90,17 +89,16 @@ func NewRefresher(window string, ttl time.Duration, refill func(ctx context.Cont
 // Run drives the scheduler tick loop. Returns ctx.Err() on
 // cancellation; never any other error from a normal run. A second
 // call to Run on the same *Refresher returns a sentinel error
-// immediately (sync.Once-guarded, RF-7). Spawns NO goroutines beyond
-// its own tick loop body (RF-8).
+// immediately (sync.Once-guarded). Spawns NO goroutines beyond its own
+// tick loop body.
 //
 // On entry, if the wall clock is already inside the configured window
-// AND lastFiredDay != today, Run fires once on init (FR-021-10,
-// RF-5).
+// AND lastFiredDay != today, Run fires once on init.
 //
 // On a non-nil error from refill, Run logs WARN naming the error
 // category and advances lastFiredDay anyway — the fire counts as
-// "issued" per FR-021-11a (rate-limited refresh fires never retry
-// inside the same window, RF-6).
+// "issued" (rate-limited refresh fires never retry inside the same
+// window).
 func (r *Refresher) Run(ctx context.Context) error {
 	first := false
 	r.runOnce.Do(func() {
@@ -166,9 +164,9 @@ func errAlreadyRan() error { return errRefresherAlreadyRan }
 
 // tick runs one wall-clock evaluation step.
 func (r *Refresher) tick(ctx context.Context) {
-	// FR-021-7: refresh window is operator-configured local-time;
-	// time.Local is the spec'd anchor.
-	now := r.now().In(time.Local) //nolint:gosmopolitan // FR-021-7: window is operator-configured local-time
+	// The refresh window is operator-configured local-time;
+	// time.Local is the anchor.
+	now := r.now().In(time.Local) //nolint:gosmopolitan // window is operator-configured local-time
 	today := dateOnly(now)
 
 	if r.windowContains(now) {
@@ -179,7 +177,7 @@ func (r *Refresher) tick(ctx context.Context) {
 		return
 	}
 
-	// Window passed for today; consider T-30 fallback (FR-021-8).
+	// Window passed for today; consider T-30 fallback.
 	if r.t30Fired {
 		return
 	}
@@ -196,7 +194,7 @@ func (r *Refresher) tick(ctx context.Context) {
 
 // fire invokes the operator-supplied refill callback. A non-nil
 // return value is logged at WARN and treated as "issued" — the caller
-// of Run NEVER receives a fire-failure error (FR-021-11a, RF-6).
+// of Run NEVER receives a fire-failure error.
 func (r *Refresher) fire(ctx context.Context) {
 	err := r.refill(ctx)
 	if err != nil {

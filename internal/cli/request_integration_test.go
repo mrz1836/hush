@@ -37,7 +37,7 @@ import (
 // stub Approver, encrypts each requested secret with ECIES under the
 // supplied ephemeral pubkey, and serves them via /s. It exists so the
 // integration test exercises the full canonical-JSON + signature +
-// ECIES pipeline that production uses, without dragging in the SDD-13
+// ECIES pipeline that production uses, without dragging in the
 // chassis (which would couple this test to far more code).
 type integrationFakeServer struct {
 	t          *testing.T

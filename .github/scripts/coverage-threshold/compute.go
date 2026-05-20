@@ -24,24 +24,24 @@ const (
 )
 
 // ErrMalformedCoverOut is returned when cover.out is missing, empty, or
-// cannot be parsed per Go's text coverage format (FR-015).
+// cannot be parsed per Go's text coverage format.
 var ErrMalformedCoverOut = errors.New("malformed cover.out")
 
 // ErrCoverageBelowThreshold is returned when project-wide coverage is
 // below the configured minimum or any security-critical package is
-// below 100% (FR-013 / FR-014).
+// below 100%.
 var ErrCoverageBelowThreshold = errors.New("coverage below threshold")
 
 // ErrConstitutionMismatch is returned when the security-critical list
 // hardcoded in this tool diverges from the fenced block in the
-// constitution (FR-016 byte-equality self-test).
+// constitution.
 var ErrConstitutionMismatch = errors.New("security-critical list diverges from constitution")
 
 // securityCriticalPackages is the canonical security-critical set. It
 // MUST match the fenced block in .specify/memory/constitution.md
 // byte-for-byte; verifyConstitutionList enforces this.
 //
-//nolint:gochecknoglobals // FR-016 byte-equality anchor — see TestSecurityCriticalListMatchesConstitution.
+//nolint:gochecknoglobals // byte-equality anchor — see TestSecurityCriticalListMatchesConstitution.
 var securityCriticalPackages = []string{
 	"internal/keys",
 	"internal/vault",
@@ -153,7 +153,7 @@ func checkThresholds(s snapshot, minProject float64) error {
 	for _, pkg := range securityCriticalPackages {
 		pct, ok := s.perPkgPct[pkg]
 		if !ok {
-			failures = append(failures, fmt.Sprintf("%s: missing from coverage report (FR-015 missing-report-is-failure)", pkg))
+			failures = append(failures, fmt.Sprintf("%s: missing from coverage report", pkg))
 			continue
 		}
 		if pct < 100.0 {
@@ -168,7 +168,7 @@ func checkThresholds(s snapshot, minProject float64) error {
 
 // verifyConstitutionList reads the constitution at constitutionPath and
 // asserts that the fenced security-critical block matches
-// securityCriticalPackages byte-for-byte (FR-016).
+// securityCriticalPackages byte-for-byte.
 func verifyConstitutionList(constitutionPath string) error {
 	data, err := os.ReadFile(constitutionPath) //nolint:gosec // constitutionPath is a CI-controlled flag.
 	if err != nil {

@@ -2,18 +2,18 @@
 // hush. The 8 closed AlertClass values + 3 routing Tiers + per-class
 // label prefixes + per-supervisor + per-pattern minimum-interval
 // debounce form the entire seam between the supervisor lifecycle
-// (SDD-24/25) and Discord delivery (SDD-11).
+// and Discord delivery.
 //
-// Routing (R-002, locked immutable):
+// Routing (locked immutable):
 //
 //	TierCritical → Sender.SendOwnerDM(ctx, rendered) — single-shot, no retry.
 //	TierWarning  → Sender.PostChannel(ctx, auditChannelID, rendered) — single-shot.
 //	TierInfo     → no Sender call; the slog INFO record IS the delivery.
 //
-// Debounce (R-009, commit-on-success): two independent per-key
+// Debounce (commit-on-success): two independent per-key
 // minimum-interval token buckets — one keyed by SupervisorName, one
 // keyed by Pattern (falling back to string(Class) when Pattern is
-// empty per FR-011a). Buckets reserve on acquire, commit only on
+// empty). Buckets reserve on acquire, commit only on
 // successful delivery, refund on rate-limit denial of the second
 // bucket OR on transport failure.
 //
@@ -21,7 +21,7 @@
 //
 //   - V — every transport failure / unknown-class emits WARN slog.
 //     ErrAlertRateLimited deliberately emits NO router-side record
-//     (caller logs the suppression per FR-016 / Clarification Q5).
+//     (caller logs the suppression).
 //   - IX — Route is synchronous end-to-end; zero goroutines spawned;
 //     classToTier + classToTemplate are package-level immutable maps
 //     initialized by literal expression; zero init().
@@ -40,11 +40,11 @@ import (
 
 // AlertClass enumerates the 8 operator-visible alert categories per
 // docs/LIFECYCLE-SCENARIOS.md "Required alert classes". The set is
-// CLOSED in v0.1.0 (spec FR-005); adding or removing a class is a
+// CLOSED in v0.1.0; adding or removing a class is a
 // chunk-level amendment.
 type AlertClass string
 
-// The 8 documented alert classes, kebab-case verbatim per R-002 and
+// The 8 documented alert classes, kebab-case verbatim per
 // docs/LIFECYCLE-SCENARIOS.md lines 301-314.
 const (
 	AlertClassApprovalRequest               AlertClass = "approval-request"
@@ -58,7 +58,7 @@ const (
 )
 
 // Tier is the routing destination class. Closed set; v0.1.0 expressly
-// defines no fourth tier (spec FR-002).
+// defines no fourth tier.
 type Tier int
 
 // The 3 documented tiers. Numeric values are stable across the
@@ -74,11 +74,11 @@ const (
 //
 // Tier is informational only. The Router re-derives the authoritative
 // tier from Class via the immutable classToTier table on every Route
-// call (FR-004 / R-010); the caller-supplied Tier value is IGNORED.
+// call; the caller-supplied Tier value is IGNORED.
 //
 // Detail is operator-supplied metadata only — pattern names,
-// identifiers, timestamps, scope names. NEVER credential values
-// (Spec Assumption row 5). Callers passing credential values into
+// identifiers, timestamps, scope names. NEVER credential values.
+// Callers passing credential values into
 // Detail are a caller bug; the per-class sentinel-byte tests catch
 // the bug.
 type Alert struct {
@@ -91,9 +91,9 @@ type Alert struct {
 	Time           time.Time
 }
 
-// Sender is the consumer-side Discord transport seam (R-003).
+// Sender is the consumer-side Discord transport seam.
 // *discord.BotApprover satisfies it via additive methods in the
-// SDD-11 parent package. Tests substitute fakes.
+// parent discord package. Tests substitute fakes.
 //
 // Implementations MUST be safe for concurrent use.
 type Sender interface {
@@ -109,7 +109,7 @@ type Sender interface {
 
 // Router is the single entry-point for alert dispatch. Holds the
 // configured Sender, audit-channel ID, two rate-limit buckets, and
-// a structured logger. Safe for concurrent use (FR-026).
+// a structured logger. Safe for concurrent use.
 type Router struct {
 	sender         Sender
 	auditChannelID string
@@ -119,37 +119,36 @@ type Router struct {
 }
 
 // DefaultBucketWindow is substituted when NewRouter receives a
-// zero or negative bucket duration. Documented in plan.md §
-// Complexity Tracking (structural choice #3).
+// zero or negative bucket duration.
 const DefaultBucketWindow = 1 * time.Minute
 
-// Sentinel errors (R-011). Compare via errors.Is. ErrAlertTransport
+// Sentinel errors. Compare via errors.Is. ErrAlertTransport
 // wraps the underlying Sender error; use errors.As to recover it.
 var (
 	// ErrAlertRateLimited is returned by Route when either the
 	// per-supervisor or per-pattern debounce bucket rejects the
 	// call. Route emits NO slog record on this path; the caller logs
-	// the suppression per FR-016.
+	// the suppression.
 	ErrAlertRateLimited = errors.New("hush/discord/alerts: rate limited")
 
 	// ErrAlertTransport wraps the underlying Sender error when a
 	// Critical- or Warning-tier delivery fails at the transport
 	// layer. The router does NOT consume either debounce slot on
-	// this failure (commit-on-success per FR-012a).
+	// this failure (commit-on-success).
 	ErrAlertTransport = errors.New("hush/discord/alerts: transport failed")
 
 	// ErrUnknownAlertClass is returned by Route when it receives an
-	// AlertClass outside the documented set of 8. Defensive only
-	// (spec FR-009); in-package callers MUST use the public
+	// AlertClass outside the documented set of 8. Defensive only;
+	// in-package callers MUST use the public
 	// constants to avoid this path entirely.
 	ErrUnknownAlertClass = errors.New("hush/discord/alerts: unknown class")
 )
 
 // classToTier locks the 8 documented bindings. Constructed at package
 // declaration time; never mutated; no init(). Sentinel-class read-only
-// global per Constitution IX exemption (plan.md §Complexity Tracking).
+// global per Constitution IX exemption.
 //
-//nolint:gochecknoglobals // immutable class→tier binding table; locked at SDD-28
+//nolint:gochecknoglobals // immutable class→tier binding table
 var classToTier = map[AlertClass]Tier{
 	AlertClassApprovalRequest:               TierCritical,
 	AlertClassDaemonRefreshRequest:          TierCritical,
@@ -161,8 +160,8 @@ var classToTier = map[AlertClass]Tier{
 	AlertClassVaultUnreachableAtBootTimeout: TierCritical,
 }
 
-// outcome and slog-attribute key constants — drawn from the FR-024
-// attribute allow-list.
+// outcome and slog-attribute key constants — drawn from the
+// observability attribute allow-list.
 const (
 	outcomeDelivered       = "delivered"
 	outcomeTransportFailed = "transport_failed"
@@ -181,7 +180,7 @@ const (
 // NewRouter constructs a Router. Panics on nil sender or nil logger
 // (Constitution IX startup-wiring exception). Zero or negative bucket
 // durations are silently substituted with DefaultBucketWindow
-// (R-011 defensive default).
+// (defensive default).
 func NewRouter(sender Sender, auditChannelID string,
 	perSupervisorBucket, perPatternBucket time.Duration,
 	logger *slog.Logger,
@@ -216,14 +215,14 @@ func NewRouter(sender Sender, auditChannelID string,
 //   - TierInfo     → no Sender call; the slog INFO record IS the delivery.
 //
 // Returns nil on success; ErrAlertRateLimited if either bucket
-// rejects the call (Route emits NO slog record on this path per
-// FR-024a); an error wrapping ErrAlertTransport on transport failure
+// rejects the call (Route emits NO slog record on this path);
+// an error wrapping ErrAlertTransport on transport failure
 // for Critical/Warning tiers (use errors.As to recover the underlying
 // Sender error); or ErrUnknownAlertClass when Alert.Class is outside
-// the documented set of 8 (defensive — FR-009).
+// the documented set of 8 (defensive).
 //
 // Concurrency: safe for concurrent use by many goroutines.
-// Per-call atomicity per R-009 (acquire/commit/refund).
+// Per-call atomicity (acquire/commit/refund).
 func (r *Router) Route(ctx context.Context, alert Alert) error {
 	tier, ok := classToTier[alert.Class]
 	if !ok {
@@ -279,7 +278,7 @@ func (r *Router) Route(ctx context.Context, alert Alert) error {
 }
 
 // emitOutcome is the single slog emission site for Route. The
-// attribute set is strictly the FR-024 allow-list. Detail / rendered
+// attribute set is strictly the observability allow-list. Detail / rendered
 // / underlying errors are NEVER attached as attributes (per
 // Constitution X observability allow-list discipline).
 func (r *Router) emitOutcome(ctx context.Context, level slog.Level, alert Alert, tier Tier, patternKey, outcome string) {
@@ -302,7 +301,7 @@ func (r *Router) supBucketWindow() time.Duration { return r.supBucket.window }
 func (r *Router) patBucketWindow() time.Duration { return r.patBucket.window }
 
 // setClock substitutes the bucket time source. Used by tests for the
-// fake-clock invariants (FR-015); not exported.
+// fake-clock invariants; not exported.
 func (r *Router) setClock(now func() time.Time) {
 	r.supBucket.mu.Lock()
 	r.supBucket.now = now

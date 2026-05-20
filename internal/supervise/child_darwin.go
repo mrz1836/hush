@@ -16,7 +16,7 @@ import (
 
 // applyPlatformSysProcAttr sets Setpgid only on darwin. Darwin
 // has no Pdeathsig equivalent; death-watch is implemented in
-// startDeathWatch as a kqueue goroutine (R-009).
+// startDeathWatch as a kqueue goroutine.
 func applyPlatformSysProcAttr(cmd *exec.Cmd) {
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
@@ -25,17 +25,16 @@ func applyPlatformSysProcAttr(cmd *exec.Cmd) {
 }
 
 // startDeathWatch spawns the per-Start kqueue death-watch
-// goroutine pair (R-009). The watcher fires SIGTERM at the
+// goroutine pair. The watcher fires SIGTERM at the
 // child's process group when the supervisor's parent (PPID)
 // exits; the waker breaks the kqueue blocker out of Kevent on
 // ctx cancellation or child exit.
 //
-// Known limitation (R-009): if the supervisor itself is
-// SIGKILL'd, both goroutines die with the process and cannot
-// deliver cleanup. Documented in research.md and surfaced via
-// t.Skip in T-11b's SIGKILL subtest.
+// Known limitation: if the supervisor itself is SIGKILL'd, both
+// goroutines die with the process and cannot deliver cleanup.
+// Surfaced via t.Skip in the SIGKILL subtest.
 //
-//nolint:gocognit,gocyclo // kqueue+pipe registration + 2 goroutines + EINTR loop: complexity is inherent to the death-watch contract (R-009)
+//nolint:gocognit,gocyclo // kqueue+pipe registration + 2 goroutines + EINTR loop: complexity is inherent to the death-watch contract
 func startDeathWatch(ctx context.Context, c *Child) error {
 	kq, err := unix.Kqueue()
 	if err != nil {

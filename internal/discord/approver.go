@@ -9,7 +9,7 @@ import (
 )
 
 // DefaultDMRateLimit is the default value applied when
-// BotConfig.DMRateLimit ≤ 0 (FR-021).
+// BotConfig.DMRateLimit ≤ 0.
 const DefaultDMRateLimit = 5 * time.Minute
 
 // Approver gates every secret-claim path. The package's BotApprover
@@ -63,7 +63,7 @@ type Decision struct {
 // Token is consumed by NewBotApprover: the constructor reads its
 // bytes via Use(fn) once at session-init time. The discordgo SDK
 // retains its own internal string copy thereafter — that residual
-// risk is documented in specs/011-discord-bot/research.md §R-003.
+// risk is unavoidable with the SDK.
 // Callers MAY (and SHOULD) call Token.Destroy() after NewBotApprover
 // returns; the package keeps no further reference to the SecureBytes
 // object.

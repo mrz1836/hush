@@ -25,7 +25,7 @@ const (
 )
 
 // auditEventType is the catalog of mirror event names emitted to
-// the configured audit channel (FR-008, clarification 2026-04-30 Q4).
+// the configured audit channel.
 type auditEventType string
 
 const (

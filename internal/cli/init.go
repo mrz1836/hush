@@ -38,7 +38,7 @@ import (
 // and the per-artifact recovery decisions surfaced by the guided
 // flow. The flag-facing modes are prompt / reuse / repair / archive /
 // fail; the additional modes (recreate, env-token) are emitted only
-// by the ACL-aware Keychain recovery branch (Plan AC-5 / AC-6).
+// by the ACL-aware Keychain recovery branch.
 //
 // "" (unset) defers to per-mode defaults: prompt in interactive,
 // fail in non-interactive.
@@ -74,7 +74,7 @@ const (
 )
 
 // keychainACLChoice* are the single-character return values for the
-// ACL-aware Keychain recovery panel (Plan AC-5 / AC-6 / Task 3.2-3.4).
+// ACL-aware Keychain recovery panel.
 // The panel renders when the existing `hush-discord` Keychain item
 // reads back as denied (see [setup.ErrTokenDenied]); each choice
 // drives a distinct recovery branch.
@@ -86,8 +86,8 @@ const (
 )
 
 // keychainDeleteConfirmation is the literal string the operator must
-// type to confirm the destructive delete-and-recreate branch
-// (Plan AC-5 / Task 3.3). `y` is intentionally insufficient: tests
+// type to confirm the destructive delete-and-recreate branch.
+// `y` is intentionally insufficient: tests
 // assert this gate refuses anything that is not exact-byte equal.
 const keychainDeleteConfirmation = "delete"
 
@@ -154,7 +154,7 @@ const (
 	// initMsgKeychainPreExplainFmt is the hush-authored explanation
 	// printed before every Keychain write call. The placeholders are
 	// (purpose, service, account). Tests assert the literal text via
-	// transcript scan (Plan AC-4 / Task 2.3): no raw Apple `security`
+	// transcript scan: no raw Apple `security`
 	// prompt may fire without this preamble.
 	initMsgKeychainPreExplainFmt = "hush: init: about to store the %s in your macOS Keychain.\n" +
 		"  item:    service=%s, account=%s\n" +
@@ -174,8 +174,8 @@ const (
 	// none). Tests pin the literal options string.
 	initMsgRecoveryPromptFmt = "hush: init: existing %s (%s) at %s — choose [r]euse / [p]repair / [a]rchive (renames to .bak-<RFC3339>) / [q]uit: "
 
-	// initMsgRecoveryArchivedFmt records a successful archive action
-	// (Plan AC-9). %s = old path, %s = new path.
+	// initMsgRecoveryArchivedFmt records a successful archive action.
+	// %s = old path, %s = new path.
 	initMsgRecoveryArchivedFmt = "hush: init: archived %s to %s"
 
 	// initMsgRecoveryRepairFmt records a `[p]repair` choice. Phase 2
@@ -196,11 +196,10 @@ const (
 	// just records the override; Phase 4 wires the audit pipeline.
 	initMsgClockSkewOverrideFmt = "hush: init: --allow-clock-skew override active; clock-sync check downgraded for %s"
 
-	// initMsgKeychainACLPanelFmt renders the ACL-denial panel
-	// (Plan AC-5 / AC-6 / Task 3.2). Placeholders are
+	// initMsgKeychainACLPanelFmt renders the ACL-denial panel.
+	// Placeholders are
 	// (service, account, keychainPath). The panel intentionally
-	// embeds shell snippets that are zsh-safe (no `read -p` / `read -s`
-	// — see AC-7).
+	// embeds shell snippets that are zsh-safe (no `read -p` / `read -s`).
 	initMsgKeychainACLPanelFmt = `hush: init: macOS Keychain is denying hush access to the existing '%s' item.
   why:  the OS refused the read (errSecAuthFailed / errSecInteractionNotAllowed / errSecUserCanceled).
   item: service=%s account=%s keychain=%s
@@ -243,11 +242,11 @@ Choose how to proceed:
 	// initMsgKeychainDeletedFmt records a successful destructive
 	// removal of an existing Keychain item. Audit-grade: the
 	// service+account pair is captured so the operator can correlate
-	// against external Keychain Access UI activity. Plan AC-5 / Task 3.3.
+	// against external Keychain Access UI activity.
 	initMsgKeychainDeletedFmt = "hush: init: deleted existing Keychain item service=%s account=%s (recreating next)."
 
 	// initMsgKeychainEnvTokenFallbackFmt explains the env-token
-	// fallback decision. Plan AC-6 / Task 3.4.
+	// fallback decision.
 	initMsgKeychainEnvTokenFallbackFmt = "hush: init: env-token fallback selected; skipping Keychain write for the bot token.\n" +
 		"  next: export HUSH_DISCORD_BOT_TOKEN='<your-discord-bot-token>' before running 'hush serve'.\n" +
 		"  note: env-token mode is supported but loses the per-binary ACL — use Keychain when possible."
@@ -269,7 +268,7 @@ const (
 	promptBotToken        = "Discord bot token: " //nolint:gosec // prompt label, not a credential
 )
 
-// Keychain (service, account) pairs, locked at SDD-15 (data-model §1.3).
+// Keychain (service, account) pairs.
 const (
 	kcServiceVaultPassphrase = "hush-vault-passphrase"
 	kcServiceClient          = "hush-client"
@@ -330,7 +329,7 @@ type initDeps struct {
 	// length contract.
 	deriveMasterSeed func(ctx context.Context, passphrase, salt []byte) ([]byte, error)
 	// runPreflight runs the diagnostic-first preflight pipeline
-	// before any TTY prompt (Plan AC-2). Production returns an
+	// before any TTY prompt. Production returns an
 	// empty Report until Phase 4 wires real checks. Tests inject a
 	// synthetic Report to drive the warn / fail branches.
 	runPreflight func(ctx context.Context) setup.Report
@@ -486,7 +485,7 @@ func readClientBootstrapInput(path string) (clientBootstrapInput, error) {
 // The default mode is **guided/interactive**: hush runs a
 // diagnostic-first preflight, then prompts the operator for every
 // required input. `--non-interactive` is the explicit opt-out for
-// scripted/test callers (Plan AC-1, Q1=b / Q6=b).
+// scripted/test callers.
 func newInitServerCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "server",
@@ -511,7 +510,7 @@ Flags:
   --allow-clock-skew       Downgrade a failing clock-sync preflight to
                            a warning. hush will never auto-sudo on
                            your behalf; rely on this only if you have
-                           knowingly accepted the skew (Plan AC-8).
+                           knowingly accepted the skew.
   --on-existing=<mode>     prompt | reuse | repair | archive | fail
                            Default: prompt (interactive) / fail
                            (non-interactive). 'archive' renames the
@@ -605,7 +604,7 @@ func newInitClientCmd() *cobra.Command {
 // All output goes to stderr (operator messages); stdout is intentionally
 // unused so machine-piped consumers see an empty data stream on success.
 //
-//nolint:gocognit,gocyclo,cyclop,nestif // sequential bootstrap flow; complexity is structural per data-model §1
+//nolint:gocognit,gocyclo,cyclop,nestif // sequential bootstrap flow; complexity is structural
 func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *initDeps) error {
 	if !deps.platformACL() {
 		_ = stderr.WriteText(initMsgPlatformUnsupported, runtime.GOOS)
@@ -617,7 +616,7 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 	}
 
 	// 0. Diagnostic-first preflight. No prompt may fire until this
-	//    pipeline has settled (Plan AC-1, AC-2 / Task 2.2). On any
+	//    pipeline has settled. On any
 	//    `fail` result we surface the typed error + remedy and exit
 	//    non-zero. On `warn` we print and continue (Phase 2 keeps
 	//    this non-interactive; Phase 4 wires the y/n confirm flow
@@ -698,7 +697,7 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 			return errPassphraseMismatch
 		}
 
-		// 2. Operator-supplied non-secret fields (FR-009: no defaults).
+		// 2. Operator-supplied non-secret fields (no defaults).
 		// If flags supplied these values, honor them and only prompt for
 		// the missing fields. Secrets remain TTY-only in interactive mode.
 		listenAddr = strings.TrimSpace(deps.serverInputs.listenAddr)
@@ -785,7 +784,7 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 		return errMissingFlag
 	}
 
-	// 4. Existence handling — classifier-first (Plan AC-9 / Task 2.4).
+	// 4. Existence handling — classifier-first.
 	//    The classifier inspects vault / config / state-dir, and the
 	//    Discord bot-token Keychain item (the only one whose write is
 	//    skipped under explicit-state-dir flows). Each non-absent
@@ -932,7 +931,7 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 		_ = stderr.WriteText(initMsgServerComplete)
 		return nil
 	}
-	// Hush-authored pre-explanations satisfy Plan AC-4 / Task 2.3:
+	// Hush-authored pre-explanations ensure
 	// no raw Apple `security` prompt fires without a hush-authored
 	// preamble of what / why / what-to-click.
 	emitKeychainPreExplain(stderr, "vault passphrase", keychainItems.vaultPassphraseService, kcAccountServer)
@@ -1023,8 +1022,8 @@ func storeBotTokenUsingConfiguredKeychainPath(
 }
 
 // storeBotTokenForDecision honors the per-artifact recovery decision
-// for the Discord bot-token Keychain slot (Plan AC-5 / AC-6 /
-// Task 3.2-3.4). The decision modes drive distinct branches:
+// for the Discord bot-token Keychain slot. The decision modes drive
+// distinct branches:
 //
 //   - [onExistingReuse] / [onExistingRepair] — leave the existing
 //     Keychain item untouched; the operator either had a working item
@@ -1226,8 +1225,8 @@ func isRecoverableBotTokenStoreError(err error) bool {
 }
 
 // emitKeychainPreExplain writes the hush-authored multi-line
-// explanation that must precede every macOS Keychain write call
-// (Plan AC-4 / Task 2.3). Tests scan the transcript for this string;
+// explanation that must precede every macOS Keychain write call.
+// Tests scan the transcript for this string;
 // see init_test.go TestInitServer_PreExplainsKeychainWrites.
 func emitKeychainPreExplain(stderr *Stream, purpose, service, account string) {
 	_ = stderr.WriteText(initMsgKeychainPreExplainFmt, purpose, service, account)
@@ -1314,7 +1313,7 @@ func runInitClient(ctx context.Context, stdout, stderr *Stream, in *os.File, cmd
 	// vault file, so the salt is sourced fresh from randReader. The
 	// derivation is deterministic for a given (passphrase, salt,
 	// machine-index) tuple; the operator's passphrase is the source
-	// of operator-side entropy. Per data-model §3.4 the same master
+	// of operator-side entropy. The same master
 	// seed produces the same per-machine key.
 	salt := make([]byte, 16)
 	if _, saltErr := io.ReadFull(deps.randReader, salt); saltErr != nil {

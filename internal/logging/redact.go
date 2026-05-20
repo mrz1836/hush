@@ -6,7 +6,7 @@ import "regexp"
 // RedactString. It is nil until the first call to RedactString or New.
 // Consumers MUST treat this slice as read-only; mutation is undefined behavior.
 //
-//nolint:gochecknoglobals // exported locked API (SDD-05); read-only after sync.Once initialisation
+//nolint:gochecknoglobals // exported locked API; read-only after sync.Once initialisation
 var RedactPatterns []*regexp.Regexp
 
 // ensurePatterns lazily compiles RedactPatterns on first use.

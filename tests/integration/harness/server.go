@@ -27,9 +27,9 @@ import (
 	"github.com/mrz1836/hush/internal/vault"
 )
 
-// TestServer composes the REAL internal/server chassis (SDD-10..13) over a
-// loopback TCP listener. Only four boundaries are mocked (per CLAUDE.md
-// SDD-25 spec): Discord (TestDiscord.AsApprover), validator HTTP (via
+// TestServer composes the REAL internal/server chassis over a
+// loopback TCP listener. Only four boundaries are mocked: Discord
+// (TestDiscord.AsApprover), validator HTTP (via
 // MockValidator), wall clock (FakeClock injected by the supervisor), and
 // the Tailscale-bind probe (faked via Deps.InterfaceLister to claim the
 // configured CGNAT address is bound locally).
@@ -238,7 +238,7 @@ func (s *TestServer) TokenStore() token.Store { return nil } // wired by future 
 // server.Server type owns the reload helper internally; this stub returns
 // nil until that hook is exposed.
 func (s *TestServer) Reload(_ context.Context) error {
-	// SDD-13 vault reload is wired in production via SIGHUP. Scenario 13
+	// Vault reload is wired in production via SIGHUP. Scenario 13
 	// will exercise this via a test-only hook to be added when wired.
 	return errors.New("harness: Reload not yet wired (Scenario 13 pending)")
 }

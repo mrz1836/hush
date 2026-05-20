@@ -10,7 +10,7 @@ import (
 )
 
 // RawMessage is a named byte slice whose contents are inserted verbatim into
-// the canonical output (FR-022 escape hatch). A nil or zero-length RawMessage
+// the canonical output (escape hatch). A nil or zero-length RawMessage
 // emits the JSON null literal.
 type RawMessage []byte
 

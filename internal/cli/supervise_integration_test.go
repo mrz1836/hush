@@ -21,8 +21,7 @@ import (
 // `hush supervise <fixture-config> --dry-run` path against a fake
 // supervisor config and a DiscordStub. Asserts the dry-run produces a
 // machine-parseable canonical-JSON payload, no Discord call is
-// issued, and no pidfile / socket binding occurs (FR-023-9 +
-// SC-023-2).
+// issued, and no pidfile / socket binding occurs.
 func TestSuperviseIntegration_DryRunWithDiscordStub(t *testing.T) {
 	stub := testutil.NewDiscordStub(t)
 

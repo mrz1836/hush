@@ -3,7 +3,7 @@ package token
 import "errors"
 
 // Sentinel errors. Compare via errors.Is. Messages are static and
-// embed no JWT, signing-key, or verify-key bytes (FR-014).
+// embed no JWT, signing-key, or verify-key bytes.
 //
 // Granularity follows the principle that operators should be able to alert
 // on each failure class independently: an issuance call that fails because

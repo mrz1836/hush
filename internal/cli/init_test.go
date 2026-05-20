@@ -93,7 +93,7 @@ func newInitFixture(t *testing.T) *initFixture {
 	stdoutS := newStream(stdout, false, true)
 	stderrS := newStream(stderr, false, true)
 	tmpDir := t.TempDir()
-	// vault.Save enforces parent-mode 0700 (SDD-03); t.TempDir
+	// vault.Save enforces parent-mode 0700; t.TempDir
 	// returns 0755 by default.
 	require.NoError(t, os.Chmod(tmpDir, 0o700))
 	kc := keychain.NewFake()
@@ -322,7 +322,7 @@ func TestInitServer_CreatesVaultWith0600(t *testing.T) {
 	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 	require.Greater(t, info.Size(), int64(0))
 
-	// Vault starts with the SDD-03 magic header bytes "HUSH".
+	// Vault starts with the magic header bytes "HUSH".
 	header := make([]byte, 4)
 	f, err := os.Open(vaultPath)
 	require.NoError(t, err)
@@ -620,7 +620,7 @@ func TestInitServer_RefusesPreExistingVault(t *testing.T) {
 	t.Parallel()
 	fx := newInitFixture(t)
 	// Opt into legacy fail-on-existence behavior; the default
-	// guided flow prompts per artifact (Plan AC-9 / Task 2.4). The
+	// guided flow prompts per artifact. The
 	// fail-mode contract is exercised by this test.
 	fx.deps.serverOnExisting = onExistingFail
 	vaultPath := filepath.Join(fx.tempDir, "secrets.vault")
@@ -1031,7 +1031,7 @@ func TestInit_LintNoOsGetenv(t *testing.T) {
 	body, err := os.ReadFile("init.go")
 	require.NoError(t, err)
 	require.NotContains(t, string(body), "os.Getenv",
-		"init.go must not call os.Getenv (FR-001)")
+		"init.go must not call os.Getenv")
 }
 
 func TestInit_NoPassphraseFlag(t *testing.T) {
@@ -1077,8 +1077,8 @@ func scriptedRecoveryReader(t *testing.T, choices []rune) func(*os.File, io.Writ
 	}
 }
 
-// TestInitServer_PreflightFail_ShortCircuitsBeforePrompt asserts AC-2 /
-// Task 2.2: when the preflight registry returns a fail, the guided
+// TestInitServer_PreflightFail_ShortCircuitsBeforePrompt asserts that
+// when the preflight registry returns a fail, the guided
 // flow exits with the typed remedy and never prompts the operator.
 func TestInitServer_PreflightFail_ShortCircuitsBeforePrompt(t *testing.T) {
 	t.Parallel()
@@ -1110,7 +1110,7 @@ func TestInitServer_PreflightFail_ShortCircuitsBeforePrompt(t *testing.T) {
 }
 
 // TestInitServer_PreflightWarn_ContinuesWithSurface asserts the warn
-// branch (Plan AC-2): warnings are surfaced but the flow continues
+// branch: warnings are surfaced but the flow continues
 // to the prompt phase.
 func TestInitServer_PreflightWarn_ContinuesWithSurface(t *testing.T) {
 	t.Parallel()
@@ -1127,7 +1127,7 @@ func TestInitServer_PreflightWarn_ContinuesWithSurface(t *testing.T) {
 
 // TestInitServer_AllowClockSkew_DowngradesClockSyncWarn asserts that
 // --allow-clock-skew folds a clock-sync warn into a single override
-// message (Plan AC-8 / Task 2.5). Phase 4 wires the audit event.
+// message. Phase 4 wires the audit event.
 func TestInitServer_AllowClockSkew_DowngradesClockSyncWarn(t *testing.T) {
 	t.Parallel()
 	fx := newInitFixture(t)
@@ -1145,7 +1145,7 @@ func TestInitServer_AllowClockSkew_DowngradesClockSyncWarn(t *testing.T) {
 }
 
 // TestInitServer_PreExplainsKeychainWrites asserts the hush-authored
-// pre-explanation precedes every Keychain write (Plan AC-4 / Task 2.3).
+// pre-explanation precedes every Keychain write.
 func TestInitServer_PreExplainsKeychainWrites(t *testing.T) {
 	t.Parallel()
 	fx := newInitFixture(t)
@@ -1168,7 +1168,7 @@ func TestInitServer_PreExplainsKeychainWrites(t *testing.T) {
 	require.Less(t, tokenIdx, completeIdx)
 }
 
-// TestInitServer_Recovery_PromptQuitAborts asserts AC-9 Task 2.4:
+// TestInitServer_Recovery_PromptQuitAborts asserts that
 // pressing `q` at the recovery prompt exits cleanly with the
 // user-aborted code.
 func TestInitServer_Recovery_PromptQuitAborts(t *testing.T) {
@@ -1185,7 +1185,7 @@ func TestInitServer_Recovery_PromptQuitAborts(t *testing.T) {
 	require.Contains(t, fx.stderr.String(), initMsgRecoveryUserAborted)
 }
 
-// TestInitServer_Recovery_PromptReuseSkipsCreate asserts AC-9 Task 2.4:
+// TestInitServer_Recovery_PromptReuseSkipsCreate asserts that
 // `r`euse leaves the existing file in place and proceeds.
 func TestInitServer_Recovery_PromptReuseSkipsCreate(t *testing.T) {
 	t.Parallel()
@@ -1244,7 +1244,7 @@ func TestInitServer_Recovery_PromptArchiveRenamesAndProceeds(t *testing.T) {
 }
 
 // TestInitServer_Recovery_NonInteractive_OnExistingArchive asserts
-// Plan AC-1 + AC-9 with --non-interactive: --on-existing=archive is
+// that with --non-interactive, --on-existing=archive is
 // honored without prompting.
 func TestInitServer_Recovery_NonInteractive_OnExistingArchive(t *testing.T) {
 	t.Parallel()
@@ -1278,7 +1278,7 @@ func TestInitServer_Recovery_NonInteractive_OnExistingArchive(t *testing.T) {
 }
 
 // TestInitServer_OnExistingFlag_RejectsInvalidValue asserts the flag
-// is enum-validated (Plan AC-1 / Task 2.5).
+// is enum-validated.
 func TestInitServer_OnExistingFlag_RejectsInvalidValue(t *testing.T) {
 	t.Parallel()
 	fx := newInitFixture(t)
@@ -1289,8 +1289,8 @@ func TestInitServer_OnExistingFlag_RejectsInvalidValue(t *testing.T) {
 	require.Contains(t, fx.stderr.String(), "--on-existing must be one of")
 }
 
-// TestNewInitServerCmd_Help_AdvertisesGuidedDefault asserts AC-1 /
-// Task 2.1: --help text documents the new default and the new flags.
+// TestNewInitServerCmd_Help_AdvertisesGuidedDefault asserts the
+// --help text documents the new default and the new flags.
 func TestNewInitServerCmd_Help_AdvertisesGuidedDefault(t *testing.T) {
 	t.Parallel()
 	cmd := newInitServerCmd()
@@ -1312,7 +1312,7 @@ func TestNewInitServerCmd_Help_AdvertisesGuidedDefault(t *testing.T) {
 	require.NotNil(t, flag, "non-interactive flag must remain declared")
 }
 
-// TestNewServeCmd_Help_HasAllowClockSkew asserts Plan AC-8 / Task 2.5:
+// TestNewServeCmd_Help_HasAllowClockSkew asserts that
 // hush serve carries the --allow-clock-skew flag (wired in Phase 4).
 func TestNewServeCmd_Help_HasAllowClockSkew(t *testing.T) {
 	t.Parallel()

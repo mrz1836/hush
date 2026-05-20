@@ -66,11 +66,11 @@ const (
 	errCodeSecretInternal     = "internal_error"
 )
 
-// handleSecret is the SDD-13 entry point for `GET /h/<prefix>/s/<name>`.
+// handleSecret is the entry point for `GET /h/<prefix>/s/<name>`.
 // Pipeline: parse name → extract Bearer JWT → token.Validate → vault.Get →
 // ecies.Encrypt → write octet-stream body. Every outcome emits exactly one
-// audit event (FR-027). The response body NEVER carries the plaintext
-// secret value (Constitution X / FR-005).
+// audit event. The response body NEVER carries the plaintext
+// secret value (Constitution X).
 //
 //nolint:gocognit,gocyclo,cyclop,funlen // sequential pipeline: name → token → vault → ECIES; complexity is structural
 func (s *Server) handleSecret(w http.ResponseWriter, r *http.Request) {
@@ -158,8 +158,8 @@ func (s *Server) handleSecret(w http.ResponseWriter, r *http.Request) {
 	// and the next persisted line would leave the client with the secret
 	// and the chain with no record of the retrieval. False-negative gaps
 	// in the audit chain are worse than false-positives, so we record the
-	// success the moment the envelope is materialized. FR-027 still holds
-	// (one event per request); a downstream wire-write failure is logged
+	// success the moment the envelope is materialized. The one-event-per-
+	// request invariant still holds; a downstream wire-write failure is logged
 	// at WARN but does not retract the audit entry.
 	s.emitSecretAudit(ctx, audit.ActionSecretRetrieved, requestID, peer, name, string(claims.SessionType), "secret_retrieved")
 
@@ -185,7 +185,7 @@ func (s *Server) handleSecret(w http.ResponseWriter, r *http.Request) {
 }
 
 // respondSecretValidationError maps a token.Validate sentinel to the
-// documented (status, code, audit-action) tuple per R-007.
+// documented (status, code, audit-action) tuple.
 func (s *Server) respondSecretValidationError(
 	w http.ResponseWriter, ctx context.Context,
 	requestID string, peer netip.Addr, name string, valErr error,
@@ -289,7 +289,7 @@ func (s *Server) emitSecretAudit(
 
 // buildSecretAuditDetail returns the allow-list Detail map. NEVER carries
 // the secret value, the JWT, the ECIES envelope, the ephemeral pubkey,
-// or the request signature (FR-028, FR-029, FR-030).
+// or the request signature.
 func buildSecretAuditDetail(outcome, requestID string, peer netip.Addr, name, sessionType string) map[string]string {
 	d := map[string]string{
 		"outcome": outcome,

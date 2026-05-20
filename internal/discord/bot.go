@@ -18,7 +18,7 @@ import (
 // sessionAPI is the narrow seam over *discordgo.Session that bot.go
 // actually invokes. *discordgo.Session satisfies it structurally; the
 // session_shim_test.go fake implements the same surface so tests
-// never open a real Discord connection (research R-007).
+// never open a real Discord connection.
 type sessionAPI interface {
 	Open() error
 	Close() error
@@ -98,7 +98,7 @@ var _ Approver = (*BotApprover)(nil)
 // On successful validation the constructor reads the bot token via
 // cfg.Token.Use(fn) exactly once, hands the resulting *discordgo.Session
 // to the monitor, registers gateway/event handlers, and calls
-// session.Open(). Open() failure does NOT fail NewBotApprover (FR-013a):
+// session.Open(). Open() failure does NOT fail NewBotApprover:
 // the approver enters the unavailable state and the monitor's
 // reconnect loop drives recovery.
 //
@@ -140,7 +140,7 @@ func NewBotApprover(ctx context.Context, cfg BotConfig, logger *slog.Logger) (*B
 
 	a := newBotApproverWithSession(ctx, cfg, logger, session)
 
-	// Best-effort initial Open(); FR-013a: failure is not fatal.
+	// Best-effort initial Open(); failure is not fatal.
 	if err := a.session.Open(); err != nil {
 		a.logger.Warn("hush/discord: initial Open() failed; monitor will retry",
 			slog.String("err_class", "discord_unavailable"))
@@ -199,7 +199,7 @@ func newBotApproverWithSession(ctx context.Context, cfg BotConfig, logger *slog.
 //
 // Pre-conditions checked in order BEFORE any side effect:
 //  1. available flag is false → return ErrDiscordUnavailable
-//     immediately (rate-limit bucket is NOT consulted — FR-021a).
+//     immediately (rate-limit bucket is NOT consulted).
 //  2. rate-limit bucket Acquire denies the request → return
 //     ErrRateLimited.
 //  3. DM rendering produces a *discordgo.MessageSend.
@@ -339,7 +339,7 @@ func (a *BotApprover) registerHandlers() {
 	})
 	a.session.AddHandler(func(_ *discordgo.Session, _ *discordgo.Connect) {
 		// Connect is socket-open only; Ready is the authoritative
-		// gateway-functional signal (research R-004).
+		// gateway-functional signal.
 	})
 	a.session.AddHandler(func(_ *discordgo.Session, _ *discordgo.Disconnect) {
 		a.onDisconnect()
@@ -376,7 +376,7 @@ func (a *BotApprover) onInteractionCreate(i *discordgo.InteractionCreate) {
 	}
 
 	// First-action-wins: remove the entry BEFORE sending so a
-	// concurrent second click finds nothing (FR-017).
+	// concurrent second click finds nothing.
 	raw, found := a.pending.LoadAndDelete(uuid)
 	if !found {
 		a.respondInteractionNotice(i, "This request is no longer active. It was already handled, expired, or the bot restarted; check the audit message for the final decision.")
@@ -425,7 +425,7 @@ func (a *BotApprover) respondInteractionNotice(i *discordgo.InteractionCreate, c
 }
 
 // newRequestID returns a 32-character hex-encoded random identifier
-// used as the Discord component CustomID prefix (research R-006).
+// used as the Discord component CustomID prefix.
 func newRequestID() (string, error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {

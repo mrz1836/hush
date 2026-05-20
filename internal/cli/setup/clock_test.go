@@ -14,8 +14,7 @@ import (
 
 // TestClockSyncRemedy_PerPlatform asserts the platform-aware helper
 // returns the exact command string each supported GOOS is documented
-// to receive. Locked text — Plan AC-8's "exact remediation command"
-// promise.
+// to receive. Locked text — the "exact remediation command" promise.
 func TestClockSyncRemedy_PerPlatform(t *testing.T) {
 	t.Parallel()
 
@@ -75,8 +74,7 @@ func TestClockSyncCheck_SkipsWhenNotRequired(t *testing.T) {
 }
 
 // TestClockSyncCheck_VerdictMatrix exercises every (synced, drift,
-// err, allowSkew) combination the check must classify. Plan AC-8 /
-// Task 4.1 / Task 4.2.
+// err, allowSkew) combination the check must classify.
 func TestClockSyncCheck_VerdictMatrix(t *testing.T) {
 	t.Parallel()
 

@@ -16,8 +16,8 @@ import (
 	"github.com/mrz1836/hush/internal/vault/securebytes"
 )
 
-// TestVaultPath_Derivation pins the convention used by SDD-15 and the SIGHUP
-// handler — secrets.vault inside the configured state dir.
+// TestVaultPath_Derivation pins the convention used by the rotate command
+// and the SIGHUP handler — secrets.vault inside the configured state dir.
 func TestVaultPath_Derivation(t *testing.T) {
 	t.Parallel()
 	cfg := testCfg(t)

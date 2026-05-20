@@ -11,8 +11,8 @@ import (
 )
 
 // zshUnsafeReadPattern matches the bash-only `read -p` / `read -s`
-// constructs that crash zsh on macOS. The pattern is locked at the
-// AC-7 contract: hush's guided flow and every doc snippet it ships
+// constructs that crash zsh on macOS. hush's guided flow and every
+// doc snippet it ships
 // MUST stay zsh-safe by default because macOS users open `zsh`, not
 // `bash`, after running `hush init server`.
 //
@@ -80,7 +80,7 @@ var zshGuardAllowlist = []struct {
 // keep the guided flow and its documentation zsh-safe by default,
 // because macOS users land in `zsh` after running `hush init server`
 // and a stray `read -p` / `read -s` instantly breaks the operator's
-// first interaction with hush (T-273 Hush 101 incident; Plan AC-7).
+// first interaction with hush.
 func TestZshSafeSnippetsGuard(t *testing.T) {
 	t.Parallel()
 	root := repoRootFromSetupPkg(t)

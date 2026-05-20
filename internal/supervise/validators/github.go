@@ -9,7 +9,7 @@ import (
 )
 
 // githubValidator implements Validator for GitHub personal access tokens
-// (header: Authorization: token <pat>). Endpoint pinned at R-003e.
+// (header: Authorization: token <pat>).
 type githubValidator struct {
 	name    string
 	url     string

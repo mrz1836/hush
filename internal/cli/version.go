@@ -20,7 +20,7 @@ var (
 	Date = "unknown"
 )
 
-// versionDoc is the locked non-TTY JSON shape (FR-019a). Three keys,
+// versionDoc is the locked non-TTY JSON shape. Three keys,
 // always present, in this exact order.
 type versionDoc struct {
 	Version string `json:"version"`

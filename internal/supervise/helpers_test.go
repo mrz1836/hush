@@ -18,7 +18,7 @@ import (
 )
 
 // State/grace/refresh tests use testutil.FakeClock. This file adds
-// the HTTP / log / ECIES fixtures the new SDD-21 tests depend on.
+// the HTTP / log / ECIES fixtures the refill tests depend on.
 
 // roundTripFunc adapts a func to an http.RoundTripper.
 type roundTripFunc func(req *http.Request) (*http.Response, error)

@@ -14,8 +14,7 @@ import (
 )
 
 // TestGrace_UsesCacheOnExpiredJWT: Set then Get within the window
-// returns the cached SecureBytes intact (FR-021-12, B-GR-1,
-// Lifecycle Scenario 9).
+// returns the cached SecureBytes intact.
 func TestGrace_UsesCacheOnExpiredJWT(t *testing.T) {
 	clk := testutil.NewFakeClock(time.Date(2026, 5, 10, 14, 0, 0, 0, time.UTC))
 	g := NewGrace(60*time.Minute, true)
@@ -39,7 +38,7 @@ func TestGrace_UsesCacheOnExpiredJWT(t *testing.T) {
 }
 
 // TestGrace_TTLCapAt4h: NewGrace(8h, true) is capped to 4h; an entry
-// is evicted at T0+4h+1ns (FR-021-12, GR-1, B-GR-5).
+// is evicted at T0+4h+1ns.
 func TestGrace_TTLCapAt4h(t *testing.T) {
 	clk := testutil.NewFakeClock(time.Date(2026, 5, 10, 14, 0, 0, 0, time.UTC))
 	g := NewGrace(8*time.Hour, true)
@@ -58,7 +57,7 @@ func TestGrace_TTLCapAt4h(t *testing.T) {
 }
 
 // TestGrace_DisabledWhenConfigFalse: enabled=false produces no-op
-// Set; ownership stays with caller (FR-021-14, B-GR-3).
+// Set; ownership stays with caller.
 func TestGrace_DisabledWhenConfigFalse(t *testing.T) {
 	g := NewGrace(60*time.Minute, false)
 
@@ -92,7 +91,7 @@ func TestGrace_ZeroWindowEqualsDisabled(t *testing.T) {
 }
 
 // TestGrace_LazyEvictsOnGetAfterTTL: Get on an expired entry destroys
-// + removes the entry inline (FR-021-13, GR-4, B-GR-2).
+// + removes the entry inline.
 func TestGrace_LazyEvictsOnGetAfterTTL(t *testing.T) {
 	clk := testutil.NewFakeClock(time.Date(2026, 5, 10, 14, 0, 0, 0, time.UTC))
 	g := NewGrace(30*time.Minute, true)
@@ -117,7 +116,7 @@ func TestGrace_LazyEvictsOnGetAfterTTL(t *testing.T) {
 }
 
 // TestGrace_EvictDestroysAndRemoves: explicit Evict destroys the
-// cached SecureBytes and removes the map slot (FR-021-16, B-GR-7).
+// cached SecureBytes and removes the map slot.
 func TestGrace_EvictDestroysAndRemoves(t *testing.T) {
 	g := NewGrace(time.Hour, true)
 	sb := newSecureBytes(t, []byte("X"))
@@ -138,8 +137,7 @@ func TestGrace_EvictDestroysAndRemoves(t *testing.T) {
 	}
 }
 
-// TestGrace_EvictOnAbsentNameIsNoop: Evict on missing key is silent
-// (FR-021-16, B-GR-8, GR-5).
+// TestGrace_EvictOnAbsentNameIsNoop: Evict on missing key is silent.
 func TestGrace_EvictOnAbsentNameIsNoop(t *testing.T) {
 	g := NewGrace(time.Hour, true)
 	g.Evict("nonexistent")
@@ -152,7 +150,7 @@ func TestGrace_EvictOnAbsentNameIsNoop(t *testing.T) {
 }
 
 // TestGrace_SetOverwriteDestroysPrior: Set on an existing key
-// destroys the prior SecureBytes (FR-021-13, GR-3, B-GR-6).
+// destroys the prior SecureBytes.
 func TestGrace_SetOverwriteDestroysPrior(t *testing.T) {
 	g := NewGrace(time.Hour, true)
 	sb1 := newSecureBytes(t, []byte("A"))
@@ -178,8 +176,7 @@ func TestGrace_SetOverwriteDestroysPrior(t *testing.T) {
 
 // TestGrace_NeverRendersValueAsString: Grace's value pointers go
 // through SecureBytes.LogValue() which redacts. A direct slog call on
-// the cache must not leak any underlying bytes (FR-021-15, B-GR-9,
-// Constitution X).
+// the cache must not leak any underlying bytes.
 func TestGrace_NeverRendersValueAsString(t *testing.T) {
 	const marker = "HUSH-MARKER-21-CACHED"
 	g := NewGrace(time.Hour, true)
@@ -217,8 +214,7 @@ func graceWorker(t *testing.T, g *Grace, seed int64) {
 }
 
 // TestGrace_ConcurrentRaceClean: 100 goroutines hammering Set/Get/
-// Evict against the same key — race-clean and consistent (B-GR-10,
-// GR-8, SC-021-9).
+// Evict against the same key — race-clean and consistent.
 func TestGrace_ConcurrentRaceClean(t *testing.T) {
 	g := NewGrace(time.Hour, true)
 	const N = 100

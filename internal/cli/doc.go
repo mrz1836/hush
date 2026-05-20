@@ -2,7 +2,7 @@
 // binary. It owns the cobra root command, the four global persistent
 // flags (--config, --verbose, --quiet, --no-color), the per-stream
 // TTY-aware output formatter, the seven public exit-code constants,
-// and the four operator subcommands delivered by SDD-14: serve,
+// and the four operator subcommands: serve,
 // health, version, revoke.
 //
 // The package's only exported surface is [Execute] (returning the

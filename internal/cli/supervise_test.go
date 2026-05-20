@@ -213,8 +213,7 @@ func TestSupervise_NoCacheForcesStrict(t *testing.T) {
 }
 
 // TestSupervise_NoCacheBeatsGraceWindow — both flags supplied →
-// effective grace is disabled, --grace-window ignored without error
-// (FR-023-14).
+// effective grace is disabled, --grace-window ignored without error.
 func TestSupervise_NoCacheBeatsGraceWindow(t *testing.T) {
 	cfgCacheEnabled := true
 	flagNoCache := true
@@ -306,7 +305,7 @@ func TestSupervise_ConfigInvalidExitInputErr(t *testing.T) {
 }
 
 // TestSupervise_DuplicateStartRefused — pre-acquire the pidfile in
-// test setup; assert wrapped ErrPidLocked + ExitErr with the FR-023-6
+// test setup; assert wrapped ErrPidLocked + ExitErr with the
 // "another supervisor is already running" message.
 func TestSupervise_DuplicateStartRefused(t *testing.T) {
 	dir := shortTempBase(t)
@@ -394,7 +393,7 @@ func TestSupervise_RealClock(t *testing.T) {
 
 // TestSupervise_NoSecretInErrorMessages — drive every supervise error
 // path and assert no secret-marker bytes appear on stdout / stderr.
-// FR-023-27/28: errors identify failure mode + non-secret identifier
+// Errors identify failure mode + non-secret identifier
 // (scope name, supervisor name, socket path) only.
 func TestSupervise_NoSecretInErrorMessages(t *testing.T) {
 	cases := []struct {

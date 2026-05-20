@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// FuzzDeriveMaster covers G10 + AC-9 + SC-002.
+// FuzzDeriveMaster fuzzes master-seed derivation.
 // Run with: go test -fuzz=FuzzDeriveMaster -fuzztime=60s ./internal/keys/
 func FuzzDeriveMaster(f *testing.F) {
 	f.Add([]byte("correct-horse-battery"), []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16})

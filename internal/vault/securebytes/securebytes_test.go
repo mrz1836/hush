@@ -20,7 +20,6 @@ var (
 	errTestMUnlock = errors.New("simulated munlock failure")
 )
 
-// TestSecureBytes_New_CopiesAndZeroesInput covers G1 (FR-003, FR-004, SC-005, SC-006).
 func TestSecureBytes_New_CopiesAndZeroesInput(t *testing.T) { //nolint:gocognit,gocyclo // table-driven sub-tests; complexity is structural, not accidental
 	t.Run("nil input", func(t *testing.T) {
 		sb, err := New(nil)
@@ -96,7 +95,6 @@ func TestSecureBytes_New_CopiesAndZeroesInput(t *testing.T) { //nolint:gocognit,
 	})
 }
 
-// TestSecureBytes_Use_DeliversPayload covers G2 (FR-006, FR-008).
 func TestSecureBytes_Use_DeliversPayload(t *testing.T) { //nolint:gocognit // multiple sub-tests for concurrent, panic, and payload paths; complexity is structural
 	payload := []byte("correct-horse-battery-staple")
 	input := make([]byte, len(payload))
@@ -171,7 +169,6 @@ func TestSecureBytes_Use_DeliversPayload(t *testing.T) { //nolint:gocognit // mu
 	})
 }
 
-// TestSecureBytes_Render_RedactsAllPaths covers G5 LIVE path (FR-014, FR-015, FR-016).
 func TestSecureBytes_Render_RedactsAllPaths(t *testing.T) {
 	input := []byte("super-secret-value")
 	sb, err := New(input)
@@ -201,7 +198,6 @@ func TestSecureBytes_Render_RedactsAllPaths(t *testing.T) {
 	}
 }
 
-// TestSecureBytes_RedactionSentinel covers G6 (SC-001).
 func TestSecureBytes_RedactionSentinel(t *testing.T) { //nolint:gocyclo // asserts multiple output paths (slog, %s, %v, json); complexity is exhaustiveness
 	const sentinel = "SECRET_SHOULD_NEVER_APPEAR_2"
 	sb, err := New([]byte(sentinel))
@@ -254,7 +250,6 @@ func TestSecureBytes_RedactionSentinel(t *testing.T) { //nolint:gocyclo // asser
 	}
 }
 
-// TestSecureBytes_Destroy_ZeroesAndIdempotent covers G3 (FR-010, FR-011, SC-002, SC-007).
 func TestSecureBytes_Destroy_ZeroesAndIdempotent(t *testing.T) {
 	payload := []byte{1, 2, 3, 4, 5}
 	input := make([]byte, len(payload))
@@ -290,7 +285,6 @@ func TestSecureBytes_Destroy_ZeroesAndIdempotent(t *testing.T) {
 	}
 }
 
-// TestSecureBytes_PostDestroy_ReturnsErrDestroyed covers G4 (FR-009, FR-012, FR-018, SC-008).
 func TestSecureBytes_PostDestroy_ReturnsErrDestroyed(t *testing.T) {
 	sb, err := New([]byte("sensitive"))
 	if err != nil {
@@ -332,7 +326,6 @@ func TestSecureBytes_PostDestroy_ReturnsErrDestroyed(t *testing.T) {
 	}
 }
 
-// TestSecureBytes_FinalizerZerosOnGC covers G7 (FR-013, SC-003).
 func TestSecureBytes_FinalizerZerosOnGC(t *testing.T) {
 	var finalized atomic.Bool
 
@@ -369,7 +362,6 @@ func TestSecureBytes_FinalizerZerosOnGC(t *testing.T) {
 	}
 }
 
-// TestSecureBytes_ConcurrentUse covers G8 (FR-008, SC-010).
 func TestSecureBytes_ConcurrentUse(t *testing.T) { //nolint:gocognit // goroutine fan-out + atomic checks; complexity is the race-detector test pattern
 	payload := []byte("concurrent-secret")
 	input := make([]byte, len(payload))

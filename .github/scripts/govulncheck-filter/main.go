@@ -3,9 +3,9 @@
 // file (schema: `{version: 1, vulns: [{id, justification, expires}]}`),
 // then exits non-zero if any un-waived finding remains.
 //
-// FR-008 single source of truth — PR descriptions are non-authoritative
-// for waiving findings. The expires field is enforced: an expired waiver
-// no longer suppresses its finding.
+// The waiver file is the single source of truth — PR descriptions are
+// non-authoritative for waiving findings. The expires field is enforced:
+// an expired waiver no longer suppresses its finding.
 package main
 
 import (
@@ -46,7 +46,7 @@ type vulnFinding struct {
 
 func main() {
 	input := flag.String("input", "vulns.json", "path to govulncheck -format=json output")
-	allow := flag.String("allow", ".govulncheck-allow.yml", "path to waiver file (FR-008)")
+	allow := flag.String("allow", ".govulncheck-allow.yml", "path to waiver file")
 	flag.Parse()
 
 	waivers, err := parseAllowFile(*allow)

@@ -351,7 +351,7 @@ func TestAudit_RecordNoSecretValue(t *testing.T) {
 	sentinel := testutil.SentinelSecret(13)
 
 	// Producer-side discipline: the handler-side audit-data builder is the
-	// load-bearing leak boundary (FR-028). This test exercises the readback
+	// load-bearing leak boundary. This test exercises the readback
 	// loop: when producers correctly construct a Data map carrying ONLY the
 	// secret name (and never the value), the on-disk chain is sentinel-free.
 	if err := w.Append(context.Background(), "secret_retrieved", map[string]any{

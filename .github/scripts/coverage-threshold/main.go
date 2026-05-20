@@ -9,8 +9,8 @@ import (
 
 func main() {
 	cover := flag.String("cover", "cover.out", "path to a Go cover.out coverage profile")
-	minProject := flag.Float64("min-project", 90.0, "minimum project-wide coverage percent (FR-013)")
-	constitution := flag.String("constitution", ".specify/memory/constitution.md", "path to constitution for FR-016 byte-equality")
+	minProject := flag.Float64("min-project", 90.0, "minimum project-wide coverage percent")
+	constitution := flag.String("constitution", ".specify/memory/constitution.md", "path to constitution for byte-equality check")
 	flag.Parse()
 
 	if err := verifyConstitutionList(*constitution); err != nil {

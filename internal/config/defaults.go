@@ -67,7 +67,7 @@ var (
 //nolint:gochecknoglobals // sentinel-class: set-once at package load, never mutated
 var (
 	DefaultRequireFileModeChecks = true
-	DefaultRequireKeychainACL    = true // macOS; SDD-10 decides whether to enforce on Linux
+	DefaultRequireKeychainACL    = true // macOS; Linux enforcement is decided at server startup
 	DefaultRequireNTPSync        = true
 	DefaultMaxClockDrift         = 60 * time.Second
 )

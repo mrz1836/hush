@@ -14,8 +14,8 @@ var (
 	ErrMissingTokenIssuer = errors.New("server: missing token issuer")
 )
 
-// Chassis-level Approver outcome sentinels (SDD-12). The chassis itself never
-// produces these — the production wiring (cmd/hush + SDD-14) installs an
+// Chassis-level Approver outcome sentinels. The chassis itself never
+// produces these — the production wiring (cmd/hush) installs an
 // adapter that translates internal/discord sentinels into these chassis-level
 // constants so the claim handler stays decoupled from the discord package.
 //
@@ -70,7 +70,7 @@ var (
 	ErrClockProbeUnexpectedOutput = errors.New("server: clock_sync: unexpected probe output")
 )
 
-// Secret-handler sentinel errors (SDD-13). The /s handler maps
+// Secret-handler sentinel errors. The /s handler maps
 // ErrSecretMissing to the documented `404 not_found` outcome and the
 // `secret_missing` audit action; the surfaced response body never echoes
 // the secret name beyond the path the caller already supplied.

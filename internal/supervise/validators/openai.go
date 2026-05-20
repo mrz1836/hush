@@ -9,7 +9,7 @@ import (
 )
 
 // openaiValidator implements Validator for OpenAI API keys (header:
-// Authorization: Bearer <key>). Endpoint pinned at R-003c.
+// Authorization: Bearer <key>).
 type openaiValidator struct {
 	name    string
 	url     string

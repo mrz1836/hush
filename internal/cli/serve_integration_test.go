@@ -143,7 +143,7 @@ func makeRealVault(t *testing.T, dir string) {
 	}
 }
 
-// TestServe_StartAndShutdown is the AC-1 integration test: serve
+// TestServe_StartAndShutdown is the integration test: serve
 // brings the chassis online, /hz returns 200, ctx-cancel triggers
 // clean shutdown.
 func TestServe_StartAndShutdown(t *testing.T) {
@@ -294,7 +294,7 @@ func TestServe_BadPassphrase_ExitAuth(t *testing.T) {
 }
 
 // TestT273_Fixture4_ServeStartsViaEnvTokenWhenKeychainUnavailable is
-// the serve-side leg of SC-10 / AC-12 case 4: with
+// the serve-side leg: with
 // HUSH_DISCORD_BOT_TOKEN exported and a configured-but-unreachable
 // Keychain item name, [loadBotToken] returns the env-supplied token
 // without ever shelling out to the Keychain subprocess. This pins the
@@ -322,7 +322,7 @@ func TestT273_Fixture4_ServeStartsViaEnvTokenWhenKeychainUnavailable(t *testing.
 }
 
 // TestT273_Fixture5_ServeAllowClockSkewDowngradesProbeFailure is the
-// serve-side leg of SC-10 / AC-12 case 5 (override branch): when the
+// serve-side leg (override branch): when the
 // chassis's clock-sync probe fails AND `--allow-clock-skew` is set on
 // `hush serve`, the chassis MUST emit the "clock-sync override active"
 // log line and let startup continue past the clock-sync gate instead

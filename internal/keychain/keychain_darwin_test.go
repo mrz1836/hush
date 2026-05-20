@@ -147,8 +147,8 @@ func TestKeychainDarwin_RetrieveExitCode44IsNotFound(t *testing.T) {
 
 // TestKeychainDarwin_RetrieveDenialCodes asserts every Darwin exit
 // code the OS returns for "item exists but the read was refused"
-// collapses to [ErrKeychainPermissionDenied]. Plan AC-5 / Task 3.1:
-// init's ACL-aware recovery flow branches on this single sentinel.
+// collapses to [ErrKeychainPermissionDenied]: init's ACL-aware
+// recovery flow branches on this single sentinel.
 func TestKeychainDarwin_RetrieveDenialCodes(t *testing.T) {
 	t.Parallel()
 
@@ -316,9 +316,9 @@ func TestNewPlatformKeychain_Darwin(t *testing.T) {
 }
 
 // TestT273_Fixture1_RetrieveExit51IsPermissionDenied is the dedicated
-// SC-10 / AC-12 case 1 fixture at the keychain layer: Darwin exit
+// fixture at the keychain layer: Darwin exit
 // code 51 (errSecAuthFailed — the "item exists but the read was
-// refused" verdict observed during T-273) MUST map to
+// refused" verdict) MUST map to
 // [ErrKeychainPermissionDenied]. Upstream this drives
 // [setup.ErrTokenDenied] and the ACL-repair panel; pinning the wire
 // here means a future kernel-level remap of exit codes cannot quietly

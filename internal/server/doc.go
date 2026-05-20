@@ -1,5 +1,5 @@
-// Package server is the HTTP chassis on which SDD-12 (claim) and SDD-13
-// (secret/revoke/health) attach handlers and SDD-14 (`cmd/hush serve`) runs
+// Package server is the HTTP chassis on which the claim and
+// secret/revoke/health handlers attach and on which `cmd/hush serve` runs
 // as the lifecycle owner. The chassis owns four observable properties:
 //
 //  1. Refuse-to-start on a misconfigured host. Four ordered startup checks —
@@ -20,10 +20,10 @@
 //     across the process exit.
 //
 // The package also declares the Approver interface (with ApprovalRequest /
-// Decision value types) — SDD-11's Discord-backed implementation will satisfy
+// Decision value types) — a Discord-backed implementation will satisfy
 // it without modifying the chassis. AuditWriter is the consumer-side
-// interface the chassis uses to emit security-relevant events; SDD-13 supplies
-// the concrete implementation.
+// interface the chassis uses to emit security-relevant events; the audit
+// layer supplies the concrete implementation.
 //
 // Constitutional principles in scope:
 //   - III (defense in depth): the chassis is the mounting surface for every
@@ -49,6 +49,6 @@
 //     mounted prefix; must be called before [Server.Run] starts the listener.
 //   - [RequestID] — accessor for the chassis-assigned request ID.
 //   - [Approver], [ApprovalRequest], [Decision], [SessionType] — approval
-//     interface and value types consumed by SDD-12.
+//     interface and value types consumed by the claim handler.
 //   - [AuditWriter], [AuditEvent], [AuditEventType] — audit emission interface.
 package server

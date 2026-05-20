@@ -110,7 +110,7 @@ func TestHealth_NoAuth_OK(t *testing.T) {
 	}
 	// No audit event recorded.
 	if got := len(h.audit.snapshot()); got != 0 {
-		t.Fatalf("/hz emitted %d audit events; want 0 (FR-021a)", got)
+		t.Fatalf("/hz emitted %d audit events; want 0", got)
 	}
 }
 

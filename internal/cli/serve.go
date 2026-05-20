@@ -148,7 +148,7 @@ func newServeCmd() *cobra.Command {
 // runServe is the chassis-composition path. Each step's failure is
 // wrapped with %w so mapErr can match against the locked sentinels.
 //
-//nolint:gocognit,gocyclo,cyclop,contextcheck // sequential 11-step composition; complexity is structural per research.md §10. The audit goroutine intentionally runs on a parallel ctx so it survives parent-cancel for shutdown drain.
+//nolint:gocognit,gocyclo,cyclop,contextcheck // sequential 11-step composition; complexity is structural. The audit goroutine intentionally runs on a parallel ctx so it survives parent-cancel for shutdown drain.
 func runServe(ctx context.Context, stdout, stderr *Stream, deps serveDeps) error {
 	_ = stdout
 	verbose := func(format string, args ...any) {
@@ -429,7 +429,7 @@ func (s vaultFileSignature) changedFrom(other vaultFileSignature) bool {
 	return s.size != other.size || !s.modTime.Equal(other.modTime)
 }
 
-// resolvePassphrase implements the FR-008 priority order: stdin pipe
+// resolvePassphrase implements the priority order: stdin pipe
 // → TTY prompt → ExitInputErr. Never reads any environment variable.
 //
 // Pipe path: io.ReadAll(in) followed by stripPOSIXLineEnd —
@@ -437,7 +437,7 @@ func (s vaultFileSignature) changedFrom(other vaultFileSignature) bool {
 //
 // TTY path: term.ReadPassword(int(in.Fd())) — no echo, ever.
 //
-//nolint:gocognit,nestif // sequential pipe→tty→fail dispatch; branching is inherent to FR-008
+//nolint:gocognit,nestif // sequential pipe→tty→fail dispatch; branching is inherent
 func resolvePassphrase(_ context.Context, in *os.File, prompt io.Writer) (*securebytes.SecureBytes, error) {
 	isTerminal := in != nil && term.IsTerminal(int(in.Fd()))
 
@@ -483,8 +483,7 @@ func resolvePassphrase(_ context.Context, in *os.File, prompt io.Writer) (*secur
 // stripPOSIXLineEnd removes exactly one trailing \r\n if present, or
 // exactly one trailing \n if present, otherwise returns b unchanged.
 // All other bytes — including additional trailing newlines, leading
-// whitespace, internal whitespace — are preserved verbatim
-// (FR-008a, research.md §7).
+// whitespace, internal whitespace — are preserved verbatim.
 func stripPOSIXLineEnd(b []byte) []byte {
 	n := len(b)
 	if n >= 2 && b[n-2] == '\r' && b[n-1] == '\n' {
@@ -566,8 +565,8 @@ var botTokenItemRe = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,128}$`)
 // token wrapped in *securebytes.SecureBytes.
 //
 // Env-token mode: HUSH_DISCORD_BOT_TOKEN is the supported fallback
-// shown by `hush init server` after the Keychain ACL-recovery panel
-// (Plan AC-6). When the env var is set, serve uses it without
+// shown by `hush init server` after the Keychain ACL-recovery panel.
+// When the env var is set, serve uses it without
 // touching Keychain — this is the explicit operator opt-in for hosts
 // where Keychain ACLs are unrepairable. Keychain remains the default
 // when the env var is unset.

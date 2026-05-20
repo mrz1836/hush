@@ -2,7 +2,7 @@ package discord
 
 // Sibling at internal/discord/alerts/ratelimit.go shares this shape;
 // duplication is intentional because the alerts package is restricted
-// to stdlib imports (see .github/CLAUDE.md R-016).
+// to stdlib imports.
 
 import (
 	"sync"
@@ -21,7 +21,7 @@ type bucketKey struct {
 
 // bucketState tracks the most recent successful delivery and any
 // in-flight pending acquire for a given key. Both fields carry Go
-// monotonic timestamps (FR-019) and survive wall-clock changes.
+// monotonic timestamps and survive wall-clock changes.
 type bucketState struct {
 	delivered time.Time
 	pending   time.Time

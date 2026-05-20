@@ -26,7 +26,7 @@ var errKeychainACLLoopExhausted = errors.New("hush/cli: init: Keychain ACL recov
 // errKeychainACLDenialNonInteractive fires when the bot-token
 // Keychain probe surfaces [setup.ErrTokenDenied] in --non-interactive
 // mode. The panel is inherently interactive; non-interactive callers
-// must re-run with a TTY to choose a recovery branch (Plan AC-5).
+// must re-run with a TTY to choose a recovery branch.
 var errKeychainACLDenialNonInteractive = errors.New("hush/cli: init: bot-token Keychain item denied and --non-interactive set; re-run interactively to choose a recovery branch")
 
 // resolveKeychainACL drives the ACL-aware recovery panel for a
@@ -108,7 +108,7 @@ func resolveKeychainACL(
 
 // renderKeychainACLPanel writes the panel text to stderr. Locked
 // content — tests assert on substrings. The panel embeds zsh-safe
-// snippets only (AC-7); no `read -p` / `read -s`.
+// snippets only; no `read -p` / `read -s`.
 func renderKeychainACLPanel(stderr *Stream, service, account, keychainPath string) {
 	_ = stderr.WriteText(initMsgKeychainACLPanelFmt,
 		service,

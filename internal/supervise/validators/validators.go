@@ -9,10 +9,9 @@
 //
 // The credential is consumed exclusively via securebytes.Use(fn);
 // no credential value is ever materialized as a Go string outside
-// the single net/http.Header.Set conversion documented at research
-// reference R-008. No credential value, *http.Request, or
-// *http.Response is ever passed to a logger, error formatter, or
-// other byte sink.
+// the single net/http.Header.Set conversion. No credential value,
+// *http.Request, or *http.Response is ever passed to a logger, error
+// formatter, or other byte sink.
 package validators
 
 import (
@@ -28,8 +27,8 @@ import (
 	"github.com/mrz1836/hush/internal/vault/securebytes"
 )
 
-// Sentinel errors — Constitution IX sentinel-class read-only globals
-// (SDD-21 precedent). Compared via errors.Is, never mutated.
+// Sentinel errors — sentinel-class read-only globals. Compared via
+// errors.Is, never mutated.
 var (
 	// ErrStaleCredential is returned when the upstream provider responds
 	// with HTTP 401 or HTTP 403 — the credential is well-formed bytes but
@@ -52,7 +51,7 @@ var (
 	ErrValidatorNetwork = errors.New("validators: probe network failure")
 )
 
-// FR-010 validator names. Compile-time constants (Constitution IX exempt).
+// Validator names. Compile-time constants.
 const (
 	anthropicName      = "anthropic"
 	anthropicOAuthName = "anthropic-oauth"
@@ -61,7 +60,7 @@ const (
 	githubName         = "github"
 )
 
-// Endpoint pinning (R-003a..R-003e). Compile-time constants.
+// Endpoint pinning. Compile-time constants.
 const (
 	anthropicEndpoint = "https://api.anthropic.com/v1/models"
 	openaiEndpoint    = "https://api.openai.com/v1/models"
@@ -71,7 +70,7 @@ const (
 	anthropicVersionHeader = "2023-06-01"
 )
 
-// Log-record outcome attribute values (FR-020).
+// Log-record outcome attribute values.
 const (
 	outcomeSuccess = "success"
 	outcomeStale   = "stale"
@@ -112,8 +111,8 @@ type Registry struct {
 
 // NewRegistry builds a Registry pre-populated with the five built-in
 // validators. The supplied httpClient is shared across all five.
-// Passing nil yields a default *http.Client with the FR-012 5-second
-// timeout and redirect-follow disabled per FR-021.
+// Passing nil yields a default *http.Client with a 5-second timeout
+// and redirect-follow disabled.
 func NewRegistry(httpClient *http.Client) *Registry {
 	return &Registry{
 		byName: map[string]Validator{
@@ -127,7 +126,7 @@ func NewRegistry(httpClient *http.Client) *Registry {
 }
 
 // Get returns (registered Validator, true) for any of the five fixed
-// FR-010 lowercase names; returns (nil, false) for everything else
+// lowercase names; returns (nil, false) for everything else
 // including misspellings, case variants, whitespace-padded variants,
 // and the empty string.
 func (r *Registry) Get(name string) (Validator, bool) {
@@ -137,7 +136,7 @@ func (r *Registry) Get(name string) (Validator, bool) {
 
 // effectiveClient returns the caller-supplied client if non-nil,
 // otherwise a default 5s-timeout client with redirect-follow disabled.
-// No package-level singleton (FR-016).
+// No package-level singleton.
 func effectiveClient(c *http.Client) *http.Client {
 	if c != nil {
 		return c

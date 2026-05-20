@@ -24,7 +24,7 @@ var randReadFn io.Reader = rand.Reader
 // (32 chars), and stores the result in the request context under the
 // package-private [requestIDKey]. Client-supplied X-Request-ID and similar
 // headers are ignored unconditionally — the chassis is the sole source of
-// truth for request IDs (FR-016, FR-017).
+// truth for request IDs.
 func (s *Server) requestIDMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		buf := make([]byte, 16)
@@ -43,7 +43,7 @@ func (s *Server) requestIDMiddleware(next http.Handler) http.Handler {
 // request against the parsed allow-list of CIDRs. On mismatch, writes
 // 403 Forbidden, emits an [AuditAuthFailedNotAllowed] event, and returns
 // without invoking next. The check ignores X-Forwarded-For and similar
-// headers — only the connection's RemoteAddr is consulted (FR-018).
+// headers — only the connection's RemoteAddr is consulted.
 func (s *Server) ipAllowListMiddleware(allowed []netip.Prefix) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -177,7 +177,7 @@ func (s *Server) recoverFromHandlerPanic(w http.ResponseWriter, r *http.Request,
 // rejects a request the handler is never invoked, so no panic can
 // originate from it; the 403 path simply returns before recover has any
 // work to do. This is a structural guarantee, not a conditional bypass
-// of the chain (FR-026).
+// of the chain.
 func (s *Server) middlewareChain(handler http.Handler) http.Handler {
 	allowed := parseAllowedCIDRs(s.cfg.Network.AllowedCIDRs)
 

@@ -16,7 +16,7 @@ import (
 // client key. The key never leaves the process and is discarded
 // when runRevoke returns; the server rejects the signature with
 // 401/403 unless the caller has wired a registered key. This is the
-// stand-in path until SDD-15 / SDD-23 land local key derivation
+// stand-in path until local key derivation lands
 // for the operator-side `client` flow.
 func ephemeralRevokeKey(r io.Reader) (*ecdsa.PrivateKey, error) {
 	scalar := make([]byte, 32)
@@ -28,14 +28,14 @@ func ephemeralRevokeKey(r io.Reader) (*ecdsa.PrivateKey, error) {
 }
 
 // canonicaliseRevokePayload produces the canonical-JSON byte form of
-// the revoke payload via internal/transport/sign.CanonicalJSON
-// (locked at SDD-08). The returned bytes are what the client signs
+// the revoke payload via internal/transport/sign.CanonicalJSON.
+// The returned bytes are what the client signs
 // and what the server re-canonicalises to verify.
 func canonicaliseRevokePayload(p revokePayload) ([]byte, error) {
 	return sign.CanonicalJSON(p)
 }
 
-// signRevokePayload signs the canonical bytes via SDD-08's Sign and
+// signRevokePayload signs the canonical bytes via sign.Sign and
 // returns the base64-standard-encoded signature ready for the
 // envelope's Signature field.
 func signRevokePayload(ctx context.Context, key *ecdsa.PrivateKey, canonical []byte) (string, error) {

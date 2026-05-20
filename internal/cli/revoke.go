@@ -28,11 +28,11 @@ var errRevokeUnexpectedStatus = errors.New("revoke: unexpected status")
 var jtiRe = regexp.MustCompile(`^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$`)
 
 // revokeTotalTimeout reuses the same 5 s ceiling as `health` so
-// operators get one number to reason about (FR-015a).
+// operators get one number to reason about.
 const revokeTotalTimeout = 5 * time.Second
 
 // revokePayload is the canonical body signed by the client and
-// posted to the server. SDD-08's CanonicalJSON yields the exact byte
+// posted to the server. CanonicalJSON yields the exact byte
 // sequence the server re-canonicalises and verifies against.
 type revokePayload struct {
 	JTI       string `json:"jti"`

@@ -19,8 +19,8 @@ import (
 	"github.com/mrz1836/hush/internal/transport/sign"
 )
 
-// parseLogLevel maps cfg.LogLevel (validated against logLevelAllowList in
-// SDD-18) to slog.Level. Unknown values default to LevelInfo — config
+// parseLogLevel maps cfg.LogLevel (validated against logLevelAllowList)
+// to slog.Level. Unknown values default to LevelInfo — config
 // validation already rejected them before reaching this code path.
 func parseLogLevel(s string) slog.Level {
 	switch s {
@@ -36,8 +36,8 @@ func parseLogLevel(s string) slog.Level {
 }
 
 // superviseFlags holds the parsed flag values for `hush supervise`.
-// runSupervise applies the effective-projection rules per
-// FR-023-11/12/13/14 before any side effect.
+// runSupervise applies the effective-projection rules
+// before any side effect.
 type superviseFlags struct {
 	dryRun      bool
 	graceWindow time.Duration
@@ -84,7 +84,7 @@ func newSuperviseCmd() *cobra.Command {
 	return cmd
 }
 
-// graceWindowCap is the FR-023-12 hard cap (4h) on --grace-window.
+// graceWindowCap is the hard cap (4h) on --grace-window.
 const graceWindowCap = 4 * time.Hour
 
 // runSupervise is the supervise subcommand's main body. Loads the

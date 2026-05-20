@@ -2,17 +2,17 @@ package alerts
 
 // Sibling at internal/discord/ratelimit.go shares this shape;
 // duplication is intentional because this package is restricted to
-// stdlib imports (see .github/CLAUDE.md R-016).
+// stdlib imports.
 
 import (
 	"sync"
 	"time"
 )
 
-// ratebucket is the per-key minimum-interval debounce primitive
-// (R-009). One Router holds two independent ratebucket instances:
+// ratebucket is the per-key minimum-interval debounce primitive.
+// One Router holds two independent ratebucket instances:
 // one keyed by SupervisorName, one keyed by Pattern (with class-name
-// fallback per FR-011a).
+// fallback).
 //
 // Concurrency model: a single sync.Mutex guards the entire entries
 // map and per-key transitions. acquire/commit/refund each take the
@@ -22,7 +22,7 @@ import (
 // production wiring passes time.Now whose returned values carry a
 // monotonic reading. time.Sub uses the monotonic component, so
 // wall-clock manipulation (NTP/DST) cannot shorten or extend the
-// debounce window (FR-015).
+// debounce window.
 type ratebucket struct {
 	mu      sync.Mutex
 	window  time.Duration
@@ -92,7 +92,7 @@ func (b *ratebucket) commit(key string) {
 // refund clears a pending reservation without touching delivered.
 // Used when the per-pattern acquire denies and we need to release the
 // per-supervisor reservation, and when the Sender returns a transport
-// error (commit-on-success per FR-012a).
+// error (commit-on-success).
 func (b *ratebucket) refund(key string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()

@@ -18,7 +18,7 @@ type chassisAuditAdapter struct {
 
 // NewChassisAuditAdapter wraps an [audit.Writer] so it can be plugged
 // into [Deps.AuditWriter]. The adapter is constructed once at chassis
-// boot time (in cmd/hush, SDD-14) and lives for the chassis's lifetime.
+// boot time (in cmd/hush) and lives for the chassis's lifetime.
 func NewChassisAuditAdapter(w audit.Writer) AuditWriter {
 	return &chassisAuditAdapter{w: w}
 }

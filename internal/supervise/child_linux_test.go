@@ -16,7 +16,7 @@ import (
 
 // T-11a: TestChild_LinuxPdeathsig — kernel-enforced parent-death
 // cleanup on Linux. SIGKILL the sub-supervisor; grandchild is
-// reaped within 2s via Pdeathsig=SIGTERM (R-010).
+// reaped within 2s via Pdeathsig=SIGTERM.
 func TestChild_LinuxPdeathsig(t *testing.T) {
 	out := &syncBuffer{}
 	c := supervise.NewChild(helperConfig(t, "subsupervisor-with-grandchild", out))

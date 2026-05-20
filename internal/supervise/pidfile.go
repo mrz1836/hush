@@ -1,4 +1,4 @@
-// Package-private SDD-22 PID file: flock-backed exclusive supervisor lock.
+// Package-private PID file: flock-backed exclusive supervisor lock.
 package supervise
 
 import (
@@ -15,7 +15,7 @@ import (
 // ErrPidLocked is returned (wrapped) by AcquirePidFile when another live
 // process already holds the configured PID file's flock. The textual PID
 // inside the file is advisory metadata only — the criterion for "stale vs
-// live" is exclusively the OS-held flock (FR-022-3). Compare via
+// live" is exclusively the OS-held flock. Compare via
 // errors.Is(err, supervise.ErrPidLocked).
 var ErrPidLocked = errors.New("supervise: pidfile already locked")
 
@@ -28,7 +28,7 @@ var ErrSocketPermsLoose = errors.New("supervise: parent directory mode laxer tha
 
 // errAlreadyReleased is the package-private sentinel returned by
 // (*PidFile).Release on a second call. Not exported — double-Release is a
-// programmer error, not a control-flow input (research.md R-6).
+// programmer error, not a control-flow input.
 var errAlreadyReleased = errors.New("supervise: pidfile already released")
 
 // PidFile is a handle representing an acquired exclusive flock on a
@@ -45,13 +45,13 @@ type PidFile struct {
 // absent; refusing with ErrSocketPermsLoose if the existing parent is
 // laxer), then attempts a non-blocking exclusive flock. On success,
 // writes the current PID (textual base-10 form) into the file and returns
-// a *PidFile. The PID write happens AFTER the lock is held (FR-022-4) so
+// a *PidFile. The PID write happens AFTER the lock is held so
 // a refused acquirer cannot corrupt the live owner's record.
 func AcquirePidFile(path string) (*PidFile, error) {
 	if err := ensureParentMode0700(filepath.Dir(path)); err != nil {
 		return nil, err
 	}
-	fd, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600) //nolint:gosec // FR-022-6 mandates 0600
+	fd, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600) //nolint:gosec // 0600 is mandated
 	if err != nil {
 		return nil, fmt.Errorf("supervise: pidfile open: %w", err)
 	}

@@ -8,12 +8,11 @@ import (
 // mirrorAudit dispatches an audit-channel mirror payload for the
 // given lifecycle event. Best-effort, non-blocking: the actual
 // network call runs in a goroutine bound to ctx so the primary
-// RequestApproval flow does not wait on it (FR-008, clarification
-// 2026-04-30 Q4).
+// RequestApproval flow does not wait on it.
 //
 // When auditChan is empty the call is a no-op (mirroring disabled).
 // Failures log a WARN and are otherwise swallowed; the on-disk
-// hash-chained audit log (SDD-13) remains the authoritative record.
+// hash-chained audit log remains the authoritative record.
 func (a *BotApprover) mirrorAudit(ctx context.Context, eventType auditEventType, req ApprovalRequest) {
 	if a.auditChan == "" {
 		return

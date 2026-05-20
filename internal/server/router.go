@@ -55,7 +55,7 @@ func (s *Server) applyMounts(mux *http.ServeMux) {
 
 // isAllowedMethod reports whether m is one of the HTTP methods the chassis
 // permits in [Server.Mount]. The chassis keeps the surface small to keep the
-// mux behaviour predictable; SDD-12/13 only need POST and GET in v0.1.0.
+// mux behaviour predictable; the handlers only need POST and GET in v0.1.0.
 func isAllowedMethod(m string) bool {
 	switch m {
 	case http.MethodPost, http.MethodGet, http.MethodPut, http.MethodDelete,

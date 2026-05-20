@@ -6,7 +6,7 @@ import "errors"
 // maps to exactly one sentinel; errors.Is is the only matching primitive.
 // Sentinel error messages are static category strings; no message includes
 // any byte read from the TOML file beyond the field NAME or the validator
-// TYPE NAME (FR-014 + FR-020 + Constitution X).
+// TYPE NAME.
 var (
 	// Decode-phase errors.
 	ErrTOMLDecode           = errors.New("hush/supervise/config: TOML decode failed")

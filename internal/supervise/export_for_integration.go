@@ -2,9 +2,8 @@
 
 // File compiled only under `-tags=integration`. Exposes Lifecycle internals
 // that the tests/integration harness needs WITHOUT widening the production
-// API. The locked anti-contract (CLAUDE.md SDD-25) forbids new exported
-// methods on Lifecycle in the production build; this file is excluded from
-// production by the build tag.
+// API. The anti-contract forbids new exported methods on Lifecycle in the
+// production build; this file is excluded from production by the build tag.
 
 package supervise
 

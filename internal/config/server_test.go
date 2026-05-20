@@ -527,7 +527,7 @@ func TestLoadServer_AcceptsConfigAt0600(t *testing.T) {
 	require.NotNil(t, s)
 }
 
-// ---- claim_approval_timeout (SDD-12) ---------------------------------------
+// ---- claim_approval_timeout ------------------------------------------------
 
 func TestCryptoSection_ClaimApprovalTimeout_Default(t *testing.T) {
 	t.Parallel()

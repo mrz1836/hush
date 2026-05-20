@@ -13,7 +13,7 @@
 //   - [NonceCache] — sync.Map-backed nonce store; sweep started by [NonceCache.Run]
 //   - [IsFreshTimestamp] — symmetric ±skew freshness check
 //
-// Composition recipe (FR-013 + FR-014 anti-burn ordering):
+// Composition recipe (anti-burn ordering):
 //
 //	canonical → Verify → IsFreshTimestamp → NonceCache.Add
 package sign

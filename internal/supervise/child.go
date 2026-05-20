@@ -1,9 +1,8 @@
-// SDD-20 — Supervised child process layer.
+// Supervised child process layer.
 //
 // child.go declares the cross-platform Child handle, ChildConfig
 // input record, the ring-buffered output drain protocol, and the
-// sentinel errors plus Exit78 stale-credential constant
-// (FR-020-9, FR-020-11, FR-020-14, R-003).
+// sentinel errors plus Exit78 stale-credential constant.
 //
 // Platform-specific behaviour lives in child_linux.go (Pdeathsig)
 // and child_darwin.go (kqueue death-watch).
@@ -27,30 +26,27 @@ import (
 // ErrChildNotStarted is returned (wrapped) for every "no live
 // child" condition: never started, post-Wait re-entry, signal
 // forwarded after the child has exited but before Wait returned,
-// and concurrent Wait callers who lost the sync.Once race
-// (Clarification 1, Clarification 2, FR-020-11, R-011).
+// and concurrent Wait callers who lost the sync.Once race.
 var ErrChildNotStarted = errors.New("supervise: child not started")
 
 // ErrCommandEmpty is returned (wrapped) by Start when
-// len(cfg.Command) == 0 (FR-020-2, R-003). Distinct from
-// ErrCommandPathRelative.
+// len(cfg.Command) == 0. Distinct from ErrCommandPathRelative.
 var ErrCommandEmpty = errors.New("supervise: command empty")
 
 // ErrCommandPathRelative is returned (wrapped) by Start when
-// cfg.Command[0] is not an absolute path (FR-020-3, R-003).
-// Distinct from ErrCommandEmpty.
+// cfg.Command[0] is not an absolute path. Distinct from
+// ErrCommandEmpty.
 var ErrCommandPathRelative = errors.New("supervise: command path not absolute")
 
 // ---------- Stale-credential exit-code ----------
 
-// Exit78 is the project-wide stale-credential exit-code contract
-// (FR-020-9, Constitution V). A daemon that exits with this code
-// signals "my credentials are stale; refetch and restart". Wait
-// surfaces the value verbatim (FR-020-10).
+// Exit78 is the project-wide stale-credential exit-code contract.
+// A daemon that exits with this code signals "my credentials are
+// stale; refetch and restart". Wait surfaces the value verbatim.
 const Exit78 = 78
 
-// defaultRingBufferSize is the per-stream bounded ring capacity
-// (FR-020-12). 64 KB — kilobyte-scale, not megabyte-scale.
+// defaultRingBufferSize is the per-stream bounded ring capacity.
+// 64 KB — kilobyte-scale, not megabyte-scale.
 const defaultRingBufferSize = 64 * 1024
 
 // ---------- ChildConfig ----------
@@ -60,7 +56,7 @@ const defaultRingBufferSize = 64 * 1024
 // read-only from the layer's perspective; the layer never logs,
 // inspects, or copies Env values (Constitution X).
 type ChildConfig struct {
-	Command []string     // argv; element 0 absolute path (FR-020-1/2/3)
+	Command []string     // argv; element 0 absolute path
 	Env     []string     // KEY=VALUE pairs; consumed by execve
 	Dir     string       // working directory; "" inherits supervisor CWD
 	Stdout  io.Writer    // stdout sink; nil → discard
@@ -72,7 +68,7 @@ type ChildConfig struct {
 
 // Child is a handle to a single supervised daemon process.
 // Single-use: once Wait returns the exit disposition, the cached
-// *exec.Cmd is cleared (FR-020-11) and every subsequent call
+// *exec.Cmd is cleared and every subsequent call
 // returns ErrChildNotStarted. To launch another daemon, construct
 // a fresh Child via NewChild.
 //
@@ -122,7 +118,7 @@ func NewChild(cfg ChildConfig) *Child {
 // the two drain goroutines, and (on darwin) the death-watch
 // goroutine — all joined via Child.wg.
 //
-//nolint:gocognit // sequential goroutine wiring with explicit per-step rationale (FR-020-7, R-013, R-014)
+//nolint:gocognit // sequential goroutine wiring with explicit per-step rationale
 func (c *Child) Start(ctx context.Context) error {
 	if len(c.cfg.Command) == 0 {
 		return fmt.Errorf("supervise: %w", ErrCommandEmpty)
@@ -131,7 +127,7 @@ func (c *Child) Start(ctx context.Context) error {
 		return fmt.Errorf("supervise: %w (got %q)", ErrCommandPathRelative, c.cfg.Command[0])
 	}
 
-	cmd := exec.CommandContext(ctx, c.cfg.Command[0], c.cfg.Command[1:]...) //nolint:gosec // cfg.Command[0] is validated as an absolute path; argv-style call avoids shell parsing per FR-020-1.
+	cmd := exec.CommandContext(ctx, c.cfg.Command[0], c.cfg.Command[1:]...) //nolint:gosec // cfg.Command[0] is validated as an absolute path; argv-style call avoids shell parsing.
 	cmd.Path = c.cfg.Command[0]
 	// Defensive copy of the env slice: the caller (Lifecycle.startChild)
 	// owns cfg.Env and zeroes its contents after Start returns to scrub
@@ -160,7 +156,7 @@ func (c *Child) Start(ctx context.Context) error {
 
 	pgid := cmd.Process.Pid
 
-	// Forwarding goroutine — terminates on ctx.Done or childDone (Clarification 3, R-013).
+	// Forwarding goroutine — terminates on ctx.Done or childDone.
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
@@ -183,7 +179,7 @@ func (c *Child) Start(ctx context.Context) error {
 		}
 	}()
 
-	// Drain goroutines — one per stream (R-014).
+	// Drain goroutines — one per stream.
 	c.wg.Add(1)
 	go c.drainLoop(c.stdoutRing, c.cfg.Stdout)
 	c.wg.Add(1)
@@ -198,9 +194,9 @@ func (c *Child) Start(ctx context.Context) error {
 }
 
 // Wait blocks until the daemon exits, then returns the three-tuple
-// exit disposition (FR-020-8). The first caller wins the
-// sync.Once race; concurrent and subsequent callers observe
-// (0, 0, ErrChildNotStarted) per Clarification 1 + R-004.
+// exit disposition. The first caller wins the sync.Once race;
+// concurrent and subsequent callers observe
+// (0, 0, ErrChildNotStarted).
 func (c *Child) Wait() (exitCode int, signal syscall.Signal, err error) {
 	c.mu.RLock()
 	cmd := c.cmd
@@ -213,7 +209,7 @@ func (c *Child) Wait() (exitCode int, signal syscall.Signal, err error) {
 	c.waitOnce.Do(func() {
 		won = true
 		_ = cmd.Wait()
-		ws := cmd.ProcessState.Sys().(syscall.WaitStatus) //nolint:forcetypeassert // linux + darwin always return syscall.WaitStatus per R-007
+		ws := cmd.ProcessState.Sys().(syscall.WaitStatus) //nolint:forcetypeassert // linux + darwin always return syscall.WaitStatus
 		if ws.Signaled() {
 			c.exitCode = 0
 			c.exitSignal = ws.Signal()
@@ -225,7 +221,7 @@ func (c *Child) Wait() (exitCode int, signal syscall.Signal, err error) {
 
 		// Close rings BEFORE childDone close so drain goroutines
 		// observe the close-induced notify and flush final bytes
-		// (R-006 + R-014 ordering invariant).
+		// (ordering invariant).
 		_ = c.stdoutRing.Close()
 		_ = c.stderrRing.Close()
 
@@ -246,8 +242,7 @@ func (c *Child) Wait() (exitCode int, signal syscall.Signal, err error) {
 
 // Forward sends sig to the daemon's process group via the
 // per-Start forwarding goroutine. Returns ErrChildNotStarted if
-// no live child exists at call time (Clarification 2, FR-020-11,
-// R-011).
+// no live child exists at call time.
 func (c *Child) Forward(sig os.Signal) error {
 	c.mu.RLock()
 	cmd := c.cmd
@@ -271,8 +266,8 @@ func (c *Child) Forward(sig os.Signal) error {
 	return nil
 }
 
-// PID returns the daemon's process ID, or 0 if no child is live
-// (FR-020-11, R-011). Pure scalar read.
+// PID returns the daemon's process ID, or 0 if no child is live.
+// Pure scalar read.
 func (c *Child) PID() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -281,7 +276,7 @@ func (c *Child) PID() int {
 
 // drainLoop reads ring contents into sink. Terminates on
 // childDone (after a final drain pass). May park indefinitely on
-// a slow sink (Clarification 4, R-014) — that is the contract.
+// a slow sink — that is the contract.
 func (c *Child) drainLoop(ring *ringBuffer, sink io.Writer) {
 	defer c.wg.Done()
 	defer func() {
@@ -308,9 +303,8 @@ func (c *Child) drainLoop(ring *ringBuffer, sink io.Writer) {
 
 // ringBuffer is a 64 KB FIFO byte buffer protected by a mutex.
 // Write always returns (len(p), nil) — never blocks, never
-// short-writes (FR-020-13). On overflow, oldest bytes are
-// dropped and a single slog.Warn is emitted per episode per
-// stream (Clarification 5, R-006).
+// short-writes. On overflow, oldest bytes are dropped and a
+// single slog.Warn is emitted per episode per stream.
 type ringBuffer struct {
 	mu          sync.Mutex
 	buf         []byte
@@ -390,9 +384,9 @@ func (r *ringBuffer) Close() error {
 }
 
 // drain copies the current ring contents to dst in one Write
-// call. May block on a slow dst (Clarification 4). Returns the
-// byte count drained and any error from dst.Write. Resets
-// atCapacity once the ring drains below cap (R-006).
+// call. May block on a slow dst. Returns the byte count drained
+// and any error from dst.Write. Resets atCapacity once the ring
+// drains below cap.
 func (r *ringBuffer) drain(dst io.Writer) (int64, error) {
 	r.mu.Lock()
 	if len(r.buf) == 0 {

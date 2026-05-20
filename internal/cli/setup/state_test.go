@@ -134,7 +134,7 @@ func TestClassifier_RepairableLooseMode(t *testing.T) {
 // TestClassifier_RepairablePartialState covers the cross-artifact
 // rule: config present but vault missing (or vice versa) flags
 // the present one as repairable with [setup.ErrStateStale]. This
-// is AC-12 case 3 — stale partial state.
+// is the stale partial state case.
 func TestClassifier_RepairablePartialState(t *testing.T) {
 	t.Parallel()
 

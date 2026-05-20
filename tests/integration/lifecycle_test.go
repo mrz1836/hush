@@ -1,17 +1,17 @@
 //go:build integration
 
-// Package integration_test is the SDD-25 lifecycle integration test suite.
+// Package integration_test is the lifecycle integration test suite.
 // Build-tagged //go:build integration; default `go test ./...` compiles
 // zero files in this directory.
 //
-// TestMain serves two roles per research.md §6:
+// TestMain serves two roles:
 //  1. When invoked by the supervisor's child fork-exec with the
 //     --integration-child-mode sentinel flag, dispatch to the scripted-
 //     child entrypoint, run the scripted exit-code / lifetime / stderr-
 //     pattern script, and os.Exit before m.Run.
 //  2. Otherwise, install a process-wide http.DefaultTransport allow-list
 //     RoundTripper rejecting any host outside 127.0.0.1, ::1, or one of
-//     the registered httptest listeners (spec FR-012 + FR-013), then call
+//     the registered httptest listeners, then call
 //     m.Run() and exit with its code.
 package integration_test
 
@@ -31,8 +31,8 @@ import (
 )
 
 // integrationChildModeSentinel is the argv flag the supervisor passes when
-// re-invoking this test binary as a scripted child (research.md §6). The
-// dispatcher below recognizes it before testing.M.Run is called.
+// re-invoking this test binary as a scripted child. The dispatcher
+// below recognizes it before testing.M.Run is called.
 const integrationChildModeSentinel = "--integration-child-mode"
 
 // childExitCodeFlag is the script's exit code.
@@ -61,7 +61,7 @@ var allowedHosts struct {
 }
 
 // nonLoopbackAttempts records every reject the allow-list RoundTripper
-// produced; reported by TestMain after m.Run for spec SC-004.
+// produced; reported by TestMain after m.Run.
 //
 //nolint:gochecknoglobals // suite-wide observability counter (atomic)
 var nonLoopbackAttempts atomic.Int64
@@ -111,7 +111,7 @@ func (a *allowListRoundTripper) RoundTrip(req *http.Request) (*http.Response, er
 	host := req.URL.Host
 	if !isAllowedHost(host) {
 		nonLoopbackAttempts.Add(1)
-		return nil, fmt.Errorf("integration: non-loopback HTTP host %q rejected by SDD-25 RoundTripper (spec FR-012/SC-004)", host)
+		return nil, fmt.Errorf("integration: non-loopback HTTP host %q rejected by RoundTripper", host)
 	}
 	return a.inner.RoundTrip(req)
 }
@@ -229,7 +229,7 @@ func TestMain(m *testing.M) {
 	installHarnessHooks()
 	code := m.Run()
 	if attempts := nonLoopbackAttempts.Load(); attempts > 0 {
-		fmt.Fprintf(os.Stderr, "SDD-25: %d non-loopback HTTP attempt(s) blocked by allow-list RoundTripper\n", attempts)
+		fmt.Fprintf(os.Stderr, "%d non-loopback HTTP attempt(s) blocked by allow-list RoundTripper\n", attempts)
 		if code == 0 {
 			code = 1
 		}

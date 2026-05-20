@@ -1,9 +1,9 @@
-// SDD-24 — Supervisor orchestration glue: child env / start / wait / exit dispatch.
+// Supervisor orchestration glue: child env / start / wait / exit dispatch.
 //
 // lifecycle_child.go owns the initial child env build from Grace, the
 // validator pass, NewChild + Start, the childWaitLoop goroutine, the
-// childExit dispatch (0 / non-zero non-Exit78 / Exit78 — referencing
-// SDD-20's Exit78 constant, never the raw literal), and the silent refill
+// childExit dispatch (0 / non-zero non-Exit78 / Exit78 — referencing the
+// Exit78 constant, never the raw literal), and the silent refill
 // path (post-running). It also implements the lineSplittingWriter that
 // fans bytes to both the operator stderr sink AND the Watchdog hook
 // WITHOUT opening a second drain on Child.Stderr.
@@ -35,7 +35,7 @@ func (l *Lifecycle) initialRefillAndStart(ctx context.Context) error {
 			l.transition(ctx, EventFetchAuthRequired)
 			return nil
 		}
-		// Boot-time generic refill failure (spec FR-026-010a boot-time branch).
+		// Boot-time generic refill failure.
 		l.deps.Logger.Warn("supervise: initial refill failed",
 			slog.Any("err", err))
 		l.deps.Alerts.Emit(ctx, AlertClassRefillFailed, AlertPayload{
@@ -108,14 +108,13 @@ func (l *Lifecycle) lookupValidator(scope string) Validator {
 // startChild builds ChildConfig.Env from Grace-resident secrets, instantiates
 // the Child, calls Start(ctx), spawns childWaitLoop, and updates inputs.
 //
-// Constitution X: this is the ONE permitted `string(*SecureBytes)` site
-// introduced by SDD-24 — the OS fork boundary. The env slice is zeroed
-// after Start returns (FR-026-008).
+// This is the ONE permitted `string(*SecureBytes)` site — the OS fork
+// boundary. The env slice is zeroed after Start returns.
 //
 //nolint:gocognit // sequential fork-boundary plumbing: deferred wipe + per-scope SecureBytes use
 func (l *Lifecycle) startChild(ctx context.Context) error {
 	env := append([]string(nil), l.config.Child.EnvPassthrough...)
-	// FR-026-008: zero the env slice on every exit path — success, every
+	// Zero the env slice on every exit path — success, every
 	// error return below, and any panic that unwinds through this frame.
 	// Child.Start makes its own defensive copy of the slice into cmd.Env,
 	// so wiping the parent's view does not blank the child's environment.
@@ -131,8 +130,8 @@ func (l *Lifecycle) startChild(ctx context.Context) error {
 		}
 		var added bool
 		if useErr := sb.Use(func(b []byte) {
-			// FR-026-008 / FR-026-028: single permitted string(*SecureBytes)
-			// site at the OS-execve fork boundary. Mirrors SDD-20 Env []string.
+			// Single permitted string(*SecureBytes) site at the
+			// OS-execve fork boundary. Mirrors Child's Env []string.
 			env = append(env, scope+"="+string(b))
 			added = true
 		}); useErr != nil {
@@ -191,13 +190,13 @@ func (l *Lifecycle) childWaitLoop(ctx context.Context, child *Child) {
 	}
 }
 
-// dispatchChildExit branches on the exit code per FR-026-009:
+// dispatchChildExit branches on the exit code:
 //   - 0           → emit clean_exit → silent refill + restart
 //   - !=0 && !=78 → emit crash      → silent refill + restart
 //   - Exit78      → emit exit_78    → stale alert + StateAwaitingApproval
 //
-// The orchestrator references SDD-20's Exit78 constant — never the raw
-// `78` literal (FR-026-023).
+// The orchestrator references the Exit78 constant — never the raw
+// `78` literal.
 func (l *Lifecycle) dispatchChildExit(ctx context.Context, exit childExit) {
 	l.childRunning.Store(false)
 	l.childMu.Lock()
@@ -239,7 +238,7 @@ func (l *Lifecycle) dispatchChildExit(ctx context.Context, exit childExit) {
 
 // silentRefillAndRestart re-calls Refiller.Refill using the cached JWT,
 // re-runs validators, re-builds env, re-instantiates Child + Start.
-// Spawns a fresh childWaitLoop. Per FR-026-010 / FR-026-010a:
+// Spawns a fresh childWaitLoop:
 //   - errors.Is(err, ErrJTIUnknown) → AlertClassVaultRejectedJWT + awaiting-approval
 //   - any other error              → AlertClassRefillFailed + awaiting-approval
 func (l *Lifecycle) silentRefillAndRestart(ctx context.Context) error {
@@ -335,7 +334,7 @@ func newLineSplittingWriter(ctx context.Context, sink io.Writer, wd Watchdog, lo
 }
 
 // Write tees p to sink and emits any newline-terminated lines to the
-// watchdog. Always returns (len(p), nil) so it never blocks the SDD-20
+// watchdog. Always returns (len(p), nil) so it never blocks the child
 // drain goroutine.
 func (w *lineSplittingWriter) Write(p []byte) (int, error) {
 	if len(p) == 0 {

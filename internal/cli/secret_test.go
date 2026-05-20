@@ -1278,5 +1278,5 @@ func TestSecret_LintNoOsGetenv(t *testing.T) {
 	body, err := os.ReadFile("secret.go")
 	require.NoError(t, err)
 	require.NotContains(t, string(body), "os.Getenv",
-		"secret.go must not call os.Getenv (FR-001 + research R10)")
+		"secret.go must not call os.Getenv")
 }

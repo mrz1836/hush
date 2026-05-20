@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestDeriveClientKey_MachineIndexIsolation covers G8 + FR-008 + AC-6.
 func TestDeriveClientKey_MachineIndexIsolation(t *testing.T) {
 	seed1 := testSeed(t)
 

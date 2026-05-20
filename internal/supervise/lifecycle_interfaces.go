@@ -1,16 +1,16 @@
-// SDD-24 — Supervisor orchestration glue: consumer-defined interfaces.
+// Supervisor orchestration glue: consumer-defined interfaces.
 //
 // lifecycle_interfaces.go declares the three single-method interfaces the
 // orchestrator consumes (Validator, Alerts, Watchdog), the closed
-// AlertClass enum (10 values LOCKED per spec FR-026-016), the AlertPayload
-// struct (3 string fields — structurally cannot carry secret bytes), and
-// the no-op default implementations. No business logic lives in this
-// file. No init() and no package-level mutable vars are introduced.
+// AlertClass enum (10 values LOCKED), the AlertPayload struct (3 string
+// fields — structurally cannot carry secret bytes), and the no-op default
+// implementations. No business logic lives in this file. No init() and
+// no package-level mutable vars are introduced.
 //
-// SDD-26 (validators), SDD-27 (watchdog), and SDD-28 (alerts) supply
-// concrete implementations that satisfy these interfaces; the
-// orchestrator hosts the hooks via Deps.Validators / Deps.Alerts /
-// Deps.Watchdog with the no-op defaults wired automatically.
+// The validators, watchdog, and alerts packages supply concrete
+// implementations that satisfy these interfaces; the orchestrator hosts
+// the hooks via Deps.Validators / Deps.Alerts / Deps.Watchdog with the
+// no-op defaults wired automatically.
 
 package supervise
 
@@ -31,8 +31,9 @@ import (
 //   - Return a wrapped error on failure; the wrapper MUST name the
 //     scope but MUST NOT include the secret value (Constitution X).
 //
-// SDD-26 supplies the v0.1.0 builtins (anthropic, anthropic-oauth,
-// openai, google-ai, github). This chunk ships only the no-op default.
+// The validators package supplies the v0.1.0 builtins (anthropic,
+// anthropic-oauth, openai, google-ai, github). This file ships only the
+// no-op default.
 type Validator interface {
 	Validate(ctx context.Context, scope string, secret *securebytes.SecureBytes) error
 }
@@ -40,21 +41,21 @@ type Validator interface {
 // Alerts is the operator-visible alert sink. The orchestrator calls
 // Emit at the documented sites (see AlertClass below). Each Emit call
 // is synchronous from the orchestrator's perspective; implementations
-// MUST NOT block. SDD-28 supplies the rendering layer.
+// MUST NOT block. The alerts package supplies the rendering layer.
 type Alerts interface {
 	Emit(ctx context.Context, class AlertClass, payload AlertPayload)
 }
 
 // Watchdog observes child stderr lines. Alert-only — MUST NOT influence
-// state-machine transitions (Constitution V, spec FR-026-013a). SDD-27
-// supplies the pattern engine.
+// state-machine transitions. The watchdog package supplies the pattern
+// engine.
 type Watchdog interface {
 	OnStderrLine(ctx context.Context, line []byte)
 }
 
 // AlertClass is the closed enum of orchestrator-emitted alert classes.
-// LOCKED at exactly 10 values per spec FR-026-016. SDD-28 MUST NOT
-// extend the enum without a spec amendment.
+// LOCKED at exactly 10 values. The alerts package MUST NOT extend the
+// enum without a spec amendment.
 type AlertClass int
 
 // AlertClass enum values. iota+1 leaves the zero value invalid so an
@@ -72,9 +73,8 @@ const (
 	AlertClassBootTimeout
 )
 
-// String returns the locked human-readable form of c. Names match spec
-// FR-026-016 verbatim and feed AlertPayload.Reason, audit event
-// Data.class, and SDD-28's renderer.
+// String returns the locked human-readable form of c. Names feed
+// AlertPayload.Reason, audit event Data.class, and the alerts renderer.
 //
 //nolint:gocyclo // closed-set enum dispatch over 10 LOCKED AlertClass values
 func (c AlertClass) String() string {

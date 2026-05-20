@@ -9,7 +9,7 @@ import "errors"
 var (
 	// ErrDiscordUnavailable is returned when the WebSocket gateway is
 	// closed (boot-down, mid-flight disconnect, or delivery failure).
-	// Caller (SDD-12) maps to HTTP 503.
+	// The server caller maps this to HTTP 503.
 	ErrDiscordUnavailable = errors.New("hush/discord: discord unavailable")
 
 	// ErrApprovalDenied is returned when the operator clicks the Deny

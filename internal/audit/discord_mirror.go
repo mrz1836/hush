@@ -19,7 +19,7 @@ type MirrorSession interface {
 
 // mirrorBufferSize is the depth of the writer→mirror buffered channel.
 // Reaching the bound drops the mirror copy of the offending event (the
-// on-disk chain is unaffected) and a WARN is logged.  Tunable via R-006.
+// on-disk chain is unaffected) and a WARN is logged.
 const mirrorBufferSize = 64
 
 // mirrorShutdownTimeout caps how long the mirror goroutine waits to
@@ -51,7 +51,7 @@ type DiscordMirror struct {
 }
 
 // NewDiscordMirror constructs a DiscordMirror.  An empty channelID OR
-// nil session disables the mirror entirely (FR-036) — the writer skips
+// nil session disables the mirror entirely — the writer skips
 // dispatch and never spawns the goroutine.
 func NewDiscordMirror(channelID string, session MirrorSession) *DiscordMirror {
 	if channelID == "" || session == nil {
@@ -78,7 +78,7 @@ func (m *DiscordMirror) attach(logger *slog.Logger) {
 }
 
 // publish is the writer-goroutine-side, non-blocking send to the mirror
-// channel.  Drop-on-full per R-006.
+// channel.  Drop-on-full.
 func (m *DiscordMirror) publish(ev Event) {
 	if !m.enabled() {
 		return

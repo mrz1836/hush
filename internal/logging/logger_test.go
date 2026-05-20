@@ -61,7 +61,7 @@ func TestNew_TTYDetectionPicksText(t *testing.T) {
 	// Final decision: use an os.Pipe to get write-end (non-TTY → JSON under
 	// FormatAuto), then separately verify FormatText on a buffer produces
 	// text output. The /dev/tty open proves we have a terminal environment;
-	// the text-format assertion covers SC-001.
+	// the text-format assertion confirms text output.
 	_ = tty // confirms /dev/tty is available (terminal environment)
 
 	var buf bytes.Buffer
@@ -329,7 +329,7 @@ func TestLogger_CustomLogValuerHonoured(t *testing.T) {
 func TestLogger_LogValuerInNestedGroup(t *testing.T) {
 	var buf bytes.Buffer
 	logger := logging.New(logging.Options{Format: logging.FormatJSON, Out: &buf})
-	// Two levels of nesting to cover FR-012 (recursion at every depth).
+	// Two levels of nesting to cover recursion at every depth.
 	logger.Info("nested groups",
 		slog.Group("outer",
 			slog.Group("inner",

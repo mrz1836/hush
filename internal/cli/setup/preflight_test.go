@@ -39,7 +39,7 @@ func (c stubCheck) Run(ctx context.Context) setup.SetupCheckResult {
 
 // TestRegistry_RunsInLockedOrder asserts that, regardless of
 // registration order, [Registry.Run] walks [setup.CheckOrder]
-// front-to-back. AC-2's "deterministic order" promise.
+// front-to-back. The "deterministic order" promise.
 func TestRegistry_RunsInLockedOrder(t *testing.T) {
 	t.Parallel()
 
@@ -116,7 +116,7 @@ func TestRegistry_SkipsUnregisteredSlots(t *testing.T) {
 
 // TestRegistry_StatusBuckets covers the ok / warn / fail per-check
 // statuses required by the plan's Phase 1 table-test promise.
-// AC-2: every status bucket round-trips through the registry.
+// Every status bucket round-trips through the registry.
 func TestRegistry_StatusBuckets(t *testing.T) {
 	t.Parallel()
 

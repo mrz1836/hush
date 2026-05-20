@@ -23,7 +23,7 @@ type ClockProbe func(ctx context.Context) (synced bool, drift time.Duration, err
 // ClockSyncCheckConfig configures the [ClockSyncCheck] that the
 // guided flow registers in its preflight [Registry]. Every field has
 // a documented default so callers can supply only the knobs they
-// care about (Plan AC-8 / Task 4.1).
+// care about.
 type ClockSyncCheckConfig struct {
 	// Probe queries the host clock. When nil the check uses
 	// [server.DefaultClockSyncProbe] so the init-side check stays in
@@ -46,8 +46,8 @@ type ClockSyncCheckConfig struct {
 	Timeout time.Duration
 
 	// AllowSkew downgrades a would-be [StatusFail] to [StatusWarn].
-	// The CLI sets this from `--allow-clock-skew` (Plan AC-8 /
-	// Task 4.2). hush never auto-sudos to fix the clock — this flag
+	// The CLI sets this from `--allow-clock-skew`.
+	// hush never auto-sudos to fix the clock — this flag
 	// is the only override path for confirmed unsynchronised/drifted clocks.
 	AllowSkew bool
 

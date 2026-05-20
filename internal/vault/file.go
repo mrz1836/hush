@@ -141,7 +141,7 @@ func loadWires(ctx context.Context, path string, vaultKey *securebytes.SecureByt
 //
 //nolint:gocyclo // sequential header-parse state machine; complexity is structural
 func decryptWires(data []byte, vaultKey *securebytes.SecureBytes) ([]wireSecret, error) {
-	// Length-class invariants per data-model.md §1.
+	// Length-class invariants.
 	if len(data) < 4 {
 		return nil, fmt.Errorf("vault: %w", ErrShortHeader)
 	}
@@ -309,7 +309,7 @@ func writeTmp(tmpPath string, salt, nonce, ciphertext []byte) error {
 	return nil
 }
 
-// validateSecrets checks for duplicate names and FR-008 violations.
+// validateSecrets checks for duplicate names and name/description violations.
 func validateSecrets(secrets []Secret) error {
 	seen := make(map[string]struct{}, len(secrets))
 	for _, s := range secrets {
@@ -328,7 +328,7 @@ func validateSecrets(secrets []Secret) error {
 	return nil
 }
 
-// validateName enforces FR-008: non-empty, ≤256 bytes, printable ASCII 0x20–0x7E.
+// validateName enforces: non-empty, ≤256 bytes, printable ASCII 0x20–0x7E.
 func validateName(name string) error {
 	if len(name) == 0 {
 		return fmt.Errorf("vault: empty name: %w", ErrInvalidName)
@@ -345,7 +345,7 @@ func validateName(name string) error {
 	return nil
 }
 
-// validateDescription enforces FR-008: ≤4096 bytes, no 0x00–0x1F, no 0x7F.
+// validateDescription enforces: ≤4096 bytes, no 0x00–0x1F, no 0x7F.
 func validateDescription(desc string) error {
 	if len(desc) > 4096 {
 		return fmt.Errorf("vault: description too long: %w", ErrInvalidName)

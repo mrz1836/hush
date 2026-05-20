@@ -1,15 +1,13 @@
-// SDD-24 — Supervisor orchestration glue: audit emission helpers.
+// Supervisor orchestration glue: audit emission helpers.
 //
-// lifecycle_audit.go binds the Lifecycle to the SDD-13 audit writer. Every
-// helper constructs an audit.Event Data map per the projection rules in
-// data-model.md §8 and calls Deps.AuditWriter.Append with one of the 12
-// new ActionSupervisor* / ActionClientRefresh* constants declared in
-// internal/audit/chain.go.
+// lifecycle_audit.go binds the Lifecycle to the audit writer. Every
+// helper constructs an audit.Event Data map and calls
+// Deps.AuditWriter.Append with one of the 12 new ActionSupervisor* /
+// ActionClientRefresh* constants declared in internal/audit/chain.go.
 //
 // Anti-contract: no Data key carries a *SecureBytes, a []byte sourced from
-// secret material, or a string(secretBytes) value (Constitution X /
-// spec FR-026-028). All "reason" strings are drawn from a closed phrase
-// map below.
+// secret material, or a string(secretBytes) value. All "reason" strings
+// are drawn from a closed phrase map below.
 
 package supervise
 
@@ -138,9 +136,9 @@ func (l *Lifecycle) emitStaleAlert(ctx context.Context, class AlertClass, scope,
 
 // emitGraceEntered appends supervisor_grace_entered when grace-cache
 // restart activates. Reserved for the grace-restart wiring landing in a
-// follow-up (FR-026 grace-cache path; SDD-26 will exercise it).
+// follow-up.
 //
-//nolint:unused // wired by grace-restart follow-up; locked here at SDD-24
+//nolint:unused // wired by grace-restart follow-up
 func (l *Lifecycle) emitGraceEntered(ctx context.Context, scopes []string, ttlRem time.Duration) {
 	l.appendAudit(ctx, audit.ActionSupervisorGraceEntered, map[string]any{
 		"scopes":              append([]string(nil), scopes...),
@@ -152,7 +150,7 @@ func (l *Lifecycle) emitGraceEntered(ctx context.Context, scopes []string, ttlRe
 // completes. outcome ∈ {"restart_ok", "refresh_window", "expired"}. Reserved
 // for the grace-restart wiring landing in a follow-up.
 //
-//nolint:unused // wired by grace-restart follow-up; locked here at SDD-24
+//nolint:unused // wired by grace-restart follow-up
 func (l *Lifecycle) emitGraceExited(ctx context.Context, scopes []string, outcome string) {
 	l.appendAudit(ctx, audit.ActionSupervisorGraceExited, map[string]any{
 		"scopes":  append([]string(nil), scopes...),

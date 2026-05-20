@@ -16,7 +16,7 @@ import (
 	"testing"
 )
 
-// testPaths resolves repository-anchored paths for the SDD-29 deploy
+// testPaths resolves repository-anchored paths for the deploy
 // artefacts and test fixtures. It is built from runtime.Caller(0) so the
 // tests work no matter where `go test` is invoked from.
 type testPaths struct {
@@ -188,10 +188,10 @@ func TestDeploy_InstallIdempotent(t *testing.T) {
 	snap2 := snapshotTree(t, installRoot)
 
 	if !bytes.Equal(first.stdout, second.stdout) {
-		t.Errorf("FR-001: banner stdout drifted across runs\nrun1:\n%s\nrun2:\n%s", first.stdout, second.stdout)
+		t.Errorf("banner stdout drifted across runs\nrun1:\n%s\nrun2:\n%s", first.stdout, second.stdout)
 	}
 	if snap1 != snap2 {
-		t.Errorf("FR-001: filesystem snapshot drifted across runs\nrun1:\n%s\nrun2:\n%s", snap1, snap2)
+		t.Errorf("filesystem snapshot drifted across runs\nrun1:\n%s\nrun2:\n%s", snap1, snap2)
 	}
 
 	stateDir := resolvedStateDir(installRoot)
@@ -203,7 +203,7 @@ func TestDeploy_InstallIdempotent(t *testing.T) {
 
 // assertTmutilLogExactlyOnce reads logPath and asserts exactly one
 // `addexclusion <stateDir>` line was recorded across all install.sh
-// runs (FR-002 + FR-025).
+// runs.
 func assertTmutilLogExactlyOnce(t *testing.T, logPath, stateDir string) {
 	t.Helper()
 	data, err := os.ReadFile(logPath)
@@ -220,12 +220,12 @@ func assertTmutilLogExactlyOnce(t *testing.T, logPath, stateDir string) {
 		}
 	}
 	if matches != 1 {
-		t.Errorf("FR-002: expected exactly one `%s` line in tmutil log, got %d\nlog content:\n%s",
+		t.Errorf("expected exactly one `%s` line in tmutil log, got %d\nlog content:\n%s",
 			want, matches, string(data))
 	}
 }
 
-// assertBannerKeychainACL enforces the FR-003 banner sub-contract on
+// assertBannerKeychainACL enforces the banner sub-contract on
 // captured install.sh stdout: the resolved binary path appears exactly
 // once as the `-T` arg, and the banner contains neither a wildcard `-T`
 // nor an `-A` token (no allow-all-apps ACL).
@@ -235,11 +235,11 @@ func assertBannerKeychainACL(t *testing.T, stdout []byte) {
 	want := `-T "` + bin + `"`
 	occurrences := bytes.Count(stdout, []byte(want))
 	if occurrences != 1 {
-		t.Errorf("FR-003: expected exactly one `%s` in banner, got %d\nbanner:\n%s",
+		t.Errorf("expected exactly one `%s` in banner, got %d\nbanner:\n%s",
 			want, occurrences, stdout)
 	}
 	if bytes.Contains(stdout, []byte(`-T "*"`)) || bytes.Contains(stdout, []byte(`-T '*'`)) {
-		t.Errorf("FR-003: wildcard -T ACL found in banner\nbanner:\n%s", stdout)
+		t.Errorf("wildcard -T ACL found in banner\nbanner:\n%s", stdout)
 	}
 	// `-A` would grant allow-all-apps access. Match whole-word so we
 	// don't trip on hyphenated text inside the prose body.
@@ -247,7 +247,7 @@ func assertBannerKeychainACL(t *testing.T, stdout []byte) {
 	for scanner.Scan() {
 		for _, tok := range strings.Fields(scanner.Text()) {
 			if tok == "-A" {
-				t.Errorf("FR-003: allow-all-apps -A token found in banner\nbanner:\n%s", stdout)
+				t.Errorf("allow-all-apps -A token found in banner\nbanner:\n%s", stdout)
 				return
 			}
 		}
@@ -260,10 +260,10 @@ func TestDeploy_InstallRefusesUnsupportedOS(t *testing.T) {
 	env = append(env, "HUSH_FORCE_OS=plan9")
 	res := runInstall(t, paths, env)
 	if res.exitCode != 2 {
-		t.Errorf("FR-005: expected exit 2 on unsupported OS, got %d\nstderr:\n%s", res.exitCode, res.stderr)
+		t.Errorf("expected exit 2 on unsupported OS, got %d\nstderr:\n%s", res.exitCode, res.stderr)
 	}
 	if !strings.Contains(string(res.stderr), "install.sh:") {
-		t.Errorf("FR-005: stderr does not follow `install.sh: <stage>: <reason>` format:\n%s", res.stderr)
+		t.Errorf("stderr does not follow `install.sh: <stage>: <reason>` format:\n%s", res.stderr)
 	}
 }
 
@@ -280,16 +280,16 @@ func TestDeploy_InstallRefusesMissingBinary(t *testing.T) {
 	filtered = append(filtered, "HUSH_SOURCE_BIN=/nonexistent/hush-binary-that-must-not-exist")
 	res := runInstall(t, paths, filtered)
 	if res.exitCode != 2 {
-		t.Errorf("FR-007: expected exit 2 on missing binary, got %d\nstderr:\n%s", res.exitCode, res.stderr)
+		t.Errorf("expected exit 2 on missing binary, got %d\nstderr:\n%s", res.exitCode, res.stderr)
 	}
 	if !strings.Contains(string(res.stderr), "install.sh:") {
-		t.Errorf("FR-007: stderr does not follow `install.sh: <stage>: <reason>` format:\n%s", res.stderr)
+		t.Errorf("stderr does not follow `install.sh: <stage>: <reason>` format:\n%s", res.stderr)
 	}
 }
 
 func TestDeploy_InstallRefusesMissingTmutil(t *testing.T) {
 	if runtime.GOOS != "darwin" {
-		t.Skip("FR-002 hard-fail only applies on darwin")
+		t.Skip("tmutil hard-fail only applies on darwin")
 	}
 	paths := resolveTestPaths(t)
 	_, _, env := stageInstallEnv(t, paths, false)
@@ -326,11 +326,11 @@ func TestDeploy_InstallRefusesMissingTmutil(t *testing.T) {
 
 	res := runInstall(t, paths, filtered)
 	if res.exitCode != 4 {
-		t.Errorf("FR-002 hard-fail: expected exit 4 when tmutil missing, got %d\nstderr:\n%s",
+		t.Errorf("hard-fail: expected exit 4 when tmutil missing, got %d\nstderr:\n%s",
 			res.exitCode, res.stderr)
 	}
 	if !strings.Contains(string(res.stderr), "tmutil") {
-		t.Errorf("FR-002 hard-fail: stderr should name `tmutil`:\n%s", res.stderr)
+		t.Errorf("hard-fail: stderr should name `tmutil`:\n%s", res.stderr)
 	}
 }
 
@@ -347,7 +347,7 @@ func TestDeploy_InstallBannerByteIdentical(t *testing.T) {
 		t.Fatalf("second run exit %d; stderr:\n%s", second.exitCode, second.stderr)
 	}
 	if !bytes.Equal(first.stdout, second.stdout) {
-		t.Errorf("FR-001 banner regression: stdout differs between runs\nrun1:\n%s\nrun2:\n%s",
+		t.Errorf("banner regression: stdout differs between runs\nrun1:\n%s\nrun2:\n%s",
 			first.stdout, second.stdout)
 	}
 }

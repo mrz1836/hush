@@ -472,7 +472,7 @@ func TestClaim_RegisterHandlers_MountsClaimRoute(t *testing.T) {
 
 // ---- US1: TestClaim_Approved_IssuesJWT etc. -------------------------------
 
-//nolint:gocognit,gocyclo // exhaustive happy-path assertions: status, three-key body, ten redacted-key checks, six audit-detail keys — Constitution VIII demands this granularity for AC-1
+//nolint:gocognit,gocyclo // exhaustive happy-path assertions: status, three-key body, ten redacted-key checks, six audit-detail keys — Constitution VIII demands this granularity
 func TestClaim_Approved_IssuesJWT(t *testing.T) {
 	t.Parallel()
 	h := newClaimHarness(t,
@@ -623,7 +623,7 @@ func TestClaim_SupervisorRequest_DaemonLabel(t *testing.T) {
 	}
 }
 
-//nolint:gocognit // table-driven across two TTL forms — Constitution VIII (FR-017)
+//nolint:gocognit // table-driven across two TTL forms — Constitution VIII
 func TestClaim_TTLZeroOrNegative_400(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -693,7 +693,7 @@ func signedClaimBodyWithLiteralTTL(t *testing.T, h *claimTestHarness, o claimBod
 	return out
 }
 
-//nolint:gocognit // table-driven across six shape-rejection variants — Constitution VIII (FR-009)
+//nolint:gocognit // table-driven across six shape-rejection variants — Constitution VIII
 func TestClaim_BadRequest_400(t *testing.T) {
 	t.Parallel()
 
@@ -1227,7 +1227,7 @@ func (f approverFunc) RequestApproval(ctx context.Context, req ApprovalRequest) 
 
 // ---- US6: every outcome emits one audit event ----------------------------
 
-//nolint:gocognit,gocyclo // table-driven across all eleven outcomes with key-set assertions — Constitution VIII (FR-021/FR-022) demands this exhaustive shape
+//nolint:gocognit,gocyclo // table-driven across all eleven outcomes with key-set assertions — Constitution VIII demands this exhaustive shape
 func TestClaim_AuditEventEmittedForEveryOutcome(t *testing.T) {
 	t.Parallel()
 
@@ -1533,11 +1533,11 @@ func compressedSecp256k1Hex(t *testing.T, pub *ecdsa.PublicKey) string {
 	return hex.EncodeToString(out)
 }
 
-// grepAutoNearApprove implements R-007: scan internal/server/*.go (excluding
+// grepAutoNearApprove scans internal/server/*.go (excluding
 // _test.go) for "auto" within five lines of "approve" (case-insensitive).
 // Returns matching descriptions; an empty slice means the source is clean.
 //
-//nolint:gocognit,gocyclo // file-walking grep with per-line proximity check — Constitution II's no-auto-approve regression test (R-007)
+//nolint:gocognit,gocyclo // file-walking grep with per-line proximity check — Constitution II's no-auto-approve regression test
 func grepAutoNearApprove(t *testing.T, dir string) []string {
 	t.Helper()
 	entries, err := os.ReadDir(dir)

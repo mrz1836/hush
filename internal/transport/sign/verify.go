@@ -11,7 +11,7 @@ import (
 // SHA-256(payload) by key. Returns nil on success. Returns a wrapped
 // [ErrSignatureInvalid] for every signature failure — wrong key, tampered
 // payload, malformed DER, nil/incomplete key — so callers cannot
-// distinguish failure modes (FR-005). Returns ctx.Err() if the context
+// distinguish failure modes. Returns ctx.Err() if the context
 // is already canceled at entry.
 func Verify(ctx context.Context, key *ecdsa.PublicKey, payload, sig []byte) error {
 	if err := ctx.Err(); err != nil {

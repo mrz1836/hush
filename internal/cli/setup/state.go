@@ -333,7 +333,7 @@ func (c *Classifier) classifyKeychain(ctx context.Context, target KeychainTarget
 // applyCrossArtifactRules promotes per-artifact classifications
 // based on companion artifacts. Currently: when one of config /
 // vault is safe-to-reuse but the other is absent, the present one
-// is marked repairable (partial state — Plan AC-12 case 3).
+// is marked repairable (partial state).
 func (c *Classifier) applyCrossArtifactRules(results []Artifact) {
 	configIdx, vaultIdx := -1, -1
 	for i := range results {

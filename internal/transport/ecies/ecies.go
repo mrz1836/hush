@@ -53,7 +53,7 @@ var bie1Magic = []byte{'B', 'I', 'E', '1'}
 
 // secureZero overwrites every byte of buf with 0. The simple loop pattern is
 // preserved across Go compiler versions for slices reachable through a defer
-// registration; see SDD-09 research R-005.
+// registration.
 func secureZero(buf []byte) {
 	for i := range buf {
 		buf[i] = 0
@@ -304,7 +304,7 @@ func Encrypt(ctx context.Context, recipientPub *ecdsa.PublicKey, plaintext []byt
 //
 // Decrypt is panic-free under any byte input (asserted by FuzzECIESDecrypt).
 // Wrong key and tampered envelope share [ErrECIESDecryptFailed] by design
-// (FR-004 — no failure-shape leakage).
+// (no failure-shape leakage).
 //
 //nolint:funlen,gocognit,gocyclo,cyclop // the BIE1 decrypt pipeline is sequential and intentionally explicit; splitting hides the gate ordering and defer-zeroing discipline
 func Decrypt(ctx context.Context, recipientPriv *ecdsa.PrivateKey, envelope []byte) (*securebytes.SecureBytes, error) {

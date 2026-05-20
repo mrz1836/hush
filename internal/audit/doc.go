@@ -14,7 +14,7 @@
 //
 //   - [Writer.Append] — synchronously rendezvous with the writer goroutine
 //     via an unbuffered channel.  Returns nil only AFTER the event has
-//     been hashed, signed, written, and flushed to disk (FR-031, FR-033).
+//     been hashed, signed, written, and flushed to disk.
 //   - [Writer.Run] — single-call lifecycle; spawns the writer goroutine
 //     and (when configured) the mirror goroutine; returns when the supplied
 //     ctx cancels and every in-flight pending event has been drained.
@@ -23,14 +23,12 @@
 // 64-deep buffered channel and a separate goroutine that calls
 // `ChannelMessageSendComplex`; failures log WARN with seq + action only
 // (never the bot token, never the event signature) and never block the
-// on-disk path (FR-035).
+// on-disk path.
 //
 // The package imports only stdlib + `internal/transport/sign` (canonical
 // JSON) + `github.com/bwmarrin/discordgo` (transitively, via the narrow
 // [MirrorSession] seam).  It does NOT import `internal/discord` so the
 // chassis can wire a fake mirror in tests.
 //
-// See [docs/SECURITY.md] Layer 6 and
-// [specs/013-server-handlers-and-audit/contracts/audit.md] for the full
-// chunk-locked surface contract.
+// See [docs/SECURITY.md] Layer 6 for the audit-log security model.
 package audit

@@ -23,7 +23,6 @@ func testKATFingerprintScalar() []byte {
 	return b
 }
 
-// TestPublicKeyFingerprint_Stable covers G9 + FR-009 + SC-006.
 func TestPublicKeyFingerprint_Stable(t *testing.T) {
 	key1, err := scalarToECDSAKey(testKATFingerprintScalar())
 	require.NoError(t, err)

@@ -34,7 +34,7 @@ func pipeFile(t *testing.T, payload []byte) *os.File {
 }
 
 // TestServe_PassphraseFromStdinPipe asserts the pipe-read path
-// honors FR-008a (POSIX-line semantics).
+// honors POSIX-line semantics.
 func TestServe_PassphraseFromStdinPipe(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

@@ -11,7 +11,7 @@ import (
 
 // requiredFieldGate runs after decode but before any other rule. Aggregates
 // every missing required field via errors.Join so the operator sees the full
-// punch list in one round-trip (mirrors SDD-06's pattern). Each individual
+// punch list in one round-trip. Each individual
 // error wraps ErrMissingRequiredField so errors.Is matches.
 //
 // Required fields per docs/CONFIG-SCHEMA.md "Supervisor config" §Root and
@@ -27,7 +27,7 @@ func requiredFieldGate(d supervisorDecoded) error {
 	// Required fields per docs/CONFIG-SCHEMA.md: those without a documented
 	// default. Fields that have a documented default (requested_ttl,
 	// refresh_window, log_level, etc.) are optional — absence applies the
-	// default per FR-016.
+	// default.
 	if strings.TrimSpace(d.Name) == "" {
 		missing("name")
 	}
@@ -72,7 +72,7 @@ func parseDuration(raw string, def time.Duration, fieldName string) (time.Durati
 
 // validateRefreshWindow parses raw as "HH:MM-HH:MM". Format violations →
 // ErrRefreshWindowFormat; format-clean but start >= end (incl. wrap-around) →
-// ErrRefreshWindowOrder. Per R-003.
+// ErrRefreshWindowOrder.
 func validateRefreshWindow(raw string) error {
 	idx := strings.Index(raw, "-")
 	if idx < 0 || strings.LastIndex(raw, "-") != idx {
@@ -81,7 +81,7 @@ func validateRefreshWindow(raw string) error {
 	start, end := raw[:idx], raw[idx+1:]
 	// Require exact "HH:MM" shape (length 5, leading-zero hours). time.Parse
 	// alone is lenient about single-digit hours when the reference value is
-	// "15:04"; we want to reject "9:00" per R-003 / docs/CONFIG-SCHEMA.md.
+	// "15:04"; we want to reject "9:00" per docs/CONFIG-SCHEMA.md.
 	if len(start) != 5 || len(end) != 5 {
 		return fmt.Errorf("%w: got %q", ErrRefreshWindowFormat, raw)
 	}
@@ -101,7 +101,7 @@ func validateRefreshWindow(raw string) error {
 
 // validateServerURL parses raw via net/url and rejects empty / parse-error /
 // empty-host / non-http(s)-scheme. Deeper checks (Tailscale CIDR, port, path)
-// are deferred to runtime hardening per Clarification 5 / FR-013a.
+// are deferred to runtime hardening.
 func validateServerURL(raw string) error {
 	if raw == "" {
 		return fmt.Errorf("%w: empty value", ErrServerURLInvalid)

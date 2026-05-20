@@ -1,6 +1,6 @@
 // Package config owns the server-side TOML configuration file: schema,
 // defaults, validation, and path-safety checks. It is loaded once at server
-// startup (SDD-10) and at hush init (SDD-15). Typed sentinel errors guide
+// startup and at hush init. Typed sentinel errors guide
 // operators to a working config without ever crashing on bad input.
 //
 // Constitution principles in scope:
@@ -9,9 +9,9 @@
 //   - VIII (TDD + fuzz target #5 FuzzServerTOML, coverage ≥ 95%)
 //   - IX   (no init(), no mutable globals, errors wrapped with %w)
 //   - X    (no secrets in Server struct; no os.Getenv for secret fields)
-//   - XI   (one new direct dep: github.com/pelletier/go-toml/v2, justified in plan.md)
+//   - XI   (one new direct dep: github.com/pelletier/go-toml/v2)
 //
-// Locked exported API (SDD-06):
+// Locked exported API:
 //   - type Server, ServerSection, DiscordSection, CryptoSection, NetworkSection, SecuritySection
 //   - func LoadServer(ctx context.Context, path string) (*Server, error)
 //   - func (s *Server) Validate() error

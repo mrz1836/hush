@@ -4,7 +4,7 @@ import "log/slog"
 
 // SetLoggerForTest is a test-build-only seam: it lets tests inject a
 // *slog.Logger into a concrete provider Validator so they can capture
-// the FR-020 records without racing slog.Default(). The panic on the
+// the log records without racing slog.Default(). The panic on the
 // default branch guards an invariant that can only fire under test
 // development (someone adds a sixth provider and forgets to extend the
 // type switch).

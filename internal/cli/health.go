@@ -16,7 +16,7 @@ import (
 
 // errPartialHealth is the sentinel returned when /hz reports green
 // transport but at least one dimension is unhealthy. Mapped to
-// ExitErr by mapErr (FR-017a).
+// ExitErr by mapErr.
 var errPartialHealth = errors.New("partial-health")
 
 // errHealthServer is the sentinel for /hz HTTP responses outside
@@ -26,8 +26,8 @@ var errHealthServer = errors.New("server returned non-OK status")
 // errHealthDecode is the sentinel for a malformed /hz response body.
 var errHealthDecode = errors.New("malformed health response")
 
-// healthSnapshot mirrors the chassis's GET /hz response shape
-// (data-model.md §6). Eight keys, exact order locked.
+// healthSnapshot mirrors the chassis's GET /hz response shape.
+// Eight keys, exact order locked.
 type healthSnapshot struct {
 	Status           string `json:"status"`
 	Uptime           string `json:"uptime"`
@@ -40,7 +40,7 @@ type healthSnapshot struct {
 }
 
 // healthTotalTimeout is the locked total-request timeout for `hush
-// health` (FR-015a). Operators see a single number to reason about,
+// health`. Operators see a single number to reason about,
 // no per-phase split.
 const healthTotalTimeout = 5 * time.Second
 
@@ -61,7 +61,7 @@ func newHealthCmd() *cobra.Command {
 // runHealth issues a single bounded GET <server>/hz, classifies any
 // transport failure into the locked literal-text contract, and prints
 // the per-dimension summary (TTY) or raw JSON (pipe). Partial-health
-// returns ExitErr while still printing the summary (FR-017a).
+// returns ExitErr while still printing the summary.
 //
 //nolint:gocognit,cyclop,gocyclo // sequential request→classify→render pipeline; branches map 1:1 to documented failure modes
 func runHealth(ctx context.Context, stdout, stderr *Stream, serverURL string) error {
@@ -117,7 +117,7 @@ func runHealth(ctx context.Context, stdout, stderr *Stream, serverURL string) er
 			return err
 		}
 	} else {
-		// Echo the server's body byte-for-byte (FR-013, contract §5.2).
+		// Echo the server's body byte-for-byte.
 		body = append(body, '\n')
 		if _, werr := stdout.w.Write(body); werr != nil {
 			return werr
@@ -130,8 +130,8 @@ func runHealth(ctx context.Context, stdout, stderr *Stream, serverURL string) er
 	return nil
 }
 
-// healthIsAllGreen reports whether every health dimension is green
-// (FR-017a). SecretsCount and ActiveTokens are informational, not
+// healthIsAllGreen reports whether every health dimension is green.
+// SecretsCount and ActiveTokens are informational, not
 // gates.
 func healthIsAllGreen(s healthSnapshot) bool {
 	return s.Status == "ok" &&
@@ -181,7 +181,7 @@ func mark(ok, noColor bool) string {
 
 // classifyTransportErr maps a transport error to one of the
 // contract-locked classifier strings used by the literal stderr
-// messages on health and revoke (FR-014, FR-015).
+// messages on health and revoke.
 func classifyTransportErr(err error) string {
 	if err == nil {
 		return "unknown"

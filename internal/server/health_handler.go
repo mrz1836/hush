@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// healthResponse is the locked /hz response shape per data-model §9.
+// healthResponse is the locked /hz response shape.
 type healthResponse struct {
 	Status           string `json:"status"`
 	Uptime           string `json:"uptime"`
@@ -18,13 +18,12 @@ type healthResponse struct {
 	ClockInSync      bool   `json:"clock_in_sync"`
 }
 
-// handleHealth is the SDD-13 entry point for `GET /h/<prefix>/hz`.
+// handleHealth is the entry point for `GET /h/<prefix>/hz`.
 //
 // Constitution VI: reachable WITHOUT a JWT — Tailscale is the auth
-// perimeter (FR-017). The handler MUST NOT emit an audit event
-// (FR-021a). The body MUST NOT carry any secret name, JTI, fingerprint,
-// bot token, audit signing key, audit chain hash, or random API path
-// prefix (FR-019, SC-006).
+// perimeter. The handler MUST NOT emit an audit event. The body MUST
+// NOT carry any secret name, JTI, fingerprint, bot token, audit signing
+// key, audit chain hash, or random API path prefix.
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	store := s.vaultPtr.Load()
 	resp := healthResponse{

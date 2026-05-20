@@ -20,9 +20,9 @@ import (
 	"github.com/mrz1836/hush/internal/supervise"
 )
 
-// statusDoc mirrors the SDD-22 statusJSON shape one-to-one. Used for
+// statusDoc mirrors the statusJSON shape one-to-one. Used for
 // human-rendering on TTY paths. The pipe / `--json` path writes the
-// raw socket bytes verbatim (R-5).
+// raw socket bytes verbatim.
 type statusDoc struct {
 	Supervisor        string   `json:"supervisor"`
 	State             string   `json:"state"`
@@ -42,21 +42,20 @@ type refreshAck struct {
 	Error string `json:"error,omitempty"`
 }
 
-// clientStatusTimeout is the FR-023-19 wall-clock ceiling on `client
+// clientStatusTimeout is the wall-clock ceiling on `client
 // status`. Overridable from test code via the test-only seam below.
 //
 //nolint:gochecknoglobals // sentinel-class timeout knob; mutated only by tests via withTimeouts.
 var clientStatusTimeout = 2 * time.Second
 
-// clientRefreshTimeout is the FR-023-24 wall-clock ceiling on `client
+// clientRefreshTimeout is the wall-clock ceiling on `client
 // refresh`. Overridable from test code via the test-only seam below.
 //
 //nolint:gochecknoglobals // sentinel-class timeout knob; mutated only by tests via withTimeouts.
 var clientRefreshTimeout = 90 * time.Second
 
 // isTerminalFn is the TTY-detect seam. Production wires
-// term.IsTerminal; tests override to force one branch or the other
-// (R-5).
+// term.IsTerminal; tests override to force one branch or the other.
 //
 //nolint:gochecknoglobals // sentinel-class test seam; mutated only by tests via withTerminalFn.
 var isTerminalFn = func(fd uintptr) bool { return term.IsTerminal(int(fd)) }
@@ -109,7 +108,7 @@ type clientRefreshFlags struct {
 }
 
 // newClientRefreshCmd constructs the `hush client refresh` leaf. No
-// --json flag — refresh has no format option (FR-023-17a).
+// --json flag — refresh has no format option.
 func newClientRefreshCmd() *cobra.Command {
 	flags := clientRefreshFlags{}
 	cmd := &cobra.Command{
@@ -127,7 +126,7 @@ func newClientRefreshCmd() *cobra.Command {
 	return cmd
 }
 
-// resolveSocketPath applies the FR-023-15 precedence rule:
+// resolveSocketPath applies the precedence rule:
 //  1. --socket <abs-path> wins.
 //  2. else --supervisor NAME → supervise.SocketPathForSupervisor.
 //  3. else auto-detect via supervise.EnumerateSupervisorSockets:
@@ -246,8 +245,7 @@ func runClientRefresh(cmd *cobra.Command, flags clientRefreshFlags) error {
 
 // unixRoundTrip dials a Unix socket at path, writes verb, reads the
 // full response until EOF or the ctx deadline, and returns the bytes
-// read. Single attempt — never retries (FR-023-19 / FR-023-24
-// anti-contract).
+// read. Single attempt — never retries.
 func unixRoundTrip(ctx context.Context, path, verb string) ([]byte, error) {
 	var dialer net.Dialer
 	conn, err := dialer.DialContext(ctx, "unix", path)

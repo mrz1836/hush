@@ -23,7 +23,7 @@ type Store interface {
 	//   existed         — whether the jti was known (live OR previously
 	//                     revoked) at call time. Unknown JTIs are mapped
 	//                     by the /revoke handler to bad_signature
-	//                     (anti-enumeration; FR-015).
+	//                     (anti-enumeration).
 	//   alreadyRevoked  — whether the jti was already revoked before the
 	//                     call. Distinguishes the audit chain's
 	//                     `revoke_succeeded` from

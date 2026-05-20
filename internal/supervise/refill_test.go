@@ -32,8 +32,7 @@ func newRefillerForTest(t *testing.T, rt http.RoundTripper, store *Store, grace 
 
 // TestRefill_SilentOnCleanExit verifies the hot path: two scopes,
 // HTTP 200 + valid ECIES envelopes for both, Refill returns nil and
-// each scope is committed to Grace via one Set call (FR-021-1,
-// FR-021-2, B-RR-1, Lifecycle Scenario 3).
+// each scope is committed to Grace via one Set call.
 func TestRefill_SilentOnCleanExit(t *testing.T) {
 	priv := newECIESKey(t)
 	store := newTestStoreWithToken(t, []byte("eyJhbGciOi.JWT.SIG"))
@@ -83,7 +82,7 @@ func TestRefill_SilentOnCleanExit(t *testing.T) {
 // TestRefill_401UnknownJTITransitions: a 401 with body
 // {"error":"unknown_jti"} for one scope produces a wrapped
 // ErrJTIUnknown; the loop short-circuits at the failing scope; no
-// Grace.Set is committed (FR-021-3, B-RR-2, Lifecycle Scenario 7).
+// Grace.Set is committed.
 func TestRefill_401UnknownJTITransitions(t *testing.T) {
 	priv := newECIESKey(t)
 	store := newTestStoreWithToken(t, []byte("eyJhbGciOi.JWT.SIG"))
@@ -111,7 +110,7 @@ func TestRefill_401UnknownJTITransitions(t *testing.T) {
 }
 
 // TestRefill_NetworkErrorIsRetryable: a transport-layer net.OpError
-// surfaces as a wrapped, non-ErrJTIUnknown error (FR-021-4, B-RR-3).
+// surfaces as a wrapped, non-ErrJTIUnknown error.
 func TestRefill_NetworkErrorIsRetryable(t *testing.T) {
 	priv := newECIESKey(t)
 	store := newTestStoreWithToken(t, []byte("eyJhbGciOi.JWT.SIG"))
@@ -139,7 +138,7 @@ func TestRefill_NetworkErrorIsRetryable(t *testing.T) {
 // TestRefill_AtomicDestructionOnPartialFailure: three scopes; first
 // two succeed, the third fails. After Refill returns, the first two
 // SecureBytes are destroyed (Use returns ErrDestroyed) and no
-// Grace.Set was committed for any of the three (FR-021-5, B-RR-4).
+// Grace.Set was committed for any of the three.
 func TestRefill_AtomicDestructionOnPartialFailure(t *testing.T) {
 	priv := newECIESKey(t)
 	store := newTestStoreWithToken(t, []byte("eyJhbGciOi.JWT.SIG"))
@@ -190,8 +189,7 @@ func TestRefill_AtomicDestructionOnPartialFailure(t *testing.T) {
 }
 
 // TestRefill_NeverStringifiesDecryptedBytes: marker plaintext never
-// appears in the operational log buffer (FR-021-15, SC-021-8,
-// Constitution X).
+// appears in the operational log buffer.
 func TestRefill_NeverStringifiesDecryptedBytes(t *testing.T) {
 	const marker = "HUSH-MARKER-21-PLAINTEXT"
 	priv := newECIESKey(t)
@@ -235,7 +233,7 @@ func TestRefill_NeverStringifiesDecryptedBytes(t *testing.T) {
 
 // TestRefill_AuditEventsDistinctByOutcome: success / ErrJTIUnknown /
 // transient each emit a distinguishable outcome attribute and zero
-// secret bytes (FR-021-6).
+// secret bytes.
 func TestRefill_AuditEventsDistinctByOutcome(t *testing.T) {
 	priv := newECIESKey(t)
 
@@ -325,7 +323,7 @@ func TestRefill_BearerTokenNeverLeaksToLogs(t *testing.T) {
 // TestBootRetry_BackoffRespected: Refill is invoked twice in
 // succession against a 503 stub; each call results in exactly one
 // HTTP request (Refill never internally retries) and each returns a
-// non-ErrJTIUnknown error (FR-021-19 smoke, R-010).
+// non-ErrJTIUnknown error.
 func TestBootRetry_BackoffRespected(t *testing.T) {
 	priv := newECIESKey(t)
 	store := newTestStoreWithToken(t, []byte("eyJhbGciOi.JWT.SIG"))
@@ -456,7 +454,7 @@ func TestRefill_CtxCancelled(t *testing.T) {
 }
 
 // TestRefill_401UnparseableBody: 401 with a non-JSON body produces
-// a non-ErrJTIUnknown transient error (data-model.md error mapping).
+// a non-ErrJTIUnknown transient error.
 func TestRefill_401UnparseableBody(t *testing.T) {
 	priv := newECIESKey(t)
 	store := newTestStoreWithToken(t, []byte("eyJ"))

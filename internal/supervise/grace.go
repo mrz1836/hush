@@ -7,19 +7,19 @@ import (
 	"github.com/mrz1836/hush/internal/vault/securebytes"
 )
 
-// graceMaxWindow is the per-Constitution-IV hard cap on the grace
-// cache TTL. Even when the operator configures a larger window, the
-// effective TTL is min(window, 4h) (FR-021-12, GR-1).
+// graceMaxWindow is the hard cap on the grace cache TTL. Even when
+// the operator configures a larger window, the effective TTL is
+// min(window, 4h).
 const graceMaxWindow = 4 * time.Hour
 
 // Grace is the per-supervisor cache of last-decrypted *SecureBytes
 // keyed by secret name. Lifecycle: NewGrace returns an empty cache;
 // Refiller.Refill calls Set after each successful decrypt cycle; the
 // orchestrator's restart path calls Get; the `hush client refresh`
-// flow calls Evict (Clarification 5 / FR-021-16).
+// flow calls Evict.
 //
-// The cache is permanently empty when enabled=false or window<=0
-// (FR-021-14). Effective TTL is min(window, 4h) (FR-021-12).
+// The cache is permanently empty when enabled=false or window<=0.
+// Effective TTL is min(window, 4h).
 type Grace struct {
 	mu      sync.RWMutex
 	entries map[string]graceEntry
@@ -34,12 +34,11 @@ type graceEntry struct {
 }
 
 // NewGrace constructs a Grace cache. The window argument is hard-
-// capped at 4 hours per Constitution IV / FR-021-12. Disabled mode
-// (enabled=false) and zero-or-negative window both produce a
-// permanently-empty cache (FR-021-14).
+// capped at 4 hours. Disabled mode (enabled=false) and
+// zero-or-negative window both produce a permanently-empty cache.
 //
-// NewGrace owns no goroutines (Constitution IX, R-008). Expired
-// entries are destroyed lazily on the next Get call.
+// NewGrace owns no goroutines. Expired entries are destroyed lazily
+// on the next Get call.
 func NewGrace(window time.Duration, enabled bool) *Grace {
 	if window > graceMaxWindow {
 		window = graceMaxWindow
@@ -55,7 +54,7 @@ func NewGrace(window time.Duration, enabled bool) *Grace {
 // Get returns the cached *SecureBytes for name. Returns (nil, false)
 // when the entry is absent, expired, or when the cache is disabled.
 // On expiry, Get atomically destroys the entry's *SecureBytes and
-// removes the map slot before returning (R-008 lazy-evict).
+// removes the map slot before returning (lazy-evict).
 //
 // The returned *SecureBytes pointer is borrow-only — callers MUST NOT
 // call Destroy on it. Grace retains ownership until the next Set,
@@ -88,10 +87,9 @@ func (g *Grace) Get(name string) (*securebytes.SecureBytes, bool) {
 }
 
 // Set records (name, value) with expiry = now() + window. On
-// overwrite, the prior entry's *SecureBytes is destroyed first
-// (FR-021-13). When the cache is disabled or window<=0, Set is a
-// silent no-op and ownership of value remains with the caller (R-009,
-// FR-021-14).
+// overwrite, the prior entry's *SecureBytes is destroyed first.
+// When the cache is disabled or window<=0, Set is a silent no-op and
+// ownership of value remains with the caller.
 func (g *Grace) Set(name string, value *securebytes.SecureBytes) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -105,8 +103,7 @@ func (g *Grace) Set(name string, value *securebytes.SecureBytes) {
 }
 
 // Evict destroys the entry for name (if present) and removes the
-// map slot. Calling Evict for an absent name is a silent no-op
-// (Clarification 5 / FR-021-16).
+// map slot. Calling Evict for an absent name is a silent no-op.
 func (g *Grace) Evict(name string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()

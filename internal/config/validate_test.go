@@ -562,7 +562,7 @@ func TestValidate_RuleOrderDeterministic(t *testing.T) {
 		ErrPathPrefixInvalid,              // rule 5
 		ErrAuditLogEscape,                 // rule 6
 		ErrSupervisorTTLOutOfRange,        // rule 7
-		ErrClaimApprovalTimeoutOutOfRange, // rule 8 (zero-value timeout — SDD-12)
+		ErrClaimApprovalTimeoutOutOfRange, // rule 8 (zero-value timeout)
 	}
 
 	require.Len(t, leaves, len(expectedOrder),

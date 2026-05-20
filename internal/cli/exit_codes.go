@@ -18,8 +18,7 @@ import (
 )
 
 // Exit codes form the public CLI contract. Operators script against
-// these values; their numeric stability is part of the contract
-// (FR-005, FR-006).
+// these values; their numeric stability is part of the contract.
 const (
 	// ExitOK indicates a clean completion.
 	ExitOK = 0
@@ -41,7 +40,7 @@ const (
 	// the configured port, cannot read the vault file due to mode.
 	ExitPerm = 5
 	// ExitConfigStale is the EX_CONFIG sysexits sentinel reserved for
-	// the future supervisor↔child contract (SDD-15/SDD-23). It is
+	// the future supervisor↔child contract. It is
 	// declared here so the public symbol is stable, but is NEVER
 	// raised by any subcommand in this chunk.
 	ExitConfigStale = 78
@@ -71,8 +70,8 @@ var errNoPassphraseSource = errors.New("no passphrase source: stdin is not a pip
 // revoke subcommand on HTTP 401/403.
 var errAuthFailed = errors.New("auth failed")
 
-// errVaultExists surfaces the existing-vault refusal in init server
-// (FR-012). Mapped to [ExitErr] by [mapErr].
+// errVaultExists surfaces the existing-vault refusal in init server.
+// Mapped to [ExitErr] by [mapErr].
 var errVaultExists = errors.New("vault already exists")
 
 // errConfigExists surfaces the existing-config refusal in init
@@ -146,35 +145,34 @@ var errInvalidScopeName = errors.New("hush: request: --scope must match ^[A-Za-z
 
 // errInvalidGraceWindow surfaces a --grace-window flag value that is
 // negative, zero (when explicitly set), or > 4h. Mapped to
-// [ExitInputErr] by [mapErr] (FR-023-12).
+// [ExitInputErr] by [mapErr].
 var errInvalidGraceWindow = errors.New("invalid --grace-window")
 
 // errSocketAmbiguous surfaces the auto-detect-zero or auto-detect-
-// multiple branches of supervisor socket discovery (FR-023-15 (4)).
+// multiple branches of supervisor socket discovery.
 // Mapped to [ExitInputErr] by [mapErr].
 var errSocketAmbiguous = errors.New("supervisor socket ambiguous")
 
 // errSocketUnreachable surfaces dial / read / write / parse failures
-// against the supervisor's status socket (FR-023-18, FR-023-23).
+// against the supervisor's status socket.
 // Mapped to [ExitErr] by [mapErr].
 var errSocketUnreachable = errors.New("supervisor socket unreachable")
 
 // errSupervisorRefused surfaces a `client refresh` ack carrying
-// {"ok":false,"error":<msg>} (FR-023-22). Mapped to [ExitErr].
+// {"ok":false,"error":<msg>}. Mapped to [ExitErr].
 var errSupervisorRefused = errors.New("supervisor refused")
 
-// errDuplicateSupervisor surfaces the FR-023-6 case where another
+// errDuplicateSupervisor surfaces the case where another
 // supervisor is already running for the supplied configuration.
 // Wraps supervise.ErrPidLocked. Mapped to [ExitErr] by [mapErr].
 var errDuplicateSupervisor = errors.New("another supervisor is already running for this configuration")
 
 // errChildExitCode wraps the integer exit status of a child process
 // launched by `hush request --exec`. mapErr unwraps it via errors.As
-// and returns the child's code verbatim, preserving FR-010's exit-code
-// propagation contract. Name is contract-locked at SDD-16
-// (contracts/cli-request.md §6).
+// and returns the child's code verbatim, preserving the exit-code
+// propagation contract.
 //
-//nolint:errname // contract-locked name; see contracts/cli-request.md §6
+//nolint:errname // contract-locked name
 type errChildExitCode struct{ code int }
 
 // Error implements error.
@@ -195,7 +193,7 @@ func mapErr(err error) int {
 	}
 
 	// Child-exit propagation: --exec returns the child's status
-	// verbatim per FR-010. Must be checked before generic ExitErr
+	// verbatim. Must be checked before generic ExitErr
 	// classification so the child's code (which may be any int) wins.
 	var childExit *errChildExitCode
 	if errors.As(err, &childExit) {
@@ -258,13 +256,13 @@ func mapErr(err error) int {
 		return ExitInputErr
 	}
 
-	// SDD-23 supervise + client error classes — operational failures
+	// supervise + client error classes — operational failures
 	// (socket unreachable, supervisor refused refresh, duplicate
 	// supervisor wrap of supervise.ErrPidLocked) collapse to ExitErr.
 	// Checked BEFORE the not-found / perm classes because the
 	// underlying dial / read errors wrap fs.ErrNotExist when the
-	// supervisor's socket file is missing, but spec FR-023-18 /
-	// FR-023-23 requires ExitErr for unreachable socket.
+	// supervisor's socket file is missing, but unreachable socket
+	// requires ExitErr.
 	switch {
 	case errors.Is(err, errSocketUnreachable),
 		errors.Is(err, errSupervisorRefused),

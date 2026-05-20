@@ -22,7 +22,6 @@ func testKATSalt() []byte {
 	return []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
 }
 
-// TestDeriveMasterSeed_Deterministic covers G1 + FR-002 + SC-003 + FR-013.
 func TestDeriveMasterSeed_Deterministic(t *testing.T) {
 	ctx := context.Background()
 
@@ -65,7 +64,6 @@ func TestDeriveMasterSeed_Deterministic(t *testing.T) {
 	})
 }
 
-// TestDeriveMasterSeed_RejectsShortPassphrase covers G2 + FR-003 + SC-004.
 func TestDeriveMasterSeed_RejectsShortPassphrase(t *testing.T) {
 	validSalt := make([]byte, 16)
 	ctx := context.Background()
@@ -99,7 +97,6 @@ func TestDeriveMasterSeed_RejectsShortPassphrase(t *testing.T) {
 	}
 }
 
-// TestDeriveMasterSeed_RejectsBadSalt covers G3 + FR-004 + SC-004.
 func TestDeriveMasterSeed_RejectsBadSalt(t *testing.T) {
 	validPass := []byte("valid-passphrase!!")
 	ctx := context.Background()
@@ -136,7 +133,6 @@ func TestDeriveMasterSeed_RejectsBadSalt(t *testing.T) {
 	}
 }
 
-// TestDeriveMasterSeed_RespectsCancelledContext covers G4 cancellation + FR-013.
 func TestDeriveMasterSeed_RespectsCancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel before any call

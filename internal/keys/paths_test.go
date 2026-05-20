@@ -18,7 +18,6 @@ func testSeed(t *testing.T) []byte {
 	return seed
 }
 
-// TestDeriveJWTSigningKey_Path covers G5 + FR-005.
 func TestDeriveJWTSigningKey_Path(t *testing.T) {
 	seed := testSeed(t)
 
@@ -54,7 +53,6 @@ func TestDeriveJWTSigningKey_Path(t *testing.T) {
 	})
 }
 
-// TestDeriveVaultEncKey_Length covers G6 + FR-006.
 func TestDeriveVaultEncKey_Length(t *testing.T) {
 	seed := testSeed(t)
 
@@ -85,7 +83,6 @@ func TestDeriveVaultEncKey_Length(t *testing.T) {
 	})
 }
 
-// TestDeriveAuditSigningKey_Path covers G7 + FR-007 + AC-7 distinctness.
 func TestDeriveAuditSigningKey_Path(t *testing.T) {
 	seed := testSeed(t)
 
@@ -106,7 +103,7 @@ func TestDeriveAuditSigningKey_Path(t *testing.T) {
 		assert.Equal(t, s1, s2)
 	})
 
-	t.Run("distinct from JWT signing key (FR-007)", func(t *testing.T) {
+	t.Run("distinct from JWT signing key", func(t *testing.T) {
 		jwtKey, err := DeriveJWTSigningKey(seed)
 		require.NoError(t, err)
 		auditKey, err := DeriveAuditSigningKey(seed)

@@ -29,8 +29,8 @@ type Event struct {
 	Signature string         `json:"signature"`
 }
 
-// Action constants — the closed vocabulary of audit-event action strings
-// per data-model §6.  Future SDDs MAY append (never repurpose).
+// Action constants — the closed vocabulary of audit-event action strings.
+// Future additions MAY append (never repurpose).
 const (
 	// Chassis lifecycle.
 	ActionServerStart         = "server_start"
@@ -38,7 +38,7 @@ const (
 	ActionVaultReloaded       = "vault_reloaded"
 	ActionFilePermCheckFailed = "file_perm_check_failed"
 
-	// Discord connectivity transitions (SDD-11).
+	// Discord connectivity transitions.
 	ActionDiscordDisconnected = "discord_disconnected"
 	ActionDiscordReconnected  = "discord_reconnected"
 
@@ -62,9 +62,9 @@ const (
 	ActionRevokeNonceReplay              = "revoke_nonce_replay"
 	ActionRevokeStaleTimestamp           = "revoke_stale_timestamp"
 
-	// Supervisor lifecycle — added in SDD-24. Emitted by the
+	// Supervisor lifecycle. Emitted by the
 	// supervisor orchestrator in internal/supervise/lifecycle*.go.
-	// Future SDDs MAY append; never repurpose (per the line-33
+	// Future additions MAY append; never repurpose (per the
 	// header invariant above).
 	ActionSupervisorSessionClaimed   = "supervisor_session_claimed"
 	ActionSupervisorSessionRefreshed = "supervisor_session_refreshed"

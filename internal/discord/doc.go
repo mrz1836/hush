@@ -24,6 +24,5 @@
 //   - X — Bot token flows through *securebytes.SecureBytes; sentinel
 //     error messages are static categories carrying no token bytes,
 //     no request fields, and no key material.
-//   - XI — One new direct dependency, github.com/bwmarrin/discordgo,
-//     justified in specs/011-discord-bot/research.md §R-001.
+//   - XI — One new direct dependency, github.com/bwmarrin/discordgo.
 package discord

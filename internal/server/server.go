@@ -75,7 +75,7 @@ const (
 )
 
 // vaultPath derives the absolute vault file path from the configured state
-// directory. The chassis owns this convention — SDD-15's rotate command
+// directory. The chassis owns this convention — the rotate command
 // writes to the same path, and SIGHUP causes the chassis to reload from it.
 func vaultPath(cfg *config.Server) string {
 	return filepath.Join(cfg.Server.StateDir, vaultFilename)
@@ -102,8 +102,8 @@ type TokenIssuer func(ctx context.Context, params token.IssueParams) (*token.Tok
 // fingerprint (16-char lowercase hex per [keys.PublicKeyFingerprint]). On a
 // miss the resolver MUST return [ErrClientUnknown]; the handler maps that
 // outcome to the same `bad_signature` (403) status as a verify failure to
-// avoid leaking which fingerprints are registered (data-model.md §3 edge
-// case "Client supplies an unknown registered-client-key fingerprint").
+// avoid leaking which fingerprints are registered (when a client supplies
+// an unknown registered-client-key fingerprint).
 type ClientKeyResolver func(fingerprint string) (*ecdsa.PublicKey, error)
 
 // Deps is the dependency-injection bundle for the chassis. The first seven
@@ -128,8 +128,8 @@ type Deps struct {
 	// captured.
 	TokenIssuer TokenIssuer
 
-	// Approver is the approval interface. SDD-11 supplies the
-	// Discord-backed implementation in production; tests supply fakes.
+	// Approver is the approval interface. Production supplies the
+	// Discord-backed implementation; tests supply fakes.
 	Approver Approver
 
 	// Logger is the redacting structured logger.
@@ -149,7 +149,7 @@ type Deps struct {
 
 	// DiscordHealth is the connectivity probe surfaced via /hz's
 	// `discord_connected` field. When nil the chassis reports
-	// `discord_connected: false` (fail-closed; FR-018 + R-009).
+	// `discord_connected: false` (fail-closed).
 	DiscordHealth func() bool
 
 	// Clock is the chassis's wall-clock source. Defaults to time.Now.
@@ -366,7 +366,7 @@ type clientRegistryEntry struct {
 // so the wire-facing response stays uniform.
 //
 // Lazy load (rather than eager load in [New]) preserves the chassis
-// "zero I/O in New" invariant from SDD-10.
+// "zero I/O in New" invariant.
 func newDefaultClientKeyResolver(cfg *config.Server) ClientKeyResolver {
 	c := &lazyClientKeyCache{path: cfg.Server.ClientRegistry}
 	return c.resolve
@@ -584,7 +584,7 @@ func (s *Server) approver() Approver {
 
 // discordHealth reports whether the Discord WebSocket gateway is currently
 // available, per the wired probe. Nil-safe: a nil Deps.DiscordHealth field
-// reports `false` (fail-closed; FR-018, R-009).
+// reports `false` (fail-closed).
 func (s *Server) discordHealth() bool {
 	if s.discordHealthFn == nil {
 		return false

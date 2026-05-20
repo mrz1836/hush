@@ -21,7 +21,7 @@ import (
 )
 
 // TestInit_FullDanceInTempDir is the end-to-end integration test
-// for SDD-15 — runs server bootstrap then two client enrollments
+// that runs server bootstrap then two client enrollments
 // in the same TempDir-rooted state directory; asserts artifacts and
 // fingerprints match the quickstart expectations (specs/.../quickstart.md).
 //
@@ -121,13 +121,13 @@ func TestInit_FullDanceInTempDir(t *testing.T) {
 	require.NotEqual(t, got, got3, "machine-0 and machine-1 must produce distinct fingerprints")
 
 	// 7. Verify the vault decrypts under the supplied passphrase
-	// (round-trip-validity for SC-003).
+	// (round-trip validity).
 	pass, err := securebytes.New([]byte("correctbatterystaple"))
 	require.NoError(t, err)
 	defer pass.Destroy()
 	// Re-derive the vault encryption key the same way runInitServer
 	// did so we can re-open the vault. We'd have to read the vault
-	// header for the salt — but SDD-03's vault.Load expects the same
+	// header for the salt — but vault.Load expects the same
 	// vault key derived in init. The derive happens via DeriveMasterSeed
 	// + DeriveVaultEncKey. Since the scripted random reader produced
 	// the salt deterministically, we can reproduce.
@@ -142,7 +142,7 @@ func mustReadFile(t *testing.T, path string) []byte {
 }
 
 // TestInit_PreflightFailure_SuppressesPrompts is the synthetic-failure
-// integration test required by Plan AC-2 / Task 2.2: the preflight
+// integration test: the preflight
 // pipeline runs BEFORE any prompt, so injecting a failure must cause
 // the flow to short-circuit and no prompt seam may fire.
 func TestInit_PreflightFailure_SuppressesPrompts(t *testing.T) {

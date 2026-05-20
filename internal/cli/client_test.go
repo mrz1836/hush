@@ -366,7 +366,6 @@ var _ = cobra.Command{}
 
 // TestClientStatus_NoSecretInOutput — drive every client status error
 // path and assert no secret-marker bytes appear on stdout / stderr.
-// FR-023-27/28.
 func TestClientStatus_NoSecretInOutput(t *testing.T) {
 	cases := []struct {
 		name string
@@ -386,7 +385,7 @@ func TestClientStatus_NoSecretInOutput(t *testing.T) {
 
 // TestClientRefresh_NoSecretInOutput — drive every client refresh
 // error path and assert no secret-marker bytes appear on stdout /
-// stderr. FR-023-27/28.
+// stderr.
 func TestClientRefresh_NoSecretInOutput(t *testing.T) {
 	cases := []struct {
 		name string

@@ -1,4 +1,4 @@
-// Package server: SDD-12 — POST /claim handler.
+// Package server: POST /claim handler.
 //
 // The /claim handler is the constitutional choke point of the vault server.
 // Every secret request walks the same pipeline:
@@ -14,7 +14,7 @@
 // Approver (Constitution II). The 503 path is structurally fail-closed.
 //
 // Error response bodies contain ONLY the static `error` code and the
-// chassis-assigned `request_id` (FR-018). The signature, nonce, ephemeral
+// chassis-assigned `request_id`. The signature, nonce, ephemeral
 // pubkey, supplied reason, machine name, and scope contents NEVER appear in
 // any response body or operational log line (Constitution X). Audit events
 // emit the scope (audit-vs-log asymmetry) but redact the same forbidden set.
@@ -41,10 +41,10 @@ import (
 
 // AuditClaimOutcome is the [AuditEventType] emitted by the claim handler for
 // every terminal outcome. Distinguished from chassis-emitted constants in
-// [approver.go]; SDD-13 will add `secret_fetch`, `revoke`, etc.
+// [approver.go]; the secret/revoke handlers add `secret_fetch`, `revoke`, etc.
 const AuditClaimOutcome AuditEventType = "claim_outcome"
 
-// outcomeLabel is the audit-side label per Outcome (data-model.md §5).
+// outcomeLabel is the audit-side label per Outcome.
 type outcomeLabel string
 
 const (
@@ -62,7 +62,7 @@ const (
 )
 
 // Shape-validation sentinel errors. Compared via errors.Is in tests; the
-// handler maps every one to the same `400 bad_request` outcome (FR-009)
+// handler maps every one to the same `400 bad_request` outcome
 // without echoing the failing field, so the caller cannot distinguish them
 // on the wire — but the error chain remains useful for triage logs.
 var (
@@ -82,8 +82,8 @@ var (
 	errShapeBase64Invalid      = errors.New("server: claim: signature not a recognized base64 encoding")
 )
 
-// Static error codes returned in response bodies. The set is exhaustive per
-// FR-018; future codes may be appended (never repurposed).
+// Static error codes returned in response bodies. The set is exhaustive;
+// future codes may be appended (never repurposed).
 const (
 	errCodeBadRequest         = "bad_request"
 	errCodeBadSignature       = "bad_signature"
@@ -151,8 +151,7 @@ func getNonceCharsRe() *regexp.Regexp {
 	return nonceCharsRe
 }
 
-// claimRequest is the JSON-decoded request body. All fields are required —
-// see [data-model.md §1].
+// claimRequest is the JSON-decoded request body. All fields are required.
 type claimRequest struct {
 	Scope                []string `json:"scope"`
 	Reason               string   `json:"reason"`
@@ -200,12 +199,11 @@ type signedPayload struct {
 	TTL             string   `json:"ttl"`
 }
 
-// RegisterHandlers mounts SDD-12's POST /claim route on the chassis. Must be
+// RegisterHandlers mounts the POST /claim route on the chassis. Must be
 // called pre-Run; subsequent calls (or calls after Run) return [ErrAlreadyRun].
 //
-// SDD-13 will extend this method to also register `/secrets/<name>`,
-// `/revoke/<jti>`, and `/hz`. The single entry point keeps the route table
-// inside `internal/server`.
+// This method also registers `/secrets/<name>`, `/revoke/<jti>`, and `/hz`.
+// The single entry point keeps the route table inside `internal/server`.
 func (s *Server) RegisterHandlers() error {
 	if err := s.Mount(http.MethodPost, "/claim", http.HandlerFunc(s.handleClaim)); err != nil {
 		return fmt.Errorf("server: register /claim: %w", err)
@@ -222,7 +220,7 @@ func (s *Server) RegisterHandlers() error {
 	return nil
 }
 
-// handleClaim is the SDD-12 entry point. The middleware stack from SDD-10
+// handleClaim is the claim entry point. The middleware stack
 // (request ID → IP allow-list → body cap → panic recover) wraps this handler
 // in production; unit tests invoke it directly with a context pre-populated
 // via [requestIDKey].
@@ -242,7 +240,7 @@ func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
 	// Stage 2: canonical-JSON signature verify (and unknown-fingerprint check).
 	if err := s.verifyClaimSignature(ctx, req); err != nil {
 		// Signature failures and unknown fingerprints both map to bad_signature
-		// per FR-010 + edge case "unknown registered-client-key fingerprint" —
+		// (including the unknown registered-client-key fingerprint case) —
 		// preventing client-fingerprint enumeration through error variation.
 		s.respondError(w, ctx, errCodeBadSignature, outcomeBadSignature, requestID, req)
 		return
@@ -262,8 +260,8 @@ func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Stage 5: IP allowlist recheck (FR-013, defense-in-depth — middleware
-	// at SDD-10 already enforced this; the L7 recheck protects against
+	// Stage 5: IP allowlist recheck (defense-in-depth — the middleware
+	// already enforced this; the L7 recheck protects against
 	// future middleware-stack changes).
 	peer, ok := parseRemoteAddr(r.RemoteAddr)
 	if !ok || !allowedByCIDR(peer, parseAllowedCIDRs(s.cfg.Network.AllowedCIDRs)) {
@@ -272,7 +270,7 @@ func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Stage 6: TTL cap — apply BEFORE invoking the approver so the
-	// operator's prompt and the issued JWT carry the same value (FR-016).
+	// operator's prompt and the issued JWT carry the same value.
 	requestedTTL, _ := time.ParseDuration(req.TTL) // shape stage already accepted this
 	sessionType := parseSessionType(req.SessionType)
 	cappedTTL := capTTL(sessionType, requestedTTL, s.cfg.Crypto)
@@ -393,7 +391,7 @@ func (s *Server) issueAndRespond(
 // field. Returns (nil, err) on any failure; the caller maps to 400
 // bad_request without echoing the malformed input.
 //
-//nolint:cyclop,gocyclo,gocognit // sequential per-field validation: branching is inherent to the data-model contract
+//nolint:cyclop,gocyclo,gocognit // sequential per-field validation: branching is inherent to the request contract
 func (s *Server) parseClaimRequest(r *http.Request) (*claimRequest, error) {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
@@ -483,9 +481,9 @@ func (s *Server) verifyClaimSignature(ctx context.Context, req *claimRequest) er
 	return nil
 }
 
-// respondBadRequest writes a 400 with a server-generated request_id (FR-009)
+// respondBadRequest writes a 400 with a server-generated request_id
 // and emits an outcome=bad-request audit event. The body did not parse, so
-// scope/session_type are unknown — the audit detail omits them (data-model.md §5).
+// scope/session_type are unknown — the audit detail omits them.
 func (s *Server) respondBadRequest(w http.ResponseWriter, ctx context.Context, requestID string) {
 	detail := map[string]string{"outcome": string(outcomeBadRequest)}
 	s.emitClaimAudit(ctx, requestID, netip.Addr{}, detail)
@@ -501,7 +499,7 @@ func (s *Server) respondBadRequest(w http.ResponseWriter, ctx context.Context, r
 
 // respondError writes a non-200 pre-approval outcome (stages 2-5: signature,
 // nonce, timestamp, IP). Audit detail includes session_type and scope — req
-// has been successfully parsed. Always emits HTTP 403 (FR-010..FR-013).
+// has been successfully parsed. Always emits HTTP 403.
 func (s *Server) respondError(
 	w http.ResponseWriter,
 	ctx context.Context,
@@ -578,8 +576,8 @@ func (s *Server) logOpsEvent(ctx context.Context, msg string, kvs ...any) {
 	s.logger.InfoContext(ctx, msg, kvs...)
 }
 
-// buildAuditDetail returns the allow-list audit detail map per data-model.md
-// §5. Scope is the sorted-comma-joined names; granted_ttl and jti are
+// buildAuditDetail returns the allow-list audit detail map.
+// Scope is the sorted-comma-joined names; granted_ttl and jti are
 // populated only on the `approved` outcome. NEVER returns reason, signature,
 // nonce, ephemeral_pubkey, jwt, or client_key_fingerprint.
 func buildAuditDetail(outcome outcomeLabel, scope []string, sessionType SessionType, grantedTTL time.Duration, jti string) map[string]string {
@@ -601,7 +599,7 @@ func buildAuditDetail(outcome outcomeLabel, scope []string, sessionType SessionT
 
 // capTTL clamps the requested TTL to the per-session-type configured maximum.
 // Applied BEFORE the approver dispatch so the operator's prompt shows the
-// actual TTL (FR-016 / SC-005).
+// actual TTL.
 func capTTL(sessionType SessionType, requested time.Duration, cs config.CryptoSection) time.Duration {
 	var ceiling time.Duration
 	switch sessionType {

@@ -26,8 +26,8 @@ func deployDir(t *testing.T) string {
 }
 
 // plistDoc is a minimal `encoding/xml` decode target for the launchd
-// plist's <dict> body. We only validate the keys SDD-29 locks; richer
-// plist-schema validation is out of chunk scope.
+// plist's <dict> body. We only validate the keys we lock; richer
+// plist-schema validation is out of scope.
 type plistDoc struct {
 	XMLName xml.Name `xml:"plist"`
 	Dict    struct {
@@ -52,7 +52,7 @@ func TestDeploy_PlistParsesAsXML(t *testing.T) {
 	}
 	var doc plistDoc
 	if err := xml.Unmarshal(data, &doc); err != nil {
-		t.Fatalf("FR-012: plist does not parse as XML: %v", err)
+		t.Fatalf("plist does not parse as XML: %v", err)
 	}
 
 	// Walk the flat <dict> body looking for the <key>UserName</key>
@@ -83,13 +83,13 @@ func TestDeploy_PlistParsesAsXML(t *testing.T) {
 	}
 
 	if userName == "" {
-		t.Fatalf("FR-010: plist missing <key>UserName</key>")
+		t.Fatalf("plist missing <key>UserName</key>")
 	}
 	if userName == "root" || userName == "0" {
-		t.Errorf("FR-010 + SC-005: UserName must be non-root, got %q", userName)
+		t.Errorf("UserName must be non-root, got %q", userName)
 	}
 	if firstArg != "/usr/local/bin/hush" {
-		t.Errorf("FR-011: first ProgramArguments entry must be /usr/local/bin/hush, got %q", firstArg)
+		t.Errorf("first ProgramArguments entry must be /usr/local/bin/hush, got %q", firstArg)
 	}
 }
 
@@ -140,14 +140,14 @@ func TestDeploy_ServiceParsesAsINI(t *testing.T) {
 	}
 
 	if !seenUnit || !seenService || !seenInstall {
-		t.Errorf("FR-016: unit missing required sections (Unit=%v Service=%v Install=%v)",
+		t.Errorf("unit missing required sections (Unit=%v Service=%v Install=%v)",
 			seenUnit, seenService, seenInstall)
 	}
 	if userInService != "@HUSH_USER@" {
-		t.Errorf("FR-014: committed User= must be @HUSH_USER@ before substitution, got %q", userInService)
+		t.Errorf("committed User= must be @HUSH_USER@ before substitution, got %q", userInService)
 	}
 	if !strings.HasPrefix(execStart, "/usr/local/bin/hush") {
-		t.Errorf("FR-015: ExecStart= must begin with /usr/local/bin/hush, got %q", execStart)
+		t.Errorf("ExecStart= must begin with /usr/local/bin/hush, got %q", execStart)
 	}
 }
 
@@ -161,14 +161,14 @@ func TestDeploy_LauncherTemplateExecsSupervise(t *testing.T) {
 	// (a) bash -n parses cleanly.
 	cmd := exec.Command("bash", "-n", tmpl)
 	if out, runErr := cmd.CombinedOutput(); runErr != nil {
-		t.Fatalf("FR-023: bash -n failed on launcher template: %v\n%s", runErr, out)
+		t.Fatalf("bash -n failed on launcher template: %v\n%s", runErr, out)
 	}
 
 	body := string(data)
 
 	// (b) the literal `hush supervise` appears at least once.
 	if !strings.Contains(body, "hush supervise") {
-		t.Errorf("FR-018: launcher template must contain `hush supervise`")
+		t.Errorf("launcher template must contain `hush supervise`")
 	}
 
 	// (c) zero active (non-comment) `hush request --exec` lines.
@@ -184,17 +184,17 @@ func TestDeploy_LauncherTemplateExecsSupervise(t *testing.T) {
 		}
 		if strings.Contains(line, "hush request --exec") {
 			activeMatches++
-			t.Errorf("FR-019: active `hush request --exec` found at line %d: %q", lineNum, line)
+			t.Errorf("active `hush request --exec` found at line %d: %q", lineNum, line)
 		}
 	}
 	if activeMatches != 0 {
-		t.Errorf("FR-019: %d active `hush request --exec` invocation(s) found", activeMatches)
+		t.Errorf("%d active `hush request --exec` invocation(s) found", activeMatches)
 	}
 
 	// (d) all three placeholder tokens must appear.
 	for _, ph := range []string{"<NAME>", "<KEYCHAIN_ITEM>", "<CONFIG_PATH>"} {
 		if !strings.Contains(body, ph) {
-			t.Errorf("FR-020: placeholder %s missing from template", ph)
+			t.Errorf("placeholder %s missing from template", ph)
 		}
 	}
 
@@ -203,10 +203,10 @@ func TestDeploy_LauncherTemplateExecsSupervise(t *testing.T) {
 	headLines := strings.SplitN(body, "\n", 41)
 	head := strings.Join(headLines[:len(headLines)-1], "\n")
 	if !strings.Contains(head, "SUBSTITUTE") {
-		t.Errorf("FR-021: header should contain a SUBSTITUTE instruction block")
+		t.Errorf("header should contain a SUBSTITUTE instruction block")
 	}
 	if !strings.Contains(head, "DO NOT") {
-		t.Errorf("FR-021: header should contain a DO NOT warning against `hush request --exec`")
+		t.Errorf("header should contain a DO NOT warning against `hush request --exec`")
 	}
 }
 
@@ -226,7 +226,7 @@ func TestDeploy_NoOperatorSpecificNames(t *testing.T) {
 			continue
 		}
 		if loc := deny.FindIndex(data); loc != nil {
-			t.Errorf("FR-009/013/017/022: operator-specific token in %s at byte offset %d: %q",
+			t.Errorf("operator-specific token in %s at byte offset %d: %q",
 				f, loc[0], string(data[loc[0]:loc[1]]))
 		}
 	}
@@ -252,12 +252,12 @@ func TestDeploy_AllShellFilesParse(t *testing.T) {
 		t.Fatalf("walk deploy/: %v", err)
 	}
 	if len(shellFiles) == 0 {
-		t.Fatal("FR-024: no shell files found under deploy/")
+		t.Fatal("no shell files found under deploy/")
 	}
 	for _, f := range shellFiles {
 		out, runErr := exec.Command("bash", "-n", f).CombinedOutput()
 		if runErr != nil {
-			t.Errorf("FR-024: bash -n failed on %s: %v\n%s", f, runErr, out)
+			t.Errorf("bash -n failed on %s: %v\n%s", f, runErr, out)
 		}
 	}
 }

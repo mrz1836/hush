@@ -114,7 +114,7 @@ func scriptedLineReaderWithExtras(t *testing.T, extras []string) func(*os.File, 
 	return scriptedLineReader(t, full)
 }
 
-// ---- AC-5 / Task 3.2 — ACL repair branch ----------------------------------
+// ---- ACL repair branch ----------------------------------------------------
 
 // TestKeychainACL_PanelRendersOnDenialAndReuseAfterRepair drives the
 // happy path of the ACL-repair branch: the panel renders, the operator
@@ -164,7 +164,7 @@ func TestKeychainACL_PanelReDisplaysWhenRepairStillDenied(t *testing.T) {
 	require.Contains(t, transcript, "Keychain re-check still denied")
 }
 
-// ---- AC-5 / Task 3.3 — delete-and-recreate branch -------------------------
+// ---- delete-and-recreate branch -------------------------------------------
 
 // TestKeychainACL_DeleteRecreateRequiresExactConfirmation asserts the
 // destructive branch fires only when the operator types the literal
@@ -224,7 +224,7 @@ func TestKeychainACL_DeleteRecreateRejectsCaseDeviation(t *testing.T) {
 	require.Zero(t, acl.deleteCalls, "Delete must NOT fire without exact 'delete' confirmation")
 }
 
-// ---- AC-6 / Task 3.4 — env-token fallback branch --------------------------
+// ---- env-token fallback branch --------------------------------------------
 
 // TestKeychainACL_EnvTokenFallbackSkipsKeychainWrite asserts the
 // env-token fallback path: picking [3] skips the bot-token Keychain
@@ -298,7 +298,7 @@ func TestKeychainACL_InvalidChoiceReDisplaysPanel(t *testing.T) {
 }
 
 // TestKeychainACL_NonInteractiveDenialFails asserts that the panel is
-// inherently interactive (Plan AC-5): a denied bot-token Keychain item
+// inherently interactive: a denied bot-token Keychain item
 // under --non-interactive surfaces errKeychainACLDenialNonInteractive.
 func TestKeychainACL_NonInteractiveDenialFails(t *testing.T) {
 	t.Parallel()
@@ -315,10 +315,10 @@ func TestKeychainACL_NonInteractiveDenialFails(t *testing.T) {
 		"non-interactive ACL denial must surface the typed sentinel; got %v", err)
 }
 
-// ---- AC-7 zsh-safety guard — panel must not contain bash-only read ------
+// ---- zsh-safety guard — panel must not contain bash-only read ------------
 
 // TestKeychainACL_PanelSnippetsAreZshSafe asserts the panel text does
-// not embed bash-only `read -p` / `read -s` constructs (Plan AC-7).
+// not embed bash-only `read -p` / `read -s` constructs.
 // Phase 5 lifts this into a repo-wide guard; the per-string assertion
 // here catches regressions immediately.
 func TestKeychainACL_PanelSnippetsAreZshSafe(t *testing.T) {

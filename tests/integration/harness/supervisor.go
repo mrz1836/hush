@@ -247,7 +247,6 @@ func (s *TestSupervisor) State() supervise.State { return s.Snapshot().State }
 
 // WaitState polls the store snapshot until the state matches want or the
 // deadline expires. Bounded poll using runtime.Gosched — never sleeps.
-// FR-022 compliance.
 func (s *TestSupervisor) WaitState(t *testing.T, want supervise.State, deadline time.Duration) {
 	t.Helper()
 	stop := time.Now().Add(deadline)

@@ -16,20 +16,19 @@ import (
 
 // ErrJTIUnknown is returned (wrapped) by Refill when the vault server
 // responds HTTP 401 with body {"error":"unknown_jti"}. The orchestrator
-// (SDD-23) MUST emit EventFetchAuthRequired (SDD-19) to transition the
-// supervisor to StateAwaitingApproval (FR-021-3). Compare via
+// MUST emit EventFetchAuthRequired to transition the supervisor to
+// StateAwaitingApproval. Compare via
 // errors.Is(err, supervise.ErrJTIUnknown).
 var ErrJTIUnknown = errors.New("supervise: vault rejected JWT (unknown jti)")
 
 // ErrBootTimeout is the sentinel the orchestrator's boot-retry helper
-// (SDD-23) returns when the boot_retry_timeout budget is exhausted.
-// Declared in this chunk because the locked SDD-21 exported API lists
-// it; this chunk does NOT produce it from any code path (R-010,
-// FR-021-20).
+// returns when the boot_retry_timeout budget is exhausted. Declared
+// here for the exported API; this file does NOT produce it from any
+// code path.
 var ErrBootTimeout = errors.New("supervise: boot retry timeout exhausted")
 
 // errNilBearerToken is wrapped by Refill when the cached JWT is
-// missing — a programmer-error escape hatch (RR-7).
+// missing — a programmer-error escape hatch.
 var errNilBearerToken = errors.New("supervise/refill: nil bearer token in store")
 
 // errStatusUnauthorizedUnparseable, errStatusUnauthorizedOther, and
@@ -45,19 +44,19 @@ var (
 // read into memory. The vault server emits BIE1 ECIES envelopes whose
 // upper bound is bounded by the underlying secret length plus a fixed
 // envelope overhead; 64 KiB is well above any plausible per-name
-// payload (RR-5).
+// payload.
 const refillBodyCap = 64 * 1024
 
 // Refiller fetches and decrypts the per-supervisor scope set from
 // the vault server. One Refiller is wired per supervisor by the
-// orchestrator (SDD-23) at boot; refill cycles are serialized through
-// the supervisor state machine — Refill is NOT safe for concurrent
+// orchestrator at boot; refill cycles are serialized through the
+// supervisor state machine — Refill is NOT safe for concurrent
 // invocation against the same instance.
 //
-// The locked SDD-21 constructor signature accepts only client/store/
-// logger. Three additional dependencies (Grace handle, ECIES private
-// key, server URL prefix) are wired post-construction by the
-// orchestrator via the package-private (*Refiller).attach method.
+// The constructor signature accepts only client/store/logger. Three
+// additional dependencies (Grace handle, ECIES private key, server
+// URL prefix) are wired post-construction by the orchestrator via the
+// package-private (*Refiller).attach method.
 type Refiller struct {
 	client *http.Client
 	store  *Store
@@ -87,20 +86,20 @@ func NewRefiller(client *http.Client, store *Store, logger *slog.Logger) *Refill
 // the JWT held in store.Snapshot().Token. On success, every decrypted
 // *SecureBytes is handed to grace.Set(name, sb) and Refill returns
 // nil. On any error, every successfully decrypted *SecureBytes from
-// the current call is destroyed BEFORE Refill returns (FR-021-5).
+// the current call is destroyed BEFORE Refill returns.
 //
 // Returned errors:
 //   - errors.Is(err, ErrJTIUnknown): the server returned 401 with
-//     body {"error":"unknown_jti"} (FR-021-3). Orchestrator MUST
-//     transition to StateAwaitingApproval.
+//     body {"error":"unknown_jti"}. Orchestrator MUST transition to
+//     StateAwaitingApproval.
 //   - any other non-nil error: a wrapped underlying error from the
 //     network / DNS / TLS / non-401 HTTP / JSON decode / ECIES
-//     decrypt path (FR-021-4).
+//     decrypt path.
 //
-// Refill MUST NOT retry internally — caller (SDD-23) owns the retry
-// loop. Refill MUST NOT log decrypted secret values (Constitution X);
-// the SOLE permitted string(...) materialization in this method is
-// the JWT bearer-header path inside Snapshot.Token.Use (FR-021-15).
+// Refill MUST NOT retry internally — the caller owns the retry loop.
+// Refill MUST NOT log decrypted secret values; the SOLE permitted
+// string(...) materialization in this method is the JWT bearer-header
+// path inside Snapshot.Token.Use.
 func (r *Refiller) Refill(ctx context.Context, scopes []string) error {
 	committed := false
 	decrypted := make([]struct {
@@ -158,7 +157,7 @@ func (r *Refiller) fetchOne(ctx context.Context, name string, tok *securebytes.S
 	}
 
 	if usErr := tok.Use(func(b []byte) {
-		// FR-021-15: JWT bearer-header materialization, scoped to
+		// JWT bearer-header materialization, scoped to
 		// Snapshot.Token.Use closure (sole permitted string(...)
 		// site, applies to JWT not vault payload).
 		req.Header.Set("Authorization", "Bearer "+string(b))
@@ -225,7 +224,7 @@ func classifyStatus(status int, body []byte) error {
 }
 
 // classifyOutcome maps an error to a coarse outcome label for the
-// operational logger (FR-021-6). The label never embeds secret bytes.
+// operational logger. The label never embeds secret bytes.
 func classifyOutcome(err error) string {
 	switch {
 	case err == nil:

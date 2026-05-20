@@ -27,8 +27,8 @@ import (
 var secureRandReader = func() io.Reader { return rand.Reader }
 
 // Writer is the producer-facing interface.  Implementations are
-// concurrency-safe; Append blocks under producer contention (FR-031) and
-// returns nil only AFTER the event is on disk (FR-033).
+// concurrency-safe; Append blocks under producer contention and
+// returns nil only AFTER the event is on disk.
 type Writer interface {
 	Append(ctx context.Context, action string, data map[string]any) error
 	Run(ctx context.Context) error
@@ -329,8 +329,8 @@ func (w *writerImpl) buildEvent(p *pending) (Event, []byte, error) {
 }
 
 // persistLine writes line to the bufio.Writer, Flushes, then fsyncs the
-// underlying file.  The fsync upholds FR-033 ("returns nil only AFTER
-// the event is on disk"): bufio.Flush only drains user-space buffers
+// underlying file.  The fsync ensures the event is on disk before
+// Append returns: bufio.Flush only drains user-space buffers
 // into the kernel page cache; without Sync, a kernel panic or power
 // loss before the next periodic writeback would lose the chain tail.
 // Approval volume is human-paced so the per-event sync cost is

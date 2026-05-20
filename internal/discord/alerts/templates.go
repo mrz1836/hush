@@ -11,12 +11,12 @@ type classTemplate struct {
 	labelPrefix string
 }
 
-// classToTemplate locks the 8 per-class label prefixes (R-012).
+// classToTemplate locks the 8 per-class label prefixes.
 // Constructed at package declaration time; never mutated; no init().
 // The prefixes form 8 unique two-bracket [TIER][class-slug] strings;
 // uniqueness is asserted by TestTemplate_LabelPrefixUniqueAndStable.
 //
-//nolint:gochecknoglobals // immutable class→template binding table; locked at SDD-28
+//nolint:gochecknoglobals // immutable class→template binding table
 var classToTemplate = map[AlertClass]classTemplate{
 	AlertClassApprovalRequest:               {labelPrefix: "[CRITICAL][approval-request]"},
 	AlertClassDaemonRefreshRequest:          {labelPrefix: "[CRITICAL][daemon-refresh]"},
@@ -31,11 +31,11 @@ var classToTemplate = map[AlertClass]classTemplate{
 // render composes the rendered alert body. The label prefix and the
 // supervisor= segment are always emitted; machine=, pattern=, detail=
 // are emitted only when the corresponding Alert field is non-empty
-// (R-007 omit-empty-lines, Clarification Q4).
+// (omit-empty-lines).
 //
 // Alert.Class, Alert.Tier, and Alert.Time are NEVER reachable from
 // this output. Class is implicit in the label prefix; Tier is encoded
-// by the [TIER] bracket; Time is excluded entirely (R-013).
+// by the [TIER] bracket; Time is excluded entirely.
 func (t classTemplate) render(a Alert) string {
 	var b strings.Builder
 	b.WriteString(t.labelPrefix)

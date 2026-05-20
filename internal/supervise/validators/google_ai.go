@@ -10,7 +10,6 @@ import (
 
 // googleAIValidator implements Validator for Google Generative Language
 // API keys (header: x-goog-api-key — never ?key= query string).
-// Endpoint pinned at R-003d.
 type googleAIValidator struct {
 	name    string
 	url     string

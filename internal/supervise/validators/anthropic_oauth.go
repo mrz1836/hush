@@ -9,8 +9,7 @@ import (
 )
 
 // anthropicOAuthValidator implements Validator for Anthropic OAuth
-// bearer tokens (header: Authorization: Bearer <token>). Endpoint
-// pinned at R-003b.
+// bearer tokens (header: Authorization: Bearer <token>).
 type anthropicOAuthValidator struct {
 	name    string
 	url     string

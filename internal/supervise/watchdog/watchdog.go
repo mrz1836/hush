@@ -4,8 +4,7 @@
 // Events on matches. Per-pattern token buckets (capacity 1) prevent alert
 // floods; every suppression is loud-logged via WARN. The watchdog has zero
 // authority over the supervisor state machine: matches NEVER trigger
-// restarts, session-claims, refreshes, or transitions (spec FR-003,
-// Constitution V).
+// restarts, session-claims, refreshes, or transitions.
 //
 // Lifecycle:
 //
@@ -54,7 +53,7 @@ type Pattern struct {
 }
 
 // Event is the typed alert emitted on each non-suppressed pattern match.
-// Consumed by the downstream alert router (SDD-28) as a value type.
+// Consumed by the downstream alert router as a value type.
 type Event struct {
 	Pattern string
 	Line    string
@@ -103,7 +102,7 @@ var _ supervise.Watchdog = (*Watchdog)(nil)
 
 // NewWatchdog constructs a Watchdog from a pre-validated pattern slice, a
 // caller-owned alerts channel, and a logger. Returns a wrapped sentinel on
-// any validation failure. An empty patterns slice is permitted (FR-014).
+// any validation failure. An empty patterns slice is permitted.
 func NewWatchdog(patterns []Pattern, alerts chan<- Event, logger *slog.Logger) (*Watchdog, error) {
 	if alerts == nil {
 		return nil, fmt.Errorf("watchdog: %w", ErrNilAlertsChannel)
@@ -193,7 +192,7 @@ func (w *Watchdog) Ingest(line []byte) {
 // Ingest. The ctx is intentionally discarded; the watchdog already holds
 // Run's ctx and Ingest is non-blocking.
 //
-//nolint:contextcheck // Ingest signature is locked by the SDD-27 chunk doc.
+//nolint:contextcheck // Ingest signature is locked by the chunk doc.
 func (w *Watchdog) OnStderrLine(_ context.Context, line []byte) {
 	w.Ingest(line)
 }
@@ -206,7 +205,7 @@ func (w *Watchdog) OnStderrLine(_ context.Context, line []byte) {
 // Run is itself the matcher goroutine — there is no additional goroutine
 // spawned. Callers invoke Run in their own goroutine (`go wd.Run(ctx)`),
 // so the watchdog adds exactly one live goroutine between Run start and
-// Run return (FR-009, invariant W-1).
+// Run return.
 func (w *Watchdog) Run(ctx context.Context) error {
 	if !w.ran.CompareAndSwap(false, true) {
 		return ErrAlreadyRan

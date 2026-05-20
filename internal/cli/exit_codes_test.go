@@ -73,7 +73,7 @@ func TestExitCodes_NoStaleConfigInThisChunk(t *testing.T) {
 }
 
 // TestExitCodes_AllSentinelsCovered table-drives mapErr over the
-// locked sentinel sets from research.md §9.
+// locked sentinel sets.
 func TestExitCodes_AllSentinelsCovered(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -104,7 +104,7 @@ func TestExitCodes_AllSentinelsCovered(t *testing.T) {
 		{"config file mode", config.ErrConfigFileMode, ExitPerm},
 		{"context canceled", context.Canceled, ExitErr},
 		{"unknown error", errSyntheticUnknown, ExitErr},
-		// SDD-23 sentinels.
+		// supervise + client sentinels.
 		{"invalid grace window", errInvalidGraceWindow, ExitInputErr},
 		{"socket ambiguous", errSocketAmbiguous, ExitInputErr},
 		{"socket unreachable", errSocketUnreachable, ExitErr},

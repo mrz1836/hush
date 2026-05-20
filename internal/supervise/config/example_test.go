@@ -13,11 +13,10 @@ import (
 )
 
 // operatorSpecificForbidden is the seed list of identifiers that MUST
-// NOT appear in deploy/examples/supervisors/example-daemon.toml per
-// FR-007 / SC-003 of SDD-30. New forbidden identifiers are added one
-// at a time as discoveries surface (clarification 1). Start empty —
-// no historically-leaked identifiers are known at template authoring
-// time.
+// NOT appear in deploy/examples/supervisors/example-daemon.toml. New
+// forbidden identifiers are added one at a time as discoveries surface.
+// Start empty — no historically-leaked identifiers are known at
+// template authoring time.
 //
 //nolint:gochecknoglobals // sentinel-class: seed list referenced by a single test
 var operatorSpecificForbidden = []string{}
@@ -34,13 +33,13 @@ var exampleTemplatePath = filepath.Join(
 )
 
 // TestExamples_GenericTOMLValidates feeds the canonical operator-facing
-// supervisor TOML template through the SDD-18 loader and asserts zero
-// validation error. Guards FR-005 / SC-001 of SDD-30.
+// supervisor TOML template through the loader and asserts zero
+// validation error.
 func TestExamples_GenericTOMLValidates(t *testing.T) {
 	t.Parallel()
 
 	sup, err := Load(context.Background(), exampleTemplatePath)
-	require.NoError(t, err, "the canonical operator-facing template MUST validate against the SDD-18 loader as-shipped (FR-005)")
+	require.NoError(t, err, "the canonical operator-facing template MUST validate against the loader as-shipped")
 	require.NotNil(t, sup)
 
 	assert.Equal(t, "example-daemon", sup.Name)
@@ -49,10 +48,9 @@ func TestExamples_GenericTOMLValidates(t *testing.T) {
 
 // TestExamples_NoOperatorSpecificNames asserts that no entry in the
 // operatorSpecificForbidden seed list appears anywhere in the
-// canonical operator-facing supervisor TOML template. Guards FR-007 /
-// SC-003 of SDD-30. The seed list starts empty per clarification 1;
-// new forbidden identifiers are appended one at a time as discoveries
-// surface.
+// canonical operator-facing supervisor TOML template. The seed list
+// starts empty; new forbidden identifiers are appended one at a time
+// as discoveries surface.
 func TestExamples_NoOperatorSpecificNames(t *testing.T) {
 	t.Parallel()
 
@@ -64,7 +62,7 @@ func TestExamples_NoOperatorSpecificNames(t *testing.T) {
 		assert.False(
 			t,
 			strings.Contains(contents, forbidden),
-			"the canonical operator-facing template MUST NOT contain %q (FR-007)",
+			"the canonical operator-facing template MUST NOT contain %q",
 			forbidden,
 		)
 	}
@@ -111,7 +109,7 @@ func scanFileForForbidden(t *testing.T, path string) {
 		assert.False(
 			t,
 			strings.Contains(contents, forbidden),
-			"file %s MUST NOT contain operator-specific token %q (FR-014 / SDD-33)",
+			"file %s MUST NOT contain operator-specific token %q",
 			path, forbidden,
 		)
 	}
@@ -130,30 +128,28 @@ func shouldScanFile(path, name, thisFileAbs string) bool {
 	return ok
 }
 
-// TestExamples_NoOperatorSpecificNames_WholeTree extends the SDD-30
-// allowlist gate to the entire repository tree per SDD-33 FR-014 /
-// SC-005 (research.md R-004). It walks every file under the repo root,
-// skipping documented exclusions, and asserts no forbidden token from
-// operatorSpecificForbidden appears in any text file. The seed list is
-// empty by design; the structural value is that this test catches a
-// regression the moment a new forbidden token is added.
+// TestExamples_NoOperatorSpecificNames_WholeTree extends the allowlist
+// gate to the entire repository tree. It walks every file under the
+// repo root, skipping documented exclusions, and asserts no forbidden
+// token from operatorSpecificForbidden appears in any text file. The
+// seed list is empty by design; the structural value is that this test
+// catches a regression the moment a new forbidden token is added.
 //
-// Documented exclusions (R-004):
+// Documented exclusions:
 //   - this test file itself (the seed list literally contains the
 //     forbidden tokens it bans elsewhere)
-//   - specs-archive/ (frozen historical artifacts, archived per FR-012)
+//   - specs-archive/ (frozen historical artifacts)
 //   - .git/ (binary objects + pack files; not text)
 //
 // The walk also skips well-known binary / generated directories that
 // `magex test:race` would never re-execute (build outputs, test
 // caches, dependency vendor copies). Adding new exclusions outside
-// this set is a Constitution-Principle-I-level decision and MUST be
-// justified in the test comment with a finding ID.
+// this set MUST be justified in the test comment.
 func TestExamples_NoOperatorSpecificNames_WholeTree(t *testing.T) {
 	t.Parallel()
 
 	if len(operatorSpecificForbidden) == 0 {
-		t.Log("operatorSpecificForbidden is empty; whole-tree check passes trivially per FR-014. Add a forbidden token to operatorSpecificForbidden to activate.")
+		t.Log("operatorSpecificForbidden is empty; whole-tree check passes trivially. Add a forbidden token to operatorSpecificForbidden to activate.")
 		return
 	}
 

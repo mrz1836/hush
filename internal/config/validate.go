@@ -24,7 +24,7 @@ func getPathPrefixRegex() *regexp.Regexp {
 // Validate runs all documented validation rules against s and returns a
 // joined error if one or more rules fail.
 //
-// Rule order (locked by SDD-06 contracts/api.md §Determinism):
+// Rule order (locked for determinism):
 //  1. require_tailscale gate
 //  2. Argon2id floors (memory, time, threads), then ceilings (same order)
 //  3. listen_addr family
@@ -91,7 +91,7 @@ func (s *Server) Validate() error { //nolint:cyclop,gocognit,gocyclo // rule-eng
 		))
 	}
 
-	// 8. claim_approval_timeout bounds — DoS-via-config ceiling (SDD-12 R-003).
+	// 8. claim_approval_timeout bounds — DoS-via-config ceiling.
 	if s.Crypto.ClaimApprovalTimeout < MinClaimApprovalTimeout || s.Crypto.ClaimApprovalTimeout > MaxClaimApprovalTimeout {
 		errs = append(errs, fmt.Errorf(
 			"field claim_approval_timeout=%s (min=%s, max=%s): %w",

@@ -1,6 +1,6 @@
 // Package cli — `hush request` subcommand: interactive secret fetch.
 //
-// SDD-16. Mounts on the SDD-14 cobra root via newRequestCmd() (no new
+// Mounts on the cobra root via newRequestCmd() (no new
 // exported package-level symbols). Two delivery modes:
 //   - --exec <program>: run a child with the requested secrets in its
 //     environment; child exit code becomes the parent's exit code.
@@ -372,7 +372,7 @@ func missingRequestFlags(flags requestFlags, maxUsesSet, machineIndexSet bool) [
 //  7. defer: zero ephemeral D, Destroy JWT SB, Destroy each secret SB,
 //     cancel signal ctx
 //
-//nolint:gocognit,gocyclo,cyclop,funlen // sequential pipeline; complexity is structural (data-model.md §7)
+//nolint:gocognit,gocyclo,cyclop,funlen // sequential pipeline; complexity is structural
 func runRequest(parentCtx context.Context, stdout, stderr *Stream, deps requestDeps, flags requestFlags) error {
 	// Fail fast before signing, Discord approval, or secret fetch when --exec
 	// is not a resolvable program. This prevents burning an approval on a
@@ -426,7 +426,7 @@ func runRequest(parentCtx context.Context, stdout, stderr *Stream, deps requestD
 	}
 	defer func() { _ = jwtSB.Destroy() }()
 
-	// 5. Fetch all secrets BEFORE either delivery mode runs (FR-018).
+	// 5. Fetch all secrets BEFORE either delivery mode runs.
 	secrets, fetchErr := fetchSecrets(deadlineCtx, deps, flags.server, jwtSB, ephPriv, flags.scope, stderr)
 	defer func() {
 		for _, sb := range secrets {

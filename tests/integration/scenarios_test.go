@@ -1,10 +1,10 @@
 //go:build integration
 
-// scenarios_test.go houses the 17 Test_Scenario_NN_<slug> functions
-// locked in spec FR-002. The names match verbatim — renaming any test
-// requires a spec amendment first.
+// scenarios_test.go houses the 17 Test_Scenario_NN_<slug> functions.
+// The names match verbatim — renaming any test requires updating callers
+// first.
 //
-// Sentinel index (SentinelSecret(N) per scenario, FR-007 / FR-017):
+// Sentinel index (SentinelSecret(N) per scenario):
 //
 //	N=1   Scenario 01  InteractiveShellRequest
 //	N=2   Scenario 02  FirstDaemonBootstrap
@@ -24,10 +24,10 @@
 //	N=16  Scenario 14  DuplicateStart
 //	N=17  Scenario 15  LogPatternMatch
 //
-// Scenarios with harness wiring still pending in this SDD-25 chunk fail
-// via scenarioPendingHarness — per spec FR-001 no scenario may t.Skip;
-// failure is the operator-visible signal that AC-10's coverage path is
-// incomplete and recurs on every suite run.
+// Scenarios with harness wiring still pending fail via
+// scenarioPendingHarness — no scenario may t.Skip; failure is the
+// operator-visible signal that the coverage path is incomplete and
+// recurs on every suite run.
 package integration_test
 
 import "testing"

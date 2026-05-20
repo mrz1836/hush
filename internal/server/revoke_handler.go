@@ -38,7 +38,7 @@ func getJTIRe() *regexp.Regexp {
 	return jtiRe
 }
 
-// revokeRequest is the JSON-decoded body. Validation per data-model §5.
+// revokeRequest is the JSON-decoded body.
 type revokeRequest struct {
 	JTI                  string `json:"jti"`
 	Nonce                string `json:"nonce"`
@@ -61,13 +61,13 @@ type revokeSignedPayload struct {
 }
 
 // revokeResponse is the success-path body — identical for first-time AND
-// idempotent re-revocation per FR-014.
+// idempotent re-revocation.
 type revokeResponse struct {
 	Revoked   bool   `json:"revoked"`
 	RequestID string `json:"request_id"`
 }
 
-// handleRevoke is the SDD-13 entry point for `POST /h/<prefix>/revoke`.
+// handleRevoke is the entry point for `POST /h/<prefix>/revoke`.
 //
 //nolint:gocognit,gocyclo,cyclop,funlen // sequential pipeline: shape → fingerprint → verify → nonce → ts → revoke
 func (s *Server) handleRevoke(w http.ResponseWriter, r *http.Request) {
@@ -89,7 +89,7 @@ func (s *Server) handleRevoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Field-level validation per data-model §5.
+	// Field-level validation.
 	if !getJTIRe().MatchString(req.JTI) {
 		s.emitRevokeAudit(ctx, audit.ActionRevokeBadRequest, requestID, peer, req.JTI, "", "revoke_bad_request")
 		writeStaticError(w, http.StatusBadRequest, errCodeRevokeBadRequest, requestID)
@@ -128,7 +128,7 @@ func (s *Server) handleRevoke(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve client key by fingerprint. Unknown → bad_signature
-	// (anti-enumeration; FR-015).
+	// (anti-enumeration).
 	pub, resolveErr := s.clientKeyResolver(req.ClientKeyFingerprint)
 	if resolveErr != nil {
 		s.emitRevokeAudit(ctx, audit.ActionRevokeBadSignature, requestID, peer, req.JTI, req.ClientKeyFingerprint, "revoke_bad_signature")
@@ -177,7 +177,7 @@ func (s *Server) handleRevoke(w http.ResponseWriter, r *http.Request) {
 
 	existed, alreadyRevoked := s.tokenStore.RevokeIdempotent(req.JTI)
 	if !existed {
-		// Unknown JTI maps to bad_signature for anti-enumeration (FR-015).
+		// Unknown JTI maps to bad_signature for anti-enumeration.
 		s.emitRevokeAudit(ctx, audit.ActionRevokeBadSignature, requestID, peer, req.JTI, req.ClientKeyFingerprint, "revoke_bad_signature")
 		writeStaticError(w, http.StatusForbidden, errCodeRevokeBadSignature, requestID)
 		return
@@ -194,7 +194,7 @@ func (s *Server) handleRevoke(w http.ResponseWriter, r *http.Request) {
 }
 
 // writeRevokeSuccess writes the static success body. Identical for
-// first-time and idempotent re-revoke per FR-014.
+// first-time and idempotent re-revoke.
 func writeRevokeSuccess(w http.ResponseWriter, requestID string) {
 	body, _ := json.Marshal(revokeResponse{Revoked: true, RequestID: requestID}) //nolint:errchkjson // closed bool+string struct
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -204,7 +204,7 @@ func writeRevokeSuccess(w http.ResponseWriter, requestID string) {
 	_, _ = w.Write(body)
 }
 
-// emitRevokeAudit emits exactly one audit event for /revoke per FR-027.
+// emitRevokeAudit emits exactly one audit event for /revoke.
 func (s *Server) emitRevokeAudit(
 	ctx context.Context,
 	action string,
@@ -231,7 +231,7 @@ func (s *Server) emitRevokeAudit(
 
 // buildRevokeAuditDetail returns the allow-list Detail map for /revoke.
 // NEVER carries the supplied signature, the supplied nonce, or the
-// request body bytes (FR-029).
+// request body bytes.
 func buildRevokeAuditDetail(outcome, requestID string, peer netip.Addr, jti, fingerprint string) map[string]string {
 	d := map[string]string{
 		"outcome": outcome,

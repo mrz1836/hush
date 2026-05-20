@@ -20,7 +20,7 @@ var (
 
 // recoveryDecisions records the per-artifact recovery mode the
 // operator selected (or --on-existing fixed) during the guided init
-// flow's existing-state recovery pass (Plan AC-9 / Task 2.4). Modes
+// flow's existing-state recovery pass. Modes
 // are the on-existing enum values; absent artifacts carry no entry.
 type recoveryDecisions struct {
 	byKind map[setup.ArtifactKind]string
@@ -70,7 +70,7 @@ func validateOnExisting(v string) error {
 
 // handlePreflightReport processes a preflight [setup.Report]: the
 // first `fail` short-circuits with a typed error; warnings are
-// surfaced. The guided flow's promise (Plan AC-2) is "no prompt
+// surfaced. The guided flow's promise is "no prompt
 // fires until preflight settles" — the caller honors this by only
 // proceeding when this function returns nil.
 func handlePreflightReport(report setup.Report, deps *initDeps, stderr *Stream) error {
@@ -102,7 +102,7 @@ func handlePreflightReport(report setup.Report, deps *initDeps, stderr *Stream) 
 // the resolved init paths + the Discord bot-token Keychain item, and
 // asks the operator (or consumes --on-existing) to choose a recovery
 // action for each non-absent artifact. The returned decisions feed
-// the create steps in runInitServer (Plan AC-9 / Task 2.4).
+// the create steps in runInitServer.
 //
 //nolint:gocognit,gocyclo,cyclop // matrix dispatch over artifact kind × mode is structural
 func recoverExistingArtifacts(
@@ -144,13 +144,13 @@ func recoverExistingArtifacts(
 		// not prompted on every re-run. Every other artifact + every
 		// other class still goes through the prompt / on-existing
 		// dispatch so a vault, config, or Keychain item is never
-		// reused without an explicit confirmation (Plan AC-9).
+		// reused without an explicit confirmation.
 		if a.Kind == setup.ArtifactStateDir && a.Class == setup.ClassificationSafeToReuse {
 			decisions.byKind[a.Kind] = onExistingReuse
 			continue
 		}
 		// ACL-denied bot-token Keychain item gets the specialised
-		// recovery panel (Plan AC-5 / AC-6 / Task 3.2-3.4). The panel
+		// recovery panel. The panel
 		// returns one of the legal decisions (reuse / recreate /
 		// env-token) and handles destructive deletes inline so the
 		// caller's Store call lands on a clean slot.

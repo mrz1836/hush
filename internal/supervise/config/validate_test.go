@@ -671,7 +671,7 @@ func TestValidateServerURL_ParseError(t *testing.T) {
 
 // TestLoad_StatusSocketRejectsNonCleanPath asserts that absPath refuses
 // paths whose lexical form contains ".." components or other non-canonical
-// elements (FR-014 defense-in-depth — operator typo guard).
+// elements (defense-in-depth — operator typo guard).
 func TestLoad_StatusSocketRejectsNonCleanPath(t *testing.T) {
 	t.Parallel()
 	body := strings.Replace(minimalBody(t),

@@ -1,18 +1,18 @@
-// SDD-24 — Supervisor orchestration glue: production orchestrator.
+// Supervisor orchestration glue: production orchestrator.
 //
 // lifecycle.go declares the Lifecycle struct, Deps record, the single-shot
 // NewLifecycle constructor, and the top-level Run dispatcher. The four
 // sibling files (lifecycle_boot.go, lifecycle_child.go, lifecycle_refresh.go,
 // lifecycle_audit.go) house the specialized helpers.
 //
-// State-table reasoning is owned by SDD-19 (state.go); exit-78 reasoning is
-// owned by SDD-20 (child.go). This file references those packages' constants
-// and APIs only — it never inlines a state-string literal, never inlines the
-// `78` exit-code literal, and never branches on runtime.GOOS (spec FR-026-023).
+// State-table reasoning is owned by state.go; exit-78 reasoning is owned by
+// child.go. This file references those constants and APIs only — it never
+// inlines a state-string literal, never inlines the `78` exit-code literal,
+// and never branches on runtime.GOOS.
 //
-// Goroutine inventory (Constitution IX — owner + ctx + termination + recover):
-//   1. StatusServer.Run  (carried from SDD-22) — Lifecycle.wg
-//   2. Refresher.Run     (carried from SDD-21) — Lifecycle.wg
+// Goroutine inventory (owner + ctx + termination + recover):
+//   1. StatusServer.Run  — Lifecycle.wg
+//   2. Refresher.Run     — Lifecycle.wg
 //   3. mainLoop          (this file) — dispatches childExit / refreshDone /
 //                                       refreshVerb / ctx.Done
 //   4. childWaitLoop     (lifecycle_child.go) — invokes Child.Wait
@@ -53,8 +53,7 @@ var ErrRefillFailedPostRunning = errors.New("supervise: post-running refill fail
 // 4xx (denied / bad_signature / 401). Compare via errors.Is.
 var ErrClaimDenied = errors.New("supervise: claim denied (terminal)")
 
-// Lifecycle constants — see data-model.md §10. Package-level const blocks
-// are not "mutable vars" per Constitution IX (R-005).
+// Lifecycle constants. Package-level const blocks are not "mutable vars".
 
 // bootBackoffInitial is the first interval before the first boot retry.
 const bootBackoffInitial = 500 * time.Millisecond
@@ -65,7 +64,7 @@ const bootBackoffMultiplier = 2.0
 // bootBackoffCap caps any single backoff interval (jittered).
 const bootBackoffCap = 30 * time.Second
 
-// bootProbeTimeout is the per-attempt HTTP/probe timeout (≤ 2s per A-026-2).
+// bootProbeTimeout is the per-attempt HTTP/probe timeout (≤ 2s).
 const bootProbeTimeout = 2 * time.Second
 
 // shutdownGraceTimeout is the SIGTERM honor window before SIGKILL escalation.
@@ -74,7 +73,7 @@ const shutdownGraceTimeout = 10 * time.Second
 // shutdownHardCeiling is the total Run-exit budget after ctx cancel.
 const shutdownHardCeiling = 15 * time.Second
 
-// stderrLineCap is the max bytes per emitted watchdog line; matches SDD-20.
+// stderrLineCap is the max bytes per emitted watchdog line.
 const stderrLineCap = 64 * 1024
 
 // Deps carries every injected dependency NewLifecycle requires. Nil fields
@@ -84,10 +83,10 @@ type Deps struct {
 	Logger *slog.Logger
 	// HTTPClient is the outgoing client toward the vault server. MUST be non-nil.
 	HTTPClient *http.Client
-	// Clock is the wall-clock seam (existing SDD-19 interface). MUST be non-nil.
+	// Clock is the wall-clock seam. MUST be non-nil.
 	Clock Clock
 	// ClaimSigningKey is the BIP32-derived ECDSA secp256k1 client key used to
-	// sign /claim payloads (SDD-08). MUST be non-nil.
+	// sign /claim payloads. MUST be non-nil.
 	ClaimSigningKey *ecdsa.PrivateKey
 	// DecryptKey is the ephemeral ECIES private key the Refiller decrypts
 	// per-scope bodies against. MUST be non-nil.
@@ -126,8 +125,8 @@ type Deps struct {
 }
 
 // statusInputs is the unexported StatusInputs implementation lifted out of
-// internal/cli at SDD-24. Eight atomic fields read concurrently from the
-// status server's per-connection handler goroutines.
+// internal/cli. Eight atomic fields read concurrently from the status
+// server's per-connection handler goroutines.
 type statusInputs struct {
 	name             string
 	childStartedAt   atomic.Pointer[time.Time]
@@ -281,7 +280,7 @@ var errRefreshPerformNotWired = errors.New("supervise: refresh perform not wired
 
 // refreshCoalescer is the single-flight gate for `hush client refresh`
 // callbacks invoked via the status socket. Mirrors the original cli-package
-// coalescer; lifted into the orchestrator at SDD-24.
+// coalescer; lifted into the orchestrator.
 type refreshCoalescer struct {
 	mu       sync.Mutex
 	inflight *refreshFlight
@@ -325,7 +324,7 @@ func (c *refreshCoalescer) Handle(ctx context.Context) error {
 // panics on nil for any required dependency (Constitution IX startup-wiring
 // exemption). Optional Deps fields receive their no-op defaults when nil.
 //
-// NewLifecycle constructs the SDD-19..22 primitives internally and wires
+// NewLifecycle constructs the supervise primitives internally and wires
 // post-construction seams (Refiller.attach, StatusServer.AttachStatusInputs,
 // StatusServer.AttachRefreshHandler) before returning.
 func NewLifecycle(ctx context.Context, cfg *config.Supervisor, deps Deps) *Lifecycle {
@@ -385,7 +384,7 @@ func NewLifecycle(ctx context.Context, cfg *config.Supervisor, deps Deps) *Lifec
 
 	// Refresher's refill callback only NUDGES the refresh tick; the actual
 	// /claim swap happens inside claimRefreshLoop so the tick anchor stays
-	// accurate (per R-5).
+	// accurate.
 	lc.refresher = NewRefresher(cfg.RefreshWindow, cfg.RequestedTTL, func(_ context.Context) error {
 		select {
 		case lc.refreshTickCh <- struct{}{}:
@@ -503,9 +502,8 @@ func (l *Lifecycle) run(parentCtx context.Context) error {
 }
 
 // mainLoop is the orchestrator's central dispatcher. It runs until ctx is
-// cancelled or a terminal stop-event fires. Per spec FR-026-009, FR-026-011,
-// FR-026-012, and Plan §10 the four arms are: childExit, refreshDone,
-// refreshVerb, ctx.Done.
+// cancelled or a terminal stop-event fires. The four arms are: childExit,
+// refreshDone, refreshVerb, ctx.Done.
 func (l *Lifecycle) mainLoop(ctx context.Context) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -527,9 +525,8 @@ func (l *Lifecycle) mainLoop(ctx context.Context) {
 	}
 }
 
-// runShutdown executes the SIGTERM → grace → SIGKILL → wg.Wait sequence
-// per Plan §R-4 and FR-026-019. Pidfile release is owned by the cli shim's
-// defer.
+// runShutdown executes the SIGTERM → grace → SIGKILL → wg.Wait sequence.
+// Pidfile release is owned by the cli shim's defer.
 func (l *Lifecycle) runShutdown(parentCtx context.Context) {
 	_ = parentCtx
 	hardDeadline := time.Now().Add(shutdownHardCeiling)

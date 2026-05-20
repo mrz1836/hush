@@ -1,10 +1,10 @@
-// SDD-24 — Supervisor orchestration glue: boot path.
+// Supervisor orchestration glue: boot path.
 //
 // lifecycle_boot.go owns the boot precondition loop (Tailscale + vault /hz)
 // with exponential backoff jittered ±20% capped at 30s/attempt, the signed
-// /claim submission via SDD-08, the JWT persistence into Store via the
-// package-private setToken seam, the initial Refiller.Refill, the validator
-// pass, and child env construction + first Child.Start.
+// /claim submission, the JWT persistence into Store via the package-private
+// setToken seam, the initial Refiller.Refill, the validator pass, and child
+// env construction + first Child.Start.
 
 package supervise
 
@@ -190,7 +190,7 @@ func (l *Lifecycle) submitClaim(ctx context.Context) error {
 		case status == http.StatusUnauthorized:
 			return fmt.Errorf("supervise: /claim 401: %w", ErrClaimDenied)
 		case status == http.StatusForbidden:
-			// FR-026 — Clarification 5: denied / bad_signature / etc terminal.
+			// Denied / bad_signature / etc are terminal.
 			return fmt.Errorf("supervise: /claim 403 %q: %w", errBody.Error, ErrClaimDenied)
 		case status == http.StatusServiceUnavailable && errBody.Error == "discord_unavailable":
 			l.deps.Alerts.Emit(ctx, AlertClassDiscordUnavailableOnClaim, AlertPayload{

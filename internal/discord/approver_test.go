@@ -17,9 +17,9 @@ func TestApprover_BotApproverImplementsApprover(t *testing.T) {
 }
 
 // TestApprovalRequest_DaemonRequiresSupervisorName documents the
-// validation hint per data-model.md §1.1: SupervisorName MUST be
-// non-empty for SessionSupervisor; this is a soft contract enforced
-// by the SDD-12 adapter, but the type shape is locked here.
+// validation hint: SupervisorName MUST be non-empty for
+// SessionSupervisor; this is a soft contract enforced by the server
+// adapter, but the type shape is locked here.
 func TestApprovalRequest_DaemonRequiresSupervisorName(t *testing.T) {
 	t.Parallel()
 	req := ApprovalRequest{
@@ -40,7 +40,7 @@ func TestApprovalRequest_DaemonRequiresSupervisorName(t *testing.T) {
 }
 
 // TestDefaultDMRateLimit_FiveMinutes locks the package's default
-// rate-limit window per FR-021.
+// rate-limit window.
 func TestDefaultDMRateLimit_FiveMinutes(t *testing.T) {
 	t.Parallel()
 	if DefaultDMRateLimit != 5*time.Minute {

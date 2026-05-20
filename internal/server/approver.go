@@ -7,20 +7,20 @@ import (
 )
 
 // Approver seeks the configured operator's decision on a fresh secret-session
-// request. The chassis itself ships no concrete implementation; SDD-11
-// supplies a Discord-backed BotApprover.
+// request. The chassis itself ships no concrete implementation; a
+// Discord-backed BotApprover supplies one.
 //
 // Implementations MUST be safe for concurrent use — the chassis may invoke
 // RequestApproval from multiple request goroutines.
 //
 // Constitution IX: single-method interface, declared at the consumer (the
-// chassis is the consumer of approval; SDD-11 is the producer).
+// chassis is the consumer of approval; the Discord layer is the producer).
 type Approver interface {
 	RequestApproval(ctx context.Context, req ApprovalRequest) (Decision, error)
 }
 
 // ApprovalRequest is the parameter the chassis passes to an Approver. All
-// fields are populated by SDD-12 (the claim handler); the chassis itself does
+// fields are populated by the claim handler; the chassis itself does
 // not invoke RequestApproval directly.
 type ApprovalRequest struct {
 	// RequestID is the chassis-assigned request identifier.
@@ -73,7 +73,7 @@ type Decision struct {
 	GrantedTTL time.Duration
 
 	// ApproverID is an opaque identifier for the approver — the Discord
-	// user ID for SDD-11, "test" for fakes, etc.
+	// user ID in production, "test" for fakes, etc.
 	ApproverID string
 
 	// Reason is an optional free-text reason the operator may have
@@ -112,7 +112,7 @@ func (s SessionType) String() string {
 }
 
 // AuditWriter is the consumer-side interface the chassis uses to emit
-// security-relevant events. SDD-13 supplies the concrete implementation.
+// security-relevant events. The audit layer supplies the concrete implementation.
 type AuditWriter interface {
 	Write(ctx context.Context, event AuditEvent) error
 }
@@ -131,8 +131,8 @@ type AuditEvent struct {
 // AuditEventType is the discriminator for [AuditEvent].
 type AuditEventType string
 
-// Audit event types the chassis itself emits. SDD-12, SDD-13, and SDD-11
-// emit additional types not listed here.
+// Audit event types the chassis itself emits. The handlers and Discord
+// layer emit additional types not listed here.
 const (
 	AuditServerStart          AuditEventType = "server_start"
 	AuditServerStop           AuditEventType = "server_stop"

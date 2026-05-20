@@ -20,8 +20,8 @@ import (
 	"github.com/mrz1836/hush/internal/vault/securebytes"
 )
 
-// TestT273_Fixture1_KeychainDeniedSurfacesACLPanel is SC-10 / AC-12
-// case 1: when the `hush-discord` Keychain item exists but reads fail
+// TestT273_Fixture1_KeychainDeniedSurfacesACLPanel covers the
+// case where the `hush-discord` Keychain item exists but reads fail
 // with permission denied (mapped from Darwin exit 51 in
 // internal/keychain), the guided flow classifies the artifact as
 // [setup.ClassificationRepairable] with [setup.ErrTokenDenied] and
@@ -63,8 +63,8 @@ func TestT273_Fixture1_KeychainDeniedSurfacesACLPanel(t *testing.T) {
 	require.Zero(t, acl.storeCalls, "no Store may fire when the operator quits")
 }
 
-// TestT273_Fixture2_ExplicitStateDirTreatsDefaultTokenAsExternal is
-// SC-10 / AC-12 case 2: when an explicit `--state-dir` is set AND a
+// TestT273_Fixture2_ExplicitStateDirTreatsDefaultTokenAsExternal covers
+// the case where an explicit `--state-dir` is set AND a
 // `hush-discord` Keychain item already exists at the default location,
 // the guided flow intentionally does NOT probe the Keychain (the
 // explicit-state-dir flow is the learning/smoke path; Keychain writes
@@ -127,8 +127,8 @@ func TestT273_Fixture2_ExplicitStateDirTreatsDefaultTokenAsExternal(t *testing.T
 	require.Equal(t, setup.ClassificationSafeToReuse, report.Artifacts[0].Class)
 }
 
-// TestT273_Fixture3_PartialStateConfigWithoutVault is SC-10 / AC-12
-// case 3 (config-without-vault sub-case): the cross-artifact classifier
+// TestT273_Fixture3_PartialStateConfigWithoutVault covers the
+// config-without-vault sub-case: the cross-artifact classifier
 // rule flips a `safe-to-reuse` config to `repairable` with
 // [setup.ErrStateStale] when its companion vault file is missing. The
 // guided flow then prompts the operator per artifact.
@@ -211,8 +211,8 @@ func TestT273_Fixture3_PartialStateVaultWithoutConfig(t *testing.T) {
 	require.Equal(t, 1, backups, "expected exactly one secrets.vault.bak-* sibling")
 }
 
-// TestT273_Fixture4_EnvTokenFallbackWhenKeychainDenied is SC-10 /
-// AC-12 case 4: when the Keychain bot-token read is denied AND the
+// TestT273_Fixture4_EnvTokenFallbackWhenKeychainDenied covers the
+// case where the Keychain bot-token read is denied AND the
 // operator picks the env-token fallback at the ACL panel, init
 // completes without writing a Keychain item, the documented
 // "next-step" message announces the fallback (audit-grade stderr per
@@ -230,7 +230,7 @@ func TestT273_Fixture4_EnvTokenFallbackWhenKeychainDenied(t *testing.T) {
 	require.NoError(t, runInitServer(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, fx.deps))
 
 	transcript := fx.stderr.String()
-	// One audit-grade stderr announcement per AC-6 / Task 3.4.
+	// One audit-grade stderr announcement.
 	require.Equal(t, 1, strings.Count(transcript, "env-token fallback selected"),
 		"exactly one env-token fallback announcement must fire")
 	require.Contains(t, transcript, "export HUSH_DISCORD_BOT_TOKEN")
@@ -267,8 +267,8 @@ func TestT273_Fixture4_EnvTokenFallbackWhenKeychainDenied(t *testing.T) {
 	}))
 }
 
-// TestT273_Fixture5_ClockSyncFailEmitsExactRemediation is SC-10 /
-// AC-12 case 5 (default, no override): the guided init flow surfaces
+// TestT273_Fixture5_ClockSyncFailEmitsExactRemediation covers the
+// default (no override) case: the guided init flow surfaces
 // the platform-aware exact remediation command in its preflight
 // failure render and exits non-zero with [errPreflightFailed].
 func TestT273_Fixture5_ClockSyncFailEmitsExactRemediation(t *testing.T) {
@@ -300,8 +300,8 @@ func TestT273_Fixture5_ClockSyncFailEmitsExactRemediation(t *testing.T) {
 		"exact remediation command must appear in stderr render")
 }
 
-// TestT273_Fixture5_AllowClockSkewDowngradesFailToWarn is SC-10 /
-// AC-12 case 5 (with `--allow-clock-skew`): the same probe failure
+// TestT273_Fixture5_AllowClockSkewDowngradesFailToWarn covers the
+// `--allow-clock-skew` case: the same probe failure
 // downgrades from fail to warn, init proceeds, and the override
 // announcement appears in stderr. The serve-side audit event is
 // covered separately by TestStartupChecks_AllowClockSkew*.

@@ -8,7 +8,7 @@ import (
 	"github.com/mrz1836/hush/internal/keys"
 )
 
-// testPassphrase is the hardcoded test passphrase — 32 bytes, satisfies SDD-01 minPassphraseLen.
+// testPassphrase is the hardcoded test passphrase — 32 bytes, satisfies minPassphraseLen.
 // NEVER use outside of tests.
 var testPassphrase = []byte("hush-test-seed-NEVER-USE-IN-PROD") //nolint:gochecknoglobals // immutable test constant
 

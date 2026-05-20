@@ -12,23 +12,23 @@ import (
 )
 
 // T-11b: TestChild_DarwinDeathWatch — best-effort kqueue
-// death-watch on Darwin (R-009).
+// death-watch on Darwin.
 //
 // The death-watch goroutine pair (kqueue blocker + waker) is
 // started by Start; the kqueue watches the supervisor's PPID and
 // fires SIGTERM at the child's pgid when that PPID exits. The
 // goroutines also exit cleanly when the child exits via the
-// self-pipe waker (Clarification 3 + R-013 termination contract).
+// self-pipe waker.
 //
 // The "kill PPID → SIGTERM grandchild" semantic requires a
 // 3-level process hierarchy that is impractical to wire in a
 // unit test (it would need to terminate the test runner). The
-// SIGKILL-of-supervisor case is the documented R-009 gap and is
-// skipped explicitly. The graceful-cleanup path — Start succeeds
+// SIGKILL-of-supervisor case is a documented gap and is skipped
+// explicitly. The graceful-cleanup path — Start succeeds
 // (no kqueue/pipe error), all death-watch goroutines join via
 // wg on Wait, no goroutine leak — IS exercised here.
 //
-//nolint:gocognit,gocyclo // 4-subtest pattern: kqueue path + ctx-cancel + 2 documented R-009 skips
+//nolint:gocognit,gocyclo // 4-subtest pattern: kqueue path + ctx-cancel + 2 documented skips
 func TestChild_DarwinDeathWatch(t *testing.T) {
 	t.Run("starts_and_cleans_up_goroutines", func(t *testing.T) {
 		// Warm up to remove first-call allocation skew.
@@ -94,10 +94,10 @@ func TestChild_DarwinDeathWatch(t *testing.T) {
 	})
 
 	t.Run("SIGKILL_supervisor_known_limitation", func(t *testing.T) {
-		t.Skip("R-009 darwin gap")
+		t.Skip("darwin death-watch gap")
 	})
 
 	t.Run("PPID_exit_to_grandchild_SIGTERM_known_limitation", func(t *testing.T) {
-		t.Skip("R-009 darwin gap — requires 3-level process hierarchy")
+		t.Skip("darwin death-watch gap — requires 3-level process hierarchy")
 	})
 }

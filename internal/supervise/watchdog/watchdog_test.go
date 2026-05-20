@@ -515,7 +515,7 @@ func TestWatchdog_RunStopsOnCtxCancel(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(250 * time.Millisecond):
-		t.Fatalf("Run did not return within 250ms (SC-004); elapsed %v", time.Since(start))
+		t.Fatalf("Run did not return within 250ms; elapsed %v", time.Since(start))
 	}
 
 	deadline := time.Now().Add(50 * time.Millisecond)
@@ -604,7 +604,7 @@ func TestWatchdog_PrecompiledPatternsReused(t *testing.T) {
 	}
 }
 
-func TestWatchdog_SC001_EmitLatencyUnder100ms(t *testing.T) {
+func TestWatchdog_EmitLatencyUnder100ms(t *testing.T) {
 	t.Parallel()
 	logger, _ := newTestLogger()
 	alerts := make(chan Event, 1)
@@ -623,7 +623,7 @@ func TestWatchdog_SC001_EmitLatencyUnder100ms(t *testing.T) {
 		select {
 		case <-alerts:
 			if elapsed := time.Since(start); elapsed >= 100*time.Millisecond {
-				t.Fatalf("trial %d: latency %v >= 100ms (SC-001)", i, elapsed)
+				t.Fatalf("trial %d: latency %v >= 100ms", i, elapsed)
 			}
 		case <-time.After(time.Second):
 			t.Fatalf("trial %d: timeout", i)

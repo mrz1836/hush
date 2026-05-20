@@ -97,7 +97,7 @@ func TestValidator_GoogleAI_AuthHeaderShape(t *testing.T) {
 		if h.Get("Authorization") != "" {
 			t.Errorf("unexpected Authorization header: %q", h.Get("Authorization"))
 		}
-		// Critical R-003d: NEVER use ?key=... query string for the secret.
+		// Critical: NEVER use ?key=... query string for the secret.
 		if strings.Contains(u.RawQuery, "key=") {
 			t.Errorf("URL query carries key= (forbidden): %q", u.RawQuery)
 		}

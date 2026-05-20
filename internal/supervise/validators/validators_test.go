@@ -28,13 +28,13 @@ import (
 
 // sentinelLeakProbe is the canary fed into every TestValidator_<P>_
 // NoLeakOnError test. It MUST appear nowhere in err.Error(), any
-// wrapped error's Error(), or any captured slog record (F-3, SC-006).
+// wrapped error's Error(), or any captured slog record.
 const sentinelLeakProbe = "SECRET_SHOULD_NEVER_APPEAR_26"
 
 // rewriteTransport rewrites the scheme+host of every outbound request
 // from a pinned production URL to a local httptest.Server URL.
 // Production URLs in test code MUST appear inside a rewriteTransport
-// literal (F-2 / FR-014 / SC-004).
+// literal.
 type rewriteTransport struct {
 	from string
 	to   string
@@ -141,7 +141,7 @@ func newSecure(t *testing.T, value string) *securebytes.SecureBytes {
 // providerCase is the per-provider test fixture used by several shared
 // tests. Each case wires an httptest.Server, the rewrite transport, a
 // capture logger, and the matching Validator. The pinned URL is the
-// production URL from R-003a..R-003e.
+// pinned production URL.
 type providerCase struct {
 	name        string
 	fixedHost   string
@@ -151,7 +151,7 @@ type providerCase struct {
 // providerCase factory functions — sibling per-provider test files use
 // these to avoid package-level mutable global state (gochecknoglobals).
 // Pinned production URLs in the bodies are consumed only by the
-// rewriteTransport rewriter, not as live HTTP targets (FR-014 / SC-004).
+// rewriteTransport rewriter, not as live HTTP targets.
 
 func anthropicProviderCase() providerCase {
 	return providerCase{
@@ -197,7 +197,7 @@ func githubProviderCase() providerCase {
 // Shared tests
 // -----------------------------------------------------------------------------
 
-// TestValidator_InterfaceHasOneMethod — B-V-IF-1, FR-001.
+// TestValidator_InterfaceHasOneMethod.
 func TestValidator_InterfaceHasOneMethod(t *testing.T) {
 	t.Parallel()
 	typ := reflect.TypeFor[validators.Validator]()
@@ -247,7 +247,7 @@ func TestPackage_SentinelStringsAreLiteral(t *testing.T) {
 	}
 }
 
-// TestRegistry_AllFiveNamesPresent — B-V-REG-1, FR-010, US5-AS1.
+// TestRegistry_AllFiveNamesPresent.
 func TestRegistry_AllFiveNamesPresent(t *testing.T) {
 	t.Parallel()
 	reg := validators.NewRegistry(nil)
@@ -262,7 +262,7 @@ func TestRegistry_AllFiveNamesPresent(t *testing.T) {
 	}
 }
 
-// TestRegistry_GetUnknownName_FalseFound — B-V-REG-2, FR-011, Q2.
+// TestRegistry_GetUnknownName_FalseFound.
 func TestRegistry_GetUnknownName_FalseFound(t *testing.T) {
 	t.Parallel()
 	reg := validators.NewRegistry(nil)
@@ -278,7 +278,7 @@ func TestRegistry_GetUnknownName_FalseFound(t *testing.T) {
 	}
 }
 
-// TestRegistry_ExactlyFiveNames — B-V-REG-3, SC-007.
+// TestRegistry_ExactlyFiveNames.
 func TestRegistry_ExactlyFiveNames(t *testing.T) {
 	t.Parallel()
 	reg := validators.NewRegistry(nil)
@@ -300,7 +300,7 @@ func TestRegistry_ExactlyFiveNames(t *testing.T) {
 	}
 }
 
-// TestRegistry_GetIsRaceClean — B-V-REG-4, FR-016/017.
+// TestRegistry_GetIsRaceClean.
 func TestRegistry_GetIsRaceClean(t *testing.T) {
 	t.Parallel()
 	reg := validators.NewRegistry(nil)
@@ -321,7 +321,7 @@ func TestRegistry_GetIsRaceClean(t *testing.T) {
 	wg.Wait()
 }
 
-// TestPackage_DefaultClientTimeoutIs5s — B-V-FIX-3, FR-012, Q1.
+// TestPackage_DefaultClientTimeoutIs5s.
 //
 // Behavioral assertion: with a nil client and a fixture that sleeps
 // 200ms, Validate completes well within 5s. With a non-nil client whose
@@ -386,7 +386,7 @@ func TestPackage_CallerSuppliedClientReturnedVerbatim(t *testing.T) {
 	}
 }
 
-// TestPackage_LogRecordSchema_Success — B-V-LOG-1, FR-020.
+// TestPackage_LogRecordSchema_Success.
 func TestPackage_LogRecordSchema_Success(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -419,7 +419,7 @@ func TestPackage_LogRecordSchema_Success(t *testing.T) {
 	}
 }
 
-// TestPackage_LogRecordSchema_Failure — B-V-LOG-2, FR-020.
+// TestPackage_LogRecordSchema_Failure.
 func TestPackage_LogRecordSchema_Failure(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -473,7 +473,7 @@ func TestPackage_LogAttrsAreAllowList(t *testing.T) {
 	}
 }
 
-// TestPackage_NoStringConversionsOfSecret — B-V-SEC-1, SC-005.
+// TestPackage_NoStringConversionsOfSecret.
 func TestPackage_NoStringConversionsOfSecret(t *testing.T) {
 	t.Parallel()
 	patterns := []*regexp.Regexp{
@@ -493,7 +493,7 @@ func TestPackage_NoStringConversionsOfSecret(t *testing.T) {
 	}
 }
 
-// TestPackage_NoRequestObjectInLogOrError — B-V-SEC-2, FR-008.
+// TestPackage_NoRequestObjectInLogOrError.
 func TestPackage_NoRequestObjectInLogOrError(t *testing.T) {
 	t.Parallel()
 	for _, f := range productionFiles(t) {
@@ -579,7 +579,7 @@ func assertRangeZeroAssign(t *testing.T, fnName string, fr *ast.RangeStmt) {
 	}
 }
 
-// TestPackage_NoLiveProviderHosts — B-V-FIX-1, SC-004, FR-014.
+// TestPackage_NoLiveProviderHosts.
 //
 // Every production-hostname match in *_test.go must be inside a
 // rewriteTransport literal or a per-test constant declared right
@@ -653,7 +653,7 @@ func lineIsTestFixtureContext(lines []string, idx int) bool {
 	return false
 }
 
-// TestPackage_ZeroNewDependencies — B-V-FIX-2, FR-018.
+// TestPackage_ZeroNewDependencies.
 //
 // The package must not have introduced any new direct dependency. Parse
 // the project's go.mod and verify that the only third-party direct dep
@@ -1087,7 +1087,7 @@ func runNoLeakOnError(t *testing.T, pc providerCase) {
 }
 
 // runNameIsLocked asserts the slog record's validator attr equals the
-// pinned FR-010 name.
+// pinned name.
 func runNameIsLocked(t *testing.T, pc providerCase, want string) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

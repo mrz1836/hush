@@ -23,7 +23,7 @@ var (
 	errSyntheticDeadline = errors.New("context deadline exceeded")
 )
 
-// secretMarkerBytes is the marker pattern used by the FR-023-27/28
+// secretMarkerBytes is the marker pattern used by the
 // sentinel-leak tests. Any operator-visible surface that contains
 // this marker is a failure.
 const secretMarkerBytes = "SECRET_MARKER_DEADBEEF"

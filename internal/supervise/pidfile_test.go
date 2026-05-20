@@ -27,8 +27,7 @@ func tightTempDir(t *testing.T) string {
 }
 
 // TestPidFile_FlockExclusive — first AcquirePidFile holds the lock; a
-// concurrent acquire on the same path returns a non-nil error
-// (FR-022-1; contracts/api.md §5.1).
+// concurrent acquire on the same path returns a non-nil error.
 func TestPidFile_FlockExclusive(t *testing.T) {
 	path := filepath.Join(tightTempDir(t), "supervisor.pid")
 
@@ -44,7 +43,7 @@ func TestPidFile_FlockExclusive(t *testing.T) {
 
 // TestPidFile_DuplicateRefused — refused acquire returns
 // errors.Is(err, ErrPidLocked) within milliseconds AND does NOT modify
-// the live owner's PID-file contents (FR-022-2; SC-022-2).
+// the live owner's PID-file contents.
 func TestPidFile_DuplicateRefused(t *testing.T) {
 	path := filepath.Join(tightTempDir(t), "supervisor.pid")
 
@@ -71,7 +70,7 @@ func TestPidFile_DuplicateRefused(t *testing.T) {
 // TestPidFile_StaleAcquired — sub-process acquires the lock, exits
 // without Release; the OS auto-releases the flock at process death; the
 // next AcquirePidFile against the same path succeeds without operator
-// intervention (FR-022-3; SC-022-3).
+// intervention.
 func TestPidFile_StaleAcquired(t *testing.T) {
 	path := filepath.Join(tightTempDir(t), "stale.pid")
 
@@ -93,8 +92,7 @@ func TestPidFile_StaleAcquired(t *testing.T) {
 }
 
 // TestPidFile_ReleaseRemovesFile — Release removes the inode; second
-// Release returns the package-private errAlreadyReleased sentinel
-// (FR-022-5).
+// Release returns the package-private errAlreadyReleased sentinel.
 func TestPidFile_ReleaseRemovesFile(t *testing.T) {
 	path := filepath.Join(tightTempDir(t), "release.pid")
 
@@ -110,8 +108,7 @@ func TestPidFile_ReleaseRemovesFile(t *testing.T) {
 	assert.True(t, errors.Is(err, errAlreadyReleased), "double-Release should return errAlreadyReleased, got %v", err)
 }
 
-// TestPidFile_WritesOwnPID — post-Acquire, file contents == strconv.Itoa(os.Getpid())
-// (FR-022-4).
+// TestPidFile_WritesOwnPID — post-Acquire, file contents == strconv.Itoa(os.Getpid()).
 func TestPidFile_WritesOwnPID(t *testing.T) {
 	path := filepath.Join(tightTempDir(t), "ownpid.pid")
 
@@ -124,8 +121,7 @@ func TestPidFile_WritesOwnPID(t *testing.T) {
 	assert.Equal(t, strconv.Itoa(os.Getpid()), string(contents))
 }
 
-// TestPidFile_Mode0600 — post-Acquire, file mode is exactly 0o600
-// (FR-022-6).
+// TestPidFile_Mode0600 — post-Acquire, file mode is exactly 0o600.
 func TestPidFile_Mode0600(t *testing.T) {
 	path := filepath.Join(tightTempDir(t), "mode.pid")
 
@@ -139,7 +135,7 @@ func TestPidFile_Mode0600(t *testing.T) {
 }
 
 // TestPidFile_ParentMode0700Created — when parent dir does not exist,
-// AcquirePidFile creates it at 0o700 (FR-022-10).
+// AcquirePidFile creates it at 0o700.
 func TestPidFile_ParentMode0700Created(t *testing.T) {
 	root := t.TempDir()
 	parent := filepath.Join(root, "nested", "supervisor")
@@ -156,7 +152,7 @@ func TestPidFile_ParentMode0700Created(t *testing.T) {
 
 // TestPidFile_ParentLooseRefuses — when parent dir exists at 0o755,
 // AcquirePidFile refuses with ErrSocketPermsLoose AND no PID file is
-// created (FR-022-10, Clarification 1).
+// created.
 func TestPidFile_ParentLooseRefuses(t *testing.T) {
 	root := t.TempDir()
 	parent := filepath.Join(root, "loose")

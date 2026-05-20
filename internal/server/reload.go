@@ -28,9 +28,8 @@ func (s *Server) ReloadVault(ctx context.Context, newPath string, key *securebyt
 }
 
 // runReload is the reload coordinator. It holds [Server.reloadMu] across the
-// entire load → swap → drain → destroy cycle so FR-014 ("the new reload does
-// not begin until the previous reload's swap and destroy have completed") is
-// honoured literally.
+// entire load → swap → drain → destroy cycle so a new reload does not begin
+// until the previous reload's swap and destroy have completed.
 //
 //nolint:cyclop // sequential reload state machine: lock → load → swap → audit → drain → destroy; complexity is structural
 func (s *Server) runReload(ctx context.Context, newPath string, key *securebytes.SecureBytes) error {
@@ -95,7 +94,7 @@ func (s *Server) drainAndDestroy(ctx context.Context, oldStorePtr *vault.Store) 
 // wrapReloadError categorises an underlying vault load error into one of the
 // three reload sentinels and wraps it with the failing path. The message is
 // path-bearing but never includes any byte from the vault file's ciphertext
-// or plaintext (FR-013).
+// or plaintext.
 func wrapReloadError(path string, err error) error {
 	switch {
 	case errors.Is(err, fs.ErrNotExist):

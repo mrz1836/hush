@@ -4,7 +4,7 @@ import "time"
 
 // Defaults catalog — every value below MUST exactly equal the corresponding
 // documented default in docs/CONFIG-SCHEMA.md "Supervisor config" section.
-// Each is asserted by a unit test (FR-016 + SC-001).
+// Each is asserted by a unit test.
 //
 //nolint:gochecknoglobals // sentinel-class: set-once at package load, never mutated
 var (

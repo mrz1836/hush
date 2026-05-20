@@ -11,7 +11,7 @@ import (
 )
 
 // State is the supervisor's lifecycle state. Exactly five values
-// are valid (FR-019-1); see the constants below. The string forms
+// are valid; see the constants below. The string forms
 // are part of the operator-visible contract (status socket JSON,
 // audit log) and MUST NOT be renamed without a SPEC amendment.
 type State string
@@ -25,8 +25,8 @@ const (
 )
 
 // Event is the closed vocabulary of lifecycle events the state
-// machine recognizes (FR-019-21). The string forms are part of
-// the audit-log contract.
+// machine recognizes. The string forms are part of the audit-log
+// contract.
 type Event string
 
 const (
@@ -48,10 +48,9 @@ const (
 )
 
 // Clock is the wall-clock source the Store consults to stamp
-// LastTransitionAt on every successful transition (FR-019-20).
-// Production wires a real-time impl backed by time.Now(); tests
-// wire a fake. Single-method interface; defined at the consumer
-// per Constitution IX.
+// LastTransitionAt on every successful transition. Production wires
+// a real-time impl backed by time.Now(); tests wire a fake.
+// Single-method interface; defined at the consumer.
 type Clock interface {
 	Now() time.Time
 }
@@ -64,9 +63,8 @@ var ErrInvalidTransition = errors.New("supervise: invalid transition")
 
 // reasons is the closed event-to-phrase map populated at package
 // init. The keyset equals the Event vocabulary exactly. Read-only
-// post-init; sentinel-class equivalent to var Err... = errors.New(...)
-// per Constitution IX (R-002, R-005).
-var reasons = map[Event]string{ //nolint:gochecknoglobals // sentinel-class read-only map; locked at package init per Constitution IX (R-002, R-005)
+// post-init; sentinel-class equivalent to var Err... = errors.New(...).
+var reasons = map[Event]string{ //nolint:gochecknoglobals // sentinel-class read-only map; locked at package init
 	EventFetchOK:               "fetch succeeded",
 	EventFetchAuthRequired:     "fetch rejected: re-approval required",
 	EventClaimDenied:           "claim denied by operator",
@@ -85,10 +83,9 @@ var reasons = map[Event]string{ //nolint:gochecknoglobals // sentinel-class read
 }
 
 // transitions encodes every legal (State, Event) -> State edge.
-// 19 cells from contracts/state-table.md; outer keys are the 5
-// states and inner-map values are drawn from the same closed set.
-// Read-only post-init (R-002).
-var transitions = map[State]map[Event]State{ //nolint:gochecknoglobals // sentinel-class read-only state-table; locked at package init per Constitution IX (R-002)
+// 19 cells; outer keys are the 5 states and inner-map values are
+// drawn from the same closed set. Read-only post-init.
+var transitions = map[State]map[Event]State{ //nolint:gochecknoglobals // sentinel-class read-only state-table; locked at package init
 	StateFetching: {
 		EventFetchOK:            StateRunning,
 		EventFetchAuthRequired:  StateAwaitingApproval,
@@ -124,9 +121,9 @@ var transitions = map[State]map[Event]State{ //nolint:gochecknoglobals // sentin
 // concurrent Transition and Snapshot from many goroutines.
 // Construct via NewStore; the zero value is NOT usable.
 //
-// Owns no goroutines (FR-019-12). Triggers no side-effects beyond
-// in-memory mutation (FR-019-13). All field writes happen under a
-// write lock; all field reads happen under a read lock.
+// Owns no goroutines. Triggers no side-effects beyond in-memory
+// mutation. All field writes happen under a write lock; all field
+// reads happen under a read lock.
 type Store struct {
 	mu               sync.RWMutex
 	currentState     State
@@ -138,12 +135,11 @@ type Store struct {
 }
 
 // NewStore returns a fresh Store in StateFetching, with
-// LastTransitionAt set to clock.Now() at construction (FR-019-16).
+// LastTransitionAt set to clock.Now() at construction.
 // ctx is accepted for parity with future expansion but is
 // currently unused; passing context.Background() is acceptable.
 // Passing a nil clock is a programmer error and panics at
-// construction (Constitution IX explicit-panic exemption for
-// startup wiring).
+// construction.
 func NewStore(_ context.Context, clock Clock) *Store {
 	if clock == nil {
 		panic("supervise: NewStore requires a non-nil Clock")
@@ -159,14 +155,13 @@ func NewStore(_ context.Context, clock Clock) *Store {
 // Transition applies event under the write lock. On legal
 // transitions the store updates currentState, lastTransitionAt
 // (from the injected clock), reason (from the closed event-to-
-// phrase map), and possibly clears or replaces the cached token
-// (per R-007). On illegal transitions the store is unchanged
-// (FR-019-6) and the returned error wraps ErrInvalidTransition
-// with both the current state and the rejected event named
-// (FR-019-15).
+// phrase map), and possibly clears or replaces the cached token.
+// On illegal transitions the store is unchanged and the returned
+// error wraps ErrInvalidTransition with both the current state
+// and the rejected event named.
 //
 // EventStopRequested is legal from every state, including
-// StateStopped (idempotent no-op-success per FR-019-17).
+// StateStopped (idempotent no-op-success).
 //
 // ctx is accepted for parity; the current implementation does no
 // cancellable work.
@@ -184,13 +179,12 @@ func (s *Store) Transition(_ context.Context, event Event) error {
 }
 
 // Snapshot returns a defensive-copy point-in-time view of the
-// store's observable fields (FR-019-7, FR-019-8). The returned
-// value's Token field, if non-nil, is a pointer to the same
-// *securebytes.SecureBytes the store holds — borrow-only access
-// per SDD-02. Mutating any field of the returned value does NOT
-// affect the store. A snapshot taken concurrently with a
-// transition observes either the pre or the post state in full
-// (FR-019-14).
+// store's observable fields. The returned value's Token field, if
+// non-nil, is a pointer to the same *securebytes.SecureBytes the
+// store holds — borrow-only access. Mutating any field of the
+// returned value does NOT affect the store. A snapshot taken
+// concurrently with a transition observes either the pre or the
+// post state in full.
 func (s *Store) Snapshot() Snapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -205,8 +199,7 @@ func (s *Store) Snapshot() Snapshot {
 
 // Snapshot is the by-value view returned by Store.Snapshot().
 // Carries exactly the fields downstream readers (status socket,
-// audit emitter) need. Renders Token as "[redacted]" through
-// slog (Constitution X).
+// audit emitter) need. Renders Token as "[redacted]" through slog.
 type Snapshot struct {
 	State            State
 	ChildPID         int
@@ -215,11 +208,10 @@ type Snapshot struct {
 	Reason           string
 }
 
-// setToken is a package-private seam: the SDD-24 orchestrator writes the
-// JWT here after a successful /claim. Renamed from setTokenForTest at
-// SDD-24 (production-path seam now; tests still call it directly because
-// they live in the same package). The method remains unexported — the
-// SDD-19 PACKAGE-MAP exported-surface lock is preserved.
+// setToken is a package-private seam: the orchestrator writes the
+// JWT here after a successful /claim. Production-path seam; tests
+// also call it directly because they live in the same package. The
+// method remains unexported.
 func (s *Store) setToken(tok *securebytes.SecureBytes) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

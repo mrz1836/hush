@@ -14,9 +14,9 @@ import (
 	"github.com/mrz1836/hush/internal/testutil"
 )
 
-// stubAsApprover adapts SDD-04's testutil.DiscordStub to the chassis Approver
+// stubAsApprover adapts testutil.DiscordStub to the chassis Approver
 // interface, translating testutil.Decision values into chassis sentinels.
-// This is the same shape SDD-14 will install in production (a translator
+// This is the same shape production wiring uses (a translator
 // between internal/discord errors and the chassis-level surface).
 type stubAsApprover struct {
 	stub *testutil.DiscordStub
@@ -55,8 +55,8 @@ func (a stubAsApprover) RequestApproval(ctx context.Context, req ApprovalRequest
 }
 
 // TestClaim_Integration_FullFlow_DiscordStub exercises the handler under the
-// SDD-04 testutil.DiscordStub adapter — the closest unit-of-test to the
-// production wiring SDD-14 will install.
+// testutil.DiscordStub adapter — the closest unit-of-test to the
+// production wiring.
 func TestClaim_Integration_FullFlow_DiscordStub(t *testing.T) {
 	t.Run("approves", func(t *testing.T) {
 		stub := testutil.NewDiscordStub(t)

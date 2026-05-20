@@ -367,8 +367,8 @@ func TestAbsDuration(t *testing.T) {
 	}
 }
 
-// TestStartupChecks_AllowClockSkewDowngradesNotSynced covers Plan
-// AC-8 / Task 4.2: with --allow-clock-skew (Deps.AllowClockSkew=true)
+// TestStartupChecks_AllowClockSkewDowngradesNotSynced covers the case
+// where, with --allow-clock-skew (Deps.AllowClockSkew=true),
 // a not-synced probe no longer aborts startup. The check emits a
 // single clock_skew_override audit event and returns nil so the rest
 // of the lifecycle runs.

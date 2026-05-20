@@ -126,8 +126,8 @@ func dialAndDrive(t *testing.T, path string) []byte {
 // US3 — Status JSON shape + redaction + pre-attach defaults
 // ============================================================
 
-// TestSocket_StatusJSONShape — every FR-12 key present with the
-// documented Go type (FR-022-12, SC-022-5).
+// TestSocket_StatusJSONShape — every status key present with the
+// documented Go type.
 func TestSocket_StatusJSONShape(t *testing.T) {
 	path := tempSocketPath(t)
 	srv := NewStatusServer(path, nil, silentLogger())
@@ -158,7 +158,7 @@ func TestSocket_StatusJSONShape(t *testing.T) {
 		"child_pid", "child_uptime", "discord_connected", "state",
 	} {
 		_, ok := doc[key]
-		assert.True(t, ok, "FR-12 key %q must be present", key)
+		assert.True(t, ok, "%q key must be present", key)
 	}
 
 	// Type assertions on each field.
@@ -197,8 +197,8 @@ func TestSocket_StatusJSONShape(t *testing.T) {
 }
 
 // TestSocket_StatusJSONFromSnapshot — encoder emits byte-equal expected
-// FR-12 JSON given a constructed Snapshot + stub StatusInputs
-// (FR-022-12, FR-022-16). Exercises renderStatus directly.
+// JSON given a constructed Snapshot + stub StatusInputs. Exercises
+// renderStatus directly.
 func TestSocket_StatusJSONFromSnapshot(t *testing.T) {
 	srv := NewStatusServer("/dev/null/ignored", nil, silentLogger())
 	srv.attach(&stubStatusInputs{
@@ -222,8 +222,7 @@ func TestSocket_StatusJSONFromSnapshot(t *testing.T) {
 }
 
 // TestSocket_TokenInResponseRedacted — Snapshot.Token marker bytes never
-// appear in the rendered JSON; no "token" field at all (FR-022-13,
-// SC-022-6, Constitution X).
+// appear in the rendered JSON; no "token" field at all.
 func TestSocket_TokenInResponseRedacted(t *testing.T) {
 	const marker = "MARKER_d3adb33f"
 	store := newTestStoreWithToken(t, []byte(marker))
@@ -242,7 +241,7 @@ func TestSocket_TokenInResponseRedacted(t *testing.T) {
 }
 
 // TestSocket_PreAttachDefaultsRenderShapeConformant — without attach,
-// the server emits the FR-12 default-shape document (contracts/api.md §2.3).
+// the server emits the default-shape document.
 func TestSocket_PreAttachDefaultsRenderShapeConformant(t *testing.T) {
 	path := tempSocketPath(t)
 	srv := NewStatusServer(path, nil, silentLogger())
@@ -272,7 +271,7 @@ func TestSocket_PreAttachDefaultsRenderShapeConformant(t *testing.T) {
 // ============================================================
 
 // TestSocket_GracefulShutdownOnCtx — ctx cancel returns nil error from
-// Run within sub-second bound (FR-022-14, SC-022-7, Clarification 3).
+// Run within sub-second bound.
 func TestSocket_GracefulShutdownOnCtx(t *testing.T) {
 	path := tempSocketPath(t)
 	srv := NewStatusServer(path, nil, silentLogger())
@@ -285,8 +284,7 @@ func TestSocket_GracefulShutdownOnCtx(t *testing.T) {
 }
 
 // TestSocket_ConnectionForceClosedOnCtxCancel — mid-handler ctx cancel
-// force-closes the conn within sub-second; Run returns within sub-second
-// (FR-022-14, Clarification 3).
+// force-closes the conn within sub-second; Run returns within sub-second.
 func TestSocket_ConnectionForceClosedOnCtxCancel(t *testing.T) {
 	path := tempSocketPath(t)
 	srv := NewStatusServer(path, nil, silentLogger())
@@ -333,7 +331,7 @@ func TestSocket_ConnectionForceClosedOnCtxCancel(t *testing.T) {
 }
 
 // TestSocket_RebindAfterStop — fresh StatusServer rebinds the same path
-// post-Run-stop without EADDRINUSE (SC-022-7).
+// post-Run-stop without EADDRINUSE.
 func TestSocket_RebindAfterStop(t *testing.T) {
 	path := tempSocketPath(t)
 
@@ -351,7 +349,7 @@ func TestSocket_RebindAfterStop(t *testing.T) {
 }
 
 // TestSocket_RunSecondCallReturnsErrAlreadyRunning — second Run on the
-// same instance returns errors.Is(err, ErrAlreadyRunning) (FR-022-14a).
+// same instance returns errors.Is(err, ErrAlreadyRunning).
 func TestSocket_RunSecondCallReturnsErrAlreadyRunning(t *testing.T) {
 	path := tempSocketPath(t)
 	srv := NewStatusServer(path, nil, silentLogger())
@@ -365,7 +363,7 @@ func TestSocket_RunSecondCallReturnsErrAlreadyRunning(t *testing.T) {
 }
 
 // TestSocket_NoGoroutineLeak — start/stop cycles return runtime.NumGoroutine
-// to baseline within tolerance (FR-022-17, SC-022-8).
+// to baseline within tolerance.
 func TestSocket_NoGoroutineLeak(t *testing.T) {
 	// Warm-up cycle so any one-time-init goroutines have spawned before
 	// the baseline read.
@@ -391,7 +389,7 @@ func TestSocket_NoGoroutineLeak(t *testing.T) {
 }
 
 // TestSocket_PreviousSocketCleanedUp — stale socket inode at the path
-// is unlinked pre-bind (FR-022-11).
+// is unlinked pre-bind.
 func TestSocket_PreviousSocketCleanedUp(t *testing.T) {
 	path := tempSocketPath(t)
 
@@ -414,8 +412,7 @@ func TestSocket_PreviousSocketCleanedUp(t *testing.T) {
 // US5 — Filesystem permissions are the only authorization
 // ============================================================
 
-// TestSocket_Mode0600 — post-Run, socket inode mode is exactly 0o600
-// (FR-022-9, SC-022-4).
+// TestSocket_Mode0600 — post-Run, socket inode mode is exactly 0o600.
 func TestSocket_Mode0600(t *testing.T) {
 	path := tempSocketPath(t)
 	srv := NewStatusServer(path, nil, silentLogger())
@@ -429,7 +426,7 @@ func TestSocket_Mode0600(t *testing.T) {
 }
 
 // TestSocket_ParentMode0700 — when parent dir is missing, Run creates
-// it at 0o700 (FR-022-10, SC-022-4).
+// it at 0o700.
 func TestSocket_ParentMode0700(t *testing.T) {
 	root := shortTempDir(t)
 	parent := filepath.Join(root, "n", "s")
@@ -445,7 +442,7 @@ func TestSocket_ParentMode0700(t *testing.T) {
 }
 
 // TestSocket_ParentLooseRefuses — pre-existing 0o755 parent → Run
-// returns ErrSocketPermsLoose; no listener bound (FR-022-10).
+// returns ErrSocketPermsLoose; no listener bound.
 func TestSocket_ParentLooseRefuses(t *testing.T) {
 	root := shortTempDir(t)
 	parent := filepath.Join(root, "loose")
@@ -630,7 +627,7 @@ func TestSocket_DefaultRuntimeDirFallback(t *testing.T) {
 }
 
 // TestSocket_StoreSnapshotPath — when a real Store is wired in, the
-// server takes the Snapshot via store.Snapshot() per FR-022-16. Verifies
+// server takes the Snapshot via store.Snapshot(). Verifies
 // the snapshotForResponse non-nil branch.
 func TestSocket_StoreSnapshotPath(t *testing.T) {
 	store := newTestStoreWithToken(t, []byte("payload"))
@@ -648,8 +645,7 @@ func TestSocket_StoreSnapshotPath(t *testing.T) {
 }
 
 // TestSocket_NoTCPListenerOrHTTPServer — static byte-grep over the
-// chunk's source files asserts absence of TCP / HTTP / bearer auth
-// (SC-022-9, Constitution V).
+// chunk's source files asserts absence of TCP / HTTP / bearer auth.
 func TestSocket_NoTCPListenerOrHTTPServer(t *testing.T) {
 	files := []string{
 		"pidfile.go",
@@ -675,7 +671,7 @@ func TestSocket_NoTCPListenerOrHTTPServer(t *testing.T) {
 }
 
 // ============================================================
-// SDD-23 — verb dispatch (status | refresh) + handler wiring
+// Verb dispatch (status | refresh) + handler wiring
 // ============================================================
 
 // dialAndDriveVerb sends the supplied verb (no trailing newline; one
@@ -696,7 +692,7 @@ func dialAndDriveVerb(t *testing.T, path, verb string) []byte {
 }
 
 // TestSocket_VerbStatusReturnsStatusDocument — explicit "status\n"
-// produces the existing FR-12 status JSON document.
+// produces the existing status JSON document.
 func TestSocket_VerbStatusReturnsStatusDocument(t *testing.T) {
 	path := tempSocketPath(t)
 	srv := NewStatusServer(path, nil, silentLogger())
@@ -774,8 +770,7 @@ func TestSocket_VerbRefreshHandlerUnwiredReturnsStableError(t *testing.T) {
 }
 
 // TestSocket_VerbUnrecognisedFallsBackToStatus — unknown verb still
-// produces a status doc (backward-compat with SDD-22 §2.5 advisory
-// payload).
+// produces a status doc (backward-compat with advisory payload).
 func TestSocket_VerbUnrecognisedFallsBackToStatus(t *testing.T) {
 	path := tempSocketPath(t)
 	srv := NewStatusServer(path, nil, silentLogger())
@@ -819,7 +814,7 @@ func TestSocket_AttachRefreshHandlerCalledTwicePanics(t *testing.T) {
 }
 
 // ============================================================
-// SDD-23 — path-derivation helpers (per-OS)
+// Path-derivation helpers (per-OS)
 // ============================================================
 
 // TestSocketPathForSupervisor_DerivesPlatformPath — assert per-name
@@ -902,7 +897,7 @@ func TestEnumerateSupervisorSockets_MissingDirReturnsEmptySlice(t *testing.T) {
 
 // FuzzStatusJSON_Encode fuzzes the renderStatus encoder. Goal: panic-
 // free, output unmarshals into a map[string]json.RawMessage with all 10
-// FR-12 keys present (research.md R-10).
+// status keys present.
 func FuzzStatusJSON_Encode(f *testing.F) {
 	// Seed corpus from documented examples.
 	f.Add("openclaw", "2026-04-15T13:12:00Z", "2026-04-15T16:00:00Z", "ANTHROPIC,OPENAI", "", int64(8*time.Hour+12*time.Minute), true, 51234)
@@ -937,7 +932,7 @@ func FuzzStatusJSON_Encode(f *testing.F) {
 			"child_pid", "child_uptime", "discord_connected", "state",
 		} {
 			if _, ok := doc[k]; !ok {
-				t.Fatalf("missing FR-12 key %q in %s", k, body)
+				t.Fatalf("missing key %q in %s", k, body)
 			}
 		}
 	})

@@ -14,8 +14,8 @@ import (
 //   - every non-nil error returned is one of the package's named sentinels
 //     (or wraps one), or is an fs-level error from the file open path
 //
-// Seed corpus lives in testdata/seeds/FuzzSuperviseTOML/. Constitution VIII
-// fuzz target #5 (TOML parse — distinct from SDD-06's FuzzServerTOML).
+// Seed corpus lives in testdata/seeds/FuzzSuperviseTOML/. TOML-parse fuzz
+// target — distinct from the server-config FuzzServerTOML.
 func FuzzSuperviseTOML(f *testing.F) { //nolint:gocognit,gocyclo // fuzz target: seed loading + assertions are inherently complex
 	entries, err := os.ReadDir("testdata/seeds/FuzzSuperviseTOML")
 	if err == nil {

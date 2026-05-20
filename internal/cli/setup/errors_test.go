@@ -15,8 +15,7 @@ import (
 
 // TestSetupErrors_MessagesAndRemedies asserts every taxonomy entry
 // renders a locked message and a non-empty, single-line remedy
-// hint. The list mirrors AC-3: any new sentinel must be added here
-// before it ships.
+// hint. Any new sentinel must be added here before it ships.
 func TestSetupErrors_MessagesAndRemedies(t *testing.T) {
 	t.Parallel()
 
@@ -150,7 +149,7 @@ func TestSetupErrors_KeychainReExportMatchesPackage(t *testing.T) {
 }
 
 // TestTokenErrorFromKeychain_Translates asserts the bot-token
-// specific translation surface (Plan AC-5 / Task 3.1): low-level
+// specific translation surface: low-level
 // Keychain sentinels map 1:1 onto the token-shaped setup sentinels
 // the guided flow renders. Unknown errors pass through unchanged so
 // callers retain the underlying detail line.

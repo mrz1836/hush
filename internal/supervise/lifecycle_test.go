@@ -509,8 +509,8 @@ func TestLifecycle_RunIsSingleShot(t *testing.T) {
 
 // TestLifecycle_NoBusinessLogicLeakage (T043) — grep-style anti-leak check.
 // Asserts the orchestrator file content does not include state-string
-// literals (which are SDD-19's wire contract), the raw 78 literal
-// arithmetic (must reference SDD-20's Exit78 constant), or runtime.GOOS
+// literals (which are the wire contract), the raw 78 literal arithmetic
+// (must reference the Exit78 constant), or runtime.GOOS
 // references (no platform branching). The check ignores comment-only
 // lines (`// ...`) and import statements.
 //
@@ -524,8 +524,8 @@ func TestLifecycle_NoBusinessLogicLeakage(t *testing.T) {
 		"lifecycle_refresh.go",
 		"lifecycle_interfaces.go",
 	}
-	// State-string literals (FR-026-023). Reading State enum constants is
-	// fine — but materializing a quoted state name is not.
+	// State-string literals. Reading State enum constants is fine — but
+	// materializing a quoted state name is not.
 	literals := []string{`"running"`, `"awaiting-approval"`, `"fetching"`, `"stopped"`, `"grace-restart"`}
 	rawLiteral78 := regexp.MustCompile(`(^|[^A-Za-z0-9_])78([^A-Za-z0-9_]|$)`)
 	runtimeGOOS := regexp.MustCompile(`runtime\.GOOS`)

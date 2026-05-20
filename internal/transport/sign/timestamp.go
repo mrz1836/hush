@@ -6,7 +6,7 @@ import "time"
 var nowFn = time.Now
 
 // IsFreshTimestamp reports whether ts is within ±skew of now. A non-positive
-// skew always returns false (FR-012). The boundary value (|delta| == skew) is
+// skew always returns false. The boundary value (|delta| == skew) is
 // accepted (≤ semantics).
 func IsFreshTimestamp(ts time.Time, skew time.Duration) bool {
 	if skew <= 0 {

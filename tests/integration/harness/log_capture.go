@@ -14,7 +14,7 @@ import (
 
 // LogCapture is a per-scenario slog sink wired into every harness piece's
 // Logger. The captured bytes feed the canonical multi-stream
-// AssertSentinelAbsent sweep (data-model.md §4.6, Contract D).
+// AssertSentinelAbsent sweep (Contract D).
 //
 // Concurrency: Bytes() and the underlying handler synchronize on a single
 // sync.Mutex so concurrent supervisor / server / refresher writes interleave
@@ -75,7 +75,7 @@ func (s syncWriter) Write(p []byte) (int, error) {
 // supplied byte stream. Each stream is labeled for diagnostics. nil
 // streams are tolerated (Scenario 1 has no supervisor → nil StatusRaw()).
 //
-// Canonical six-stream coverage (data-model.md §4.6):
+// Canonical six-stream coverage:
 //
 //  1. operational slog (LogCapture.Bytes())
 //  2. audit JSONL raw bytes (TestServer.RawAudit())

@@ -12,7 +12,7 @@ import (
 )
 
 // TestServerSmoke_HealthEndpointResponds is the chassis-alive smoke
-// check landed alongside Phase B of SDD-25. It composes TestServer
+// check. It composes TestServer
 // against a fresh vault + Discord stub and verifies GET /hz returns a
 // 2xx response. Other endpoints (/claim, /s, /revoke) are covered by
 // the scenarios themselves.

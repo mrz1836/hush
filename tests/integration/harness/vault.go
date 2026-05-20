@@ -19,7 +19,7 @@ import (
 )
 
 // TestVault is the per-scenario on-disk vault fixture. Built on top of
-// testutil.NewTestVault (SDD-04), it owns the vault path, encryption key,
+// testutil.NewTestVault, it owns the vault path, encryption key,
 // state directory, clients.json registry path, and audit log path.
 //
 // Every fixture secret carries a per-scenario sentinel via

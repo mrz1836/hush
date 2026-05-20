@@ -1,6 +1,6 @@
 // Package cli — `hush secret` subcommand: vault-entry management.
 //
-// SDD-17. Mounts on the SDD-14 cobra root via newSecretCmd() (no new
+// Mounts on the cobra root via newSecretCmd() (no new
 // exported package-level symbols). Four verbs:
 //   - add NAME    — append a new entry (TTY-only; refuses piped stdin)
 //   - remove NAME — delete a named entry (typed-name confirmation)
@@ -67,9 +67,9 @@ const (
 )
 
 // pidFilename is the filename component of the server PID file under
-// <state_dir>/. SDD-17 §"Implementation contract" inlines the literal
-// here; no other component currently writes the PID file (a future
-// SDD chunk wires it into `serve`). The rogue-process threat row in
+// <state_dir>/. The literal is inlined here; no other component
+// currently writes the PID file (a future change wires it into
+// `serve`). The rogue-process threat row in
 // docs/SECURITY.md is the documented defence motivating the universal
 // stdin-TTY gate.
 const pidFilename = "hush.pid"
@@ -79,7 +79,7 @@ const pidFilename = "hush.pid"
 // does not depend on the server package.
 const secretsVaultFilename = "secrets.vault"
 
-// secretNameRE enforces the FR-017 entry-name shape. Length 1–64 is
+// secretNameRE enforces the entry-name shape. Length 1–64 is
 // checked separately so the error is more specific than a regex
 // failure for long names.
 var secretNameRE = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
@@ -284,7 +284,7 @@ func newSecretRotateCmd() *cobra.Command {
 	}
 }
 
-// validateSecretName runs the FR-017 regex + length check. Runs BEFORE
+// validateSecretName runs the entry-name regex + length check. Runs BEFORE
 // any vault I/O — a malformed name returns errInvalidSecretName which
 // mapErr classifies as ExitInputErr via the errMissingFlag wrap.
 func validateSecretName(name string) error {
@@ -301,7 +301,7 @@ func validateSecretName(name string) error {
 // 4 secret-verb schema: every record carries `verb` and `outcome`,
 // optional `name` (omitted when empty), and any caller-supplied extras
 // appended verbatim. Centralizing the shape prevents drift across the
-// ten-plus call sites in this file when SDD-13 hardens the audit log.
+// ten-plus call sites in this file when the audit log is hardened.
 func auditEvent(ctx context.Context, logger *slog.Logger, level slog.Level, event, verb, name, outcome string, extras ...any) {
 	args := make([]any, 0, 6+len(extras))
 	args = append(args, "verb", verb)
@@ -410,7 +410,7 @@ func destroySecrets(secrets []vault.Secret) {
 // key → load vault → secret value prompt → confirm-value prompt →
 // description prompt → exists check → append → save → audit → ExitOK.
 //
-//nolint:gocognit,gocyclo,cyclop,nestif // sequential add flow; complexity is structural per data-model §3.1
+//nolint:gocognit,gocyclo,cyclop,nestif // sequential add flow; complexity is structural
 func runSecretAdd(ctx context.Context, stderr *Stream, in *os.File, deps *secretDeps, args []string) error {
 	if !deps.nonInteractive {
 		if err := enforceStdinTTY(ctx, in, deps, stderr, "add"); err != nil {
@@ -523,7 +523,7 @@ func runSecretAdd(ctx context.Context, stderr *Stream, in *os.File, deps *secret
 // check → confirmation prompt → typed-name compare → filter → save →
 // audit → ExitOK.
 //
-//nolint:gocognit,gocyclo,cyclop // sequential remove flow; complexity is structural per data-model §3.2
+//nolint:gocognit,gocyclo,cyclop // sequential remove flow; complexity is structural
 func runSecretRemove(ctx context.Context, stderr *Stream, in *os.File, deps *secretDeps, args []string) error {
 	if err := enforceStdinTTY(ctx, in, deps, stderr, "remove"); err != nil {
 		return err
@@ -747,7 +747,7 @@ func runSecretRotate(ctx context.Context, stderr *Stream, in *os.File, deps *sec
 
 	// Re-save with the file's existing salt so the salt → KDF → vaultKey
 	// chain stays coherent across rotate. The nonce is freshly minted
-	// per call by SaveWithSalt (FR-009, SC-003); ciphertext bytes still
+	// per call by SaveWithSalt; ciphertext bytes still
 	// change while the plaintext set is preserved.
 	if err := deps.saveVault(ctx, vaultPath, vaultKey, salt, secrets); err != nil {
 		return err

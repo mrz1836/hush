@@ -213,8 +213,7 @@ func loginKeychainPath() string {
 // ([exitInteractionNotAllowed], [exitAuthFailed], [exitUserCanceled])
 // collapse to [ErrKeychainPermissionDenied]; init's ACL-aware
 // recovery flow re-translates that sentinel into
-// [setup.ErrTokenDenied] when the read targets the bot-token item
-// (Plan AC-5 / Task 3.1).
+// [setup.ErrTokenDenied] when the read targets the bot-token item.
 func mapSecurityError(err error, op string, output ...string) error {
 	detail := strings.TrimSpace(strings.Join(output, "\n"))
 	wrap := func(base error) error {

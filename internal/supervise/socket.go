@@ -1,5 +1,5 @@
-// SDD-22 Unix-domain status socket: filesystem-perms-as-auth listener
-// emitting the FR-12 status JSON document on every accepted connection.
+// Unix-domain status socket: filesystem-perms-as-auth listener
+// emitting the status JSON document on every accepted connection.
 package supervise
 
 import (
@@ -22,7 +22,7 @@ import (
 
 // ErrAlreadyRunning is returned by (*StatusServer).Run on a second
 // invocation of the same instance — concurrent or sequential. Re-binding
-// requires a fresh StatusServer (FR-022-14a). Compare via
+// requires a fresh StatusServer. Compare via
 // errors.Is(err, supervise.ErrAlreadyRunning).
 var ErrAlreadyRunning = errors.New("supervise: status server already running")
 
@@ -31,8 +31,8 @@ var ErrAlreadyRunning = errors.New("supervise: status server already running")
 // programmer-error class; orchestrator surfaces it via the wrapped chain.
 var errParentNotDir = errors.New("supervise: parent path is not a directory")
 
-// StatusInputs is the consumer-defined seam for FR-12 fields not held by
-// SDD-19's Snapshot. Implementations MUST be safe for concurrent reads —
+// StatusInputs is the consumer-defined seam for status fields not held
+// by Snapshot. Implementations MUST be safe for concurrent reads —
 // the status server may invoke any getter from any handler goroutine.
 // Wired post-construction via the package-private (*StatusServer).attach.
 // Pre-attach (the server's inputs field is nil), the document renders zero
@@ -124,8 +124,8 @@ func (s *StatusServer) Run(ctx context.Context) error {
 	return nil
 }
 
-// AttachStatusInputs is the exported wiring method consumed by
-// SDD-23's `internal/cli` orchestrator. Mirrors the package-private
+// AttachStatusInputs is the exported wiring method consumed by the
+// `internal/cli` orchestrator. Mirrors the package-private
 // `attach` precedent — wired once post-construction, before Run.
 // Subsequent calls overwrite the previous inputs. Safe to call from
 // any goroutine.
@@ -135,14 +135,14 @@ func (s *StatusServer) AttachStatusInputs(inputs StatusInputs) {
 
 // AttachRefreshHandler wires the orchestrator's refresh callback into
 // the status server. The handler is invoked for every `refresh\n`
-// verb received on the status socket (FR-023-20). Wired once
+// verb received on the status socket. Wired once
 // post-construction by `internal/cli/supervise.go`. Until called, the
 // refresh path returns a stable `refresh handler not wired` error
 // rather than panicking — defensive only (the orchestrator wires the
 // handler before starting `Run`).
 //
-// Single-shot: a second call panics (matches the SDD-22 one-shot
-// `Run` semantics; see socket-protocol.md §3.1).
+// Single-shot: a second call panics (matches the one-shot `Run`
+// semantics).
 func (s *StatusServer) AttachRefreshHandler(handler func(ctx context.Context) error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -153,8 +153,8 @@ func (s *StatusServer) AttachRefreshHandler(handler func(ctx context.Context) er
 }
 
 // attach wires inputs into the status server. Package-private; called by
-// the orchestrator (SDD-23) from inside package supervise via
-// AttachStatusInputs. Mirrors SDD-21's (*Refiller).attach precedent.
+// the orchestrator from inside package supervise via AttachStatusInputs.
+// Mirrors the (*Refiller).attach precedent.
 func (s *StatusServer) attach(inputs StatusInputs) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -189,8 +189,8 @@ func (s *StatusServer) watch(ctx context.Context, listener net.Listener, done ch
 // when Accept returns net.ErrClosed (listener.Close from watcher).
 //
 // ctx is the same context propagated to Run; it is threaded into each
-// per-connection handler so the SDD-23 refresh handler can observe
-// ctx-cancel and abort its in-flight refill (socket-protocol.md §3.3).
+// per-connection handler so the refresh handler can observe
+// ctx-cancel and abort its in-flight refill.
 func (s *StatusServer) acceptLoop(ctx context.Context, listener net.Listener) {
 	for {
 		conn, err := listener.Accept()
@@ -213,10 +213,9 @@ func (s *StatusServer) acceptLoop(ctx context.Context, listener net.Listener) {
 // watcher's conn.Close() propagates as Read/Write error. Termination:
 // handler returns; wg.Done().
 //
-// Per SDD-23 (socket-protocol.md §2), the first line read is matched
-// against the recognized verb set:
+// The first line read is matched against the recognized verb set:
 //   - "status" (or empty, or any unrecognized payload): render the
-//     status document — preserves SDD-22 §2.5 advisory-payload
+//     status document — preserves advisory-payload
 //     backward-compatibility.
 //   - "refresh": invoke the attached refresh handler; serialise the
 //     terminal ack as {"ok":true}\n or {"ok":false,"error":"<msg>"}\n.
@@ -238,7 +237,7 @@ func (s *StatusServer) handle(ctx context.Context, conn net.Conn) {
 	line, err := br.ReadString('\n')
 	if err != nil {
 		// Tolerate unterminated request — fall through to status path.
-		// FR-022 §2.5: "request payload is advisory in v0.1.0; the connection IS the auth."
+		// The request payload is advisory in v0.1.0; the connection IS the auth.
 		if !errors.Is(err, net.ErrClosed) {
 			s.logger.Debug("supervise: status request read error", "err", err)
 		}
@@ -330,7 +329,7 @@ func (s *StatusServer) writeRefreshAck(ctx context.Context, conn net.Conn) {
 	s.writeOrLog(conn, body, "supervise: refresh ack")
 }
 
-// snapshotForResponse takes ONE Store.Snapshot() per request (FR-022-16).
+// snapshotForResponse takes ONE Store.Snapshot() per request.
 // Returns the zero Snapshot when store is nil (unit-testing flexibility).
 func (s *StatusServer) snapshotForResponse() Snapshot {
 	if s.store == nil {
@@ -339,8 +338,8 @@ func (s *StatusServer) snapshotForResponse() Snapshot {
 	return s.store.Snapshot()
 }
 
-// statusJSON is the FR-12 wire DTO. Snapshot.Token is intentionally NOT a
-// field — token bytes never reach the wire (Constitution X / FR-022-13).
+// statusJSON is the wire DTO. Snapshot.Token is intentionally NOT a
+// field — token bytes never reach the wire.
 type statusJSON struct {
 	Supervisor        string   `json:"supervisor"`
 	SessionExpiresAt  string   `json:"session_expires_at"`
@@ -356,7 +355,7 @@ type statusJSON struct {
 	State             string   `json:"state"`
 }
 
-// renderStatus projects one Snapshot + one inputs read into the FR-12
+// renderStatus projects one Snapshot + one inputs read into the status
 // JSON document. Zero values render shape-conformant when inputs is nil.
 func (s *StatusServer) renderStatus(snap Snapshot) ([]byte, error) {
 	s.mu.Lock()
@@ -400,7 +399,7 @@ func (s *StatusServer) renderStatus(snap Snapshot) ([]byte, error) {
 }
 
 // ensureParentMode0700 is consumed by both AcquirePidFile and
-// (*StatusServer).Run per research.md R-4. Returns ErrSocketPermsLoose
+// (*StatusServer).Run. Returns ErrSocketPermsLoose
 // (wrapped) when the parent exists but its mode is laxer than 0700.
 // Creates the parent at 0700 when missing. Any other I/O error is
 // returned wrapped (distinguishable from ErrSocketPermsLoose via errors.Is).
