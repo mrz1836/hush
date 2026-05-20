@@ -63,3 +63,7 @@ node_modules/
 coverage_integration.txt
 cmd/hush/hush
 .mage-cache/builds/418d8a31dad56084.json
+
+# Compiled binaries from .github/scripts Go tooling
+.github/scripts/coverage-threshold/coverage-threshold
+.github/scripts/govulncheck-filter/govulncheck-filter

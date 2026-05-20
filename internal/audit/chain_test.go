@@ -480,4 +480,3 @@ func replaceSignature(t *testing.T, line, newSig string) string {
 	}
 	return line[:i+len(tag)] + newSig + line[i+len(tag)+j:]
 }
-
