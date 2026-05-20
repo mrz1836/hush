@@ -36,6 +36,10 @@ var mlockFn = mlock //nolint:gochecknoglobals // OS bridge; test-hookable for ml
 // munlockFn is the active OS munlock bridge; set once at startup, replaced in tests.
 var munlockFn = munlock //nolint:gochecknoglobals // OS bridge; test-hookable for munlock error-path coverage
 
+// raiseOnce guards the one-time process memlock-limit raise performed
+// before the first mlock in New.
+var raiseOnce sync.Once //nolint:gochecknoglobals // guards a one-time process-wide rlimit raise
+
 // New constructs a SecureBytes wrapping a copy of b.
 //
 // The constructor allocates a fresh buffer, copies b into it, pins the new
@@ -51,6 +55,7 @@ var munlockFn = munlock //nolint:gochecknoglobals // OS bridge; test-hookable fo
 // New also registers a runtime finalizer that calls Destroy if the returned
 // reference becomes unreachable without an explicit Destroy.
 func New(b []byte) (*SecureBytes, error) {
+	raiseOnce.Do(raiseMemlockLimit)
 	buf := make([]byte, len(b))
 	copy(buf, b)
 	if err := mlockFn(buf); err != nil {
