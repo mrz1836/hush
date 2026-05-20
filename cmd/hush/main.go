@@ -1,5 +1,5 @@
-// Package main is the hush binary entry point. The body is two lines
-// per docs/PACKAGE-MAP.md — all logic lives in internal/cli.
+// Package main is the hush binary entry point. All logic lives in
+// internal/cli; this file is intentionally a two-line shim.
 package main
 
 import (

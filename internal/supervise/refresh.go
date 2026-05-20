@@ -59,12 +59,10 @@ type Refresher struct {
 // fails to parse, if refill is nil, or if logger is nil (Constitution
 // IX startup-wiring exemption).
 //
-// The window string MUST be canonical "HH:MM-HH:MM" (validated by
-// SDD-18's parser at config-load time); this constructor parses it
-// eagerly into four ints and panics on parse failure (programmer
-// error — orchestrator pre-validates).
-//
-// Locked exported signature per docs/sdd/SDD-21.md.
+// The window string MUST be canonical "HH:MM-HH:MM" (validated at
+// config-load time); this constructor parses it eagerly into four
+// ints and panics on parse failure (programmer error — orchestrator
+// pre-validates).
 func NewRefresher(window string, ttl time.Duration, refill func(ctx context.Context) error, logger *slog.Logger) *Refresher {
 	if refill == nil {
 		panic("supervise: NewRefresher requires a non-nil refill callback")

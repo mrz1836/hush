@@ -70,8 +70,6 @@ type Refiller struct {
 // NewRefiller constructs a Refiller bound to the supplied dependencies.
 // Panics if client, store, or logger is nil (Constitution IX startup-
 // wiring exemption).
-//
-// Locked exported signature per docs/sdd/SDD-21.md.
 func NewRefiller(client *http.Client, store *Store, logger *slog.Logger) *Refiller {
 	if client == nil {
 		panic("supervise: NewRefiller requires a non-nil *http.Client")
@@ -194,9 +192,9 @@ func (r *Refiller) fetchOne(ctx context.Context, name string, tok *securebytes.S
 }
 
 // attach is a package-private wiring method invoked once by the
-// orchestrator (SDD-23) after construction. It honors the locked
-// 3-arg NewRefiller signature in docs/sdd/SDD-21.md while giving
-// the orchestrator a way to inject post-init dependencies.
+// orchestrator after construction. It preserves the 3-arg
+// NewRefiller signature while giving the orchestrator a way to
+// inject post-init dependencies.
 func (r *Refiller) attach(grace *Grace, priv *ecdsa.PrivateKey, serverURL string) {
 	r.grace = grace
 	r.priv = priv

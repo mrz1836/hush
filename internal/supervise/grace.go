@@ -40,8 +40,6 @@ type graceEntry struct {
 //
 // NewGrace owns no goroutines (Constitution IX, R-008). Expired
 // entries are destroyed lazily on the next Get call.
-//
-// Locked exported signature per docs/sdd/SDD-21.md.
 func NewGrace(window time.Duration, enabled bool) *Grace {
 	if window > graceMaxWindow {
 		window = graceMaxWindow

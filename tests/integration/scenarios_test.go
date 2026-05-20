@@ -113,17 +113,16 @@ func Test_Scenario_15_LogPatternMatch(t *testing.T) {
 	scenarioPendingHarness(t, 17, "LogPatternMatch")
 }
 
-// scenarioPendingHarness marks a scenario as not yet wired in this
-// SDD-25 chunk. The remaining scenarios are tracked in
-// docs/AC-MATRIX.md AC-10 row; AC-10 status reaches `green` only when
-// all 17 pass against a fully-wired harness.
+// scenarioPendingHarness marks a scenario as not yet wired. The
+// scenario suite reaches full coverage only when all 17 pass against a
+// fully-wired harness; see docs/LIFECYCLE-SCENARIOS.md for the
+// behavioral specs.
 //
-// Per spec FR-001 ("zero t.Skip at scenario level") this MUST fail —
-// a Skip would let AC-10 falsely report green while coverage is absent.
-// The failure is the operator-visible signal that the harness work
-// remains, and it will recur on every suite run until the scenario is
-// implemented.
+// The function uses t.Fatalf rather than t.Skip so an unimplemented
+// scenario cannot silently report green — the failure is the
+// operator-visible signal that harness work remains, and it will recur
+// on every suite run until the scenario is implemented.
 func scenarioPendingHarness(t *testing.T, sentinelN int, slug string) {
 	t.Helper()
-	t.Fatalf("AC-10 scenario_%02d_%s not yet implemented (sentinel %d) — see docs/AC-MATRIX.md", sentinelN, slug, sentinelN)
+	t.Fatalf("scenario_%02d_%s not yet implemented (sentinel %d) — see docs/LIFECYCLE-SCENARIOS.md", sentinelN, slug, sentinelN)
 }

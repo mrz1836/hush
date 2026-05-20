@@ -22,8 +22,7 @@ var errEmptyChannelID = errors.New("hush/discord: empty channel id")
 var errNilDMChannel = errors.New("hush/discord: nil dm channel")
 
 // Compile-time guard that *BotApprover satisfies the alerts.Sender
-// interface. The implementation lives in the additive methods below;
-// it does NOT alter any locked SDD-11 symbol (PACKAGE-MAP.md:1245-1246).
+// interface. The implementation lives in the additive methods below.
 var _ alerts.Sender = (*BotApprover)(nil)
 
 // SendOwnerDM delivers a rendered alert body to the operator's

@@ -23,7 +23,4 @@
 // The package is consumed ONLY by test files under tests/integration/.
 // A depguard rule in .golangci.yml forbids any production file from
 // importing this package.
-//
-// See docs/sdd/SDD-25.md and specs/025-lifecycle-harness/ for the
-// full chunk contract.
 package harness
