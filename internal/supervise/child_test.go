@@ -382,7 +382,8 @@ func TestChild_ForwardAfterExit_ErrChildNotStarted(t *testing.T) {
 // ---------- T-07c: Forwarding goroutine exits on ctx cancel ----------
 
 func TestChild_ForwardingGoroutineExitsOnCtxCancel(t *testing.T) {
-	t.Parallel()
+	// No t.Parallel(): runtime.NumGoroutine() is process-global, so concurrent
+	// sibling tests would pollute the baseline and the comparison below.
 	baseline := runtime.NumGoroutine()
 	ctx, cancel := context.WithCancel(context.Background())
 	c := supervise.NewChild(helperConfig(t, "sleep-30s", nil))
