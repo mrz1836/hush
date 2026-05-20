@@ -5,6 +5,7 @@ package harness
 import (
 	"bytes"
 	"context"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -73,6 +74,34 @@ func (d *TestDiscord) Alerts() []AlertPayload {
 	out := make([]AlertPayload, len(d.alerts))
 	copy(out, d.alerts)
 	return out
+}
+
+// HasAlert reports whether at least one recorded alert carries the class.
+func (d *TestDiscord) HasAlert(class supervise.AlertClass) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, a := range d.alerts {
+		if a.Class == class {
+			return true
+		}
+	}
+	return false
+}
+
+// WaitAlert polls the recorded alert log until an alert of the given class
+// appears or the deadline expires. Bounded poll — alerts arrive asynchronously
+// via the watchdog Event→Alerts bridge goroutine.
+func (d *TestDiscord) WaitAlert(t *testing.T, class supervise.AlertClass, deadline time.Duration) {
+	t.Helper()
+	stop := time.Now().Add(deadline)
+	for time.Now().Before(stop) {
+		if d.HasAlert(class) {
+			return
+		}
+		runtime.Gosched()
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatalf("harness.WaitAlert: alert class %v absent after %s", class, deadline)
 }
 
 // AlertsRaw returns the concatenated byte stream of every recorded alert

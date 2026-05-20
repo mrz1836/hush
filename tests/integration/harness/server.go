@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -45,6 +44,13 @@ type TestServer struct {
 	srv         *server.Server
 	runCancel   context.CancelFunc
 	runDone     chan struct{}
+
+	tokenStore  token.Store
+	vaultPtr    *atomic.Pointer[vault.Store]
+	auditPubKey *ecdsa.PublicKey
+
+	jtiMu      sync.Mutex
+	issuedJTIs []string
 
 	validatorsMu sync.Mutex
 	validators   map[string]*validatorRoute
@@ -146,12 +152,18 @@ func NewServer(t *testing.T, opts ServerOpts) *TestServer {
 		discordHealth = func() bool { return false }
 	}
 
+	tokenStore := token.NewStore()
+	ts := &TestServer{}
 	deps := server.Deps{
 		Cfg:        cfg,
 		VaultPtr:   &vptr,
-		TokenStore: token.NewStore(),
+		TokenStore: tokenStore,
 		TokenIssuer: func(ctx context.Context, params token.IssueParams) (*token.Token, error) {
-			return token.Issue(ctx, jwtKey, params)
+			tok, issErr := token.Issue(ctx, jwtKey, params)
+			if issErr == nil && tok != nil {
+				ts.recordJTI(tok.JTI)
+			}
+			return tok, issErr
 		},
 		Approver:        approver,
 		Logger:          logger,
@@ -188,7 +200,7 @@ func NewServer(t *testing.T, opts ServerOpts) *TestServer {
 	url := fmt.Sprintf("http://%s/h/%s", listenerAddr.String(), cfg.Server.PathPrefix)
 	registerAllowedHostExternal(url)
 
-	ts := &TestServer{
+	*ts = TestServer{
 		vault:       opts.Vault,
 		url:         url,
 		listener:    listener,
@@ -198,6 +210,9 @@ func NewServer(t *testing.T, opts ServerOpts) *TestServer {
 		srv:         srv,
 		runCancel:   runCancel,
 		runDone:     runDone,
+		tokenStore:  tokenStore,
+		vaultPtr:    &vptr,
+		auditPubKey: &auditKey.PublicKey,
 		validators:  make(map[string]*validatorRoute),
 	}
 	t.Cleanup(ts.Stop)
@@ -232,15 +247,46 @@ func (s *TestServer) URL() string { return s.url }
 func (s *TestServer) Vault() *TestVault { return s.vault }
 
 // TokenStore exposes the live in-memory token store for assertions.
-func (s *TestServer) TokenStore() token.Store { return nil } // wired by future scenarios via server.testHooks
+func (s *TestServer) TokenStore() token.Store { return s.tokenStore }
 
-// Reload triggers a SIGHUP-equivalent vault reload (Scenario 13). The
-// server.Server type owns the reload helper internally; this stub returns
-// nil until that hook is exposed.
-func (s *TestServer) Reload(_ context.Context) error {
-	// Vault reload is wired in production via SIGHUP. Scenario 13
-	// will exercise this via a test-only hook to be added when wired.
-	return errors.New("harness: Reload not yet wired (Scenario 13 pending)")
+// FlushSessions revokes every session JTI the server has issued, simulating
+// a vault-server restart that loses its in-memory active-session map
+// (docs §7). After FlushSessions every previously issued JWT fails the
+// /s/<name> bearer check with an unknown-jti rejection.
+func (s *TestServer) FlushSessions() {
+	s.jtiMu.Lock()
+	jtis := append([]string(nil), s.issuedJTIs...)
+	s.jtiMu.Unlock()
+	for _, jti := range jtis {
+		_, _ = s.tokenStore.RevokeIdempotent(jti)
+	}
+}
+
+// Reload performs a SIGHUP-equivalent atomic vault reload (Scenario 13): it
+// re-opens the vault file from disk and swaps the server's atomic vault
+// pointer — the same seam production wires to SIGHUP. Pair with
+// TestVault.Rotate to propagate a rotated secret to a running server.
+func (s *TestServer) Reload(ctx context.Context) error {
+	store, err := vault.Load(ctx, s.vault.Path(), s.vault.Key())
+	if err != nil {
+		return fmt.Errorf("harness: Reload: vault.Load: %w", err)
+	}
+	s.vaultPtr.Store(&store)
+	return nil
+}
+
+// AuditKey returns the secp256k1 public key the server audit chain is
+// signed with.
+func (s *TestServer) AuditKey() *ecdsa.PublicKey { return s.auditPubKey }
+
+// AssertAuditChain stops the server (draining the audit writer) and verifies
+// the on-disk server audit chain is hash-linked and signature-valid. Call
+// once at scenario end; Stop is idempotent so the t.Cleanup-registered Stop
+// stays a harmless no-op afterwards.
+func (s *TestServer) AssertAuditChain(t *testing.T) {
+	t.Helper()
+	s.Stop()
+	AssertAuditChainContinuity(t, s.vault.AuditPath(), s.auditPubKey)
 }
 
 // ReadAudit parses the audit JSONL into a slice of events. Returns an
@@ -345,6 +391,17 @@ func (s *TestServer) Stop() {
 		<-s.auditDone
 		s.auditCancel = nil
 	}
+}
+
+// recordJTI appends a freshly issued session JTI to the harness ledger so
+// FlushSessions can later revoke every live session.
+func (s *TestServer) recordJTI(jti string) {
+	if jti == "" {
+		return
+	}
+	s.jtiMu.Lock()
+	s.issuedJTIs = append(s.issuedJTIs, jti)
+	s.jtiMu.Unlock()
 }
 
 // alwaysSyncedClock reports clock-synced=true with zero drift. Used as

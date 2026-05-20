@@ -24,6 +24,7 @@ import (
 	"github.com/mrz1836/hush/internal/audit"
 	"github.com/mrz1836/hush/internal/supervise"
 	superviseconfig "github.com/mrz1836/hush/internal/supervise/config"
+	"github.com/mrz1836/hush/internal/supervise/watchdog"
 	"github.com/mrz1836/hush/internal/testutil"
 )
 
@@ -53,6 +54,7 @@ type TestSupervisor struct {
 	auditWriter   audit.Writer
 	auditCancel   context.CancelFunc
 	auditDone     chan struct{}
+	auditPubKey   *ecdsa.PublicKey
 	pidfile       *supervise.PidFile
 	runCtx        context.Context //nolint:containedctx // intentional handle for Stop()
 	runCancel     context.CancelFunc
@@ -90,6 +92,21 @@ type SupervisorOpts struct {
 	BootRetryAfter time.Duration
 	TailscaleProbe func(ctx context.Context) error
 	VaultHzProbe   func(ctx context.Context, url string) error
+
+	// Child, when non-nil, replaces the default `/bin/sh while-true` child
+	// command with the scripted TestChild's argv (Scenarios 3/4/5/9/13/15).
+	Child *TestChild
+	// CacheSecretsForRestart, when non-nil, overrides the supervisor config's
+	// cache_secrets_for_restart flag (default true). Scenario 9a sets false to
+	// exercise strict overnight-expiry; Scenario 9b leaves it true for grace.
+	CacheSecretsForRestart *bool
+	// Validators is wired straight into supervise.Deps.Validators — a per-scope
+	// pre-flight credential check (Scenario 6).
+	Validators map[string]supervise.Validator
+	// WatchdogPatterns, when non-empty, builds a real log-pattern watchdog;
+	// the harness runs its matcher loop and bridges matches into the Discord
+	// alert log as AlertClassLogPatternMatch (Scenario 15).
+	WatchdogPatterns []watchdog.Pattern
 }
 
 // NewSupervisor builds a TestSupervisor against the supplied options.
@@ -163,6 +180,8 @@ func NewSupervisor(t *testing.T, opts SupervisorOpts) *TestSupervisor {
 		}
 	}
 
+	alerts := opts.Discord.AsSuperviseAlerts()
+
 	deps := supervise.Deps{
 		Logger:          opts.Logger.Logger(),
 		HTTPClient:      &http.Client{Timeout: 5 * time.Second},
@@ -171,7 +190,8 @@ func NewSupervisor(t *testing.T, opts SupervisorOpts) *TestSupervisor {
 		DecryptKey:      decryptKey,
 		AuditWriter:     auditWriter,
 		PidFile:         pidfile,
-		Alerts:          opts.Discord.AsSuperviseAlerts(),
+		Validators:      opts.Validators,
+		Alerts:          alerts,
 		TailscaleProbe:  tailscaleProbe,
 		VaultHzProbe:    vaultHzProbe,
 		NowFn:           nowFn,
@@ -180,7 +200,27 @@ func NewSupervisor(t *testing.T, opts SupervisorOpts) *TestSupervisor {
 	}
 
 	runCtx, runCancel := context.WithCancel(context.Background())
+
+	// 6. Build the log-pattern watchdog when the scenario supplies patterns.
+	//    The harness owns the matcher loop and the Event→Alerts bridge,
+	//    mirroring the production wiring in internal/cli/supervise_run.go.
+	if len(opts.WatchdogPatterns) > 0 {
+		events := make(chan watchdog.Event, 64)
+		wd, wdErr := watchdog.NewWatchdog(opts.WatchdogPatterns, events, opts.Logger.Logger())
+		if wdErr != nil {
+			t.Fatalf("harness.NewSupervisor: watchdog.NewWatchdog: %v", wdErr)
+		}
+		deps.Watchdog = wd
+		go func() { _ = wd.Run(runCtx) }()
+		go watchdog.DrainToAlerts(runCtx, events, alerts)
+	}
+
 	lifecycle := supervise.NewLifecycle(runCtx, cfg, deps)
+	// Neutralize the Refresher's wall-clock window so the only refresh a
+	// scenario observes is the one it drives explicitly via
+	// TriggerWindowRefresh — otherwise a run inside 09:00-10:00 local time
+	// would inject a spurious mid-boot claim swap.
+	lifecycle.PrimeRefresherForTest()
 
 	ts := &TestSupervisor{
 		cfg:           cfg,
@@ -189,6 +229,7 @@ func NewSupervisor(t *testing.T, opts SupervisorOpts) *TestSupervisor {
 		auditWriter:   auditWriter,
 		auditCancel:   auditCancel,
 		auditDone:     auditDone,
+		auditPubKey:   &auditKey.PublicKey,
 		pidfile:       pidfile,
 		runCtx:        runCtx,
 		runCancel:     runCancel,
@@ -259,6 +300,33 @@ func (s *TestSupervisor) WaitState(t *testing.T, want supervise.State, deadline 
 	t.Fatalf("harness.WaitState: state=%q after %s (want %q)", s.State(), deadline, want)
 }
 
+// HasAudit reports whether the on-disk supervisor audit log contains at
+// least one event with the given action.
+func (s *TestSupervisor) HasAudit(action string) bool {
+	for _, ev := range s.ReadAudit() {
+		if ev.Action == action {
+			return true
+		}
+	}
+	return false
+}
+
+// WaitAudit polls the supervisor audit log until an event with the given
+// action appears or the deadline expires. Bounded poll — never sleeps on the
+// hot path beyond a short cadence.
+func (s *TestSupervisor) WaitAudit(t *testing.T, action string, deadline time.Duration) {
+	t.Helper()
+	stop := time.Now().Add(deadline)
+	for time.Now().Before(stop) {
+		if s.HasAudit(action) {
+			return
+		}
+		runtime.Gosched()
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatalf("harness.WaitAudit: action %q absent after %s", action, deadline)
+}
+
 // StatusRaw dials the supervisor's Unix status socket, sends an empty
 // request, reads the response, and returns the raw bytes. Used by
 // Contract C assertions and the 6-stream sentinel sweep.
@@ -296,10 +364,17 @@ func (s *TestSupervisor) Refresh(_ context.Context) error {
 	return nil
 }
 
-// TriggerRefresh invokes the silent-refill path directly via the
-// integration-only seam (Scenario 13 / 7).
+// TriggerRefresh drives an operator-style `hush client refresh` (stop child,
+// refetch, restart) via the integration-only seam (Scenarios 7 / 13).
 func (s *TestSupervisor) TriggerRefresh(ctx context.Context) error {
 	return s.lifecycle.TriggerRefreshForTest(ctx)
+}
+
+// TriggerWindowRefresh drives the daytime refresh-window claim swap (a fresh
+// JWT for the next session window; child keeps running) via the
+// integration-only seam (Scenario 8).
+func (s *TestSupervisor) TriggerWindowRefresh(ctx context.Context) {
+	s.lifecycle.TriggerWindowRefreshForTest(ctx)
 }
 
 // AuditPath returns the supervisor's audit JSONL path.
@@ -341,10 +416,17 @@ func (s *TestSupervisor) RawAudit() []byte {
 // AuditKey returns the secp256k1 public key the supervisor audit chain
 // is signed with. Needed by AssertAuditChainContinuity at scenario end.
 func (s *TestSupervisor) AuditKey() *ecdsa.PublicKey {
-	// The audit signing key was generated fresh in NewSupervisor and is
-	// not exposed via Deps; for chain verification we read it back from
-	// the audit writer via internal seam.
-	return nil // wired in chunk-2 follow-up; AssertAuditChainContinuity tolerates nil
+	return s.auditPubKey
+}
+
+// AssertAuditChain stops the supervisor (draining the audit writer) and
+// verifies the on-disk audit chain is hash-linked and signature-valid under
+// the supervisor's audit key. Call once at scenario end — Stop is idempotent
+// so the t.Cleanup-registered Stop remains a harmless no-op afterwards.
+func (s *TestSupervisor) AssertAuditChain(t *testing.T) {
+	t.Helper()
+	s.Stop()
+	AssertAuditChainContinuity(t, s.AuditPath(), s.AuditKey())
 }
 
 // AcquirePidFile is a thin pass-through to supervise.AcquirePidFile
@@ -490,6 +572,32 @@ func buildSupervisorConfig(t *testing.T, opts SupervisorOpts) *superviseconfig.S
 		validatorsToml += fmt.Sprintf("%s = \"anthropic\"\n", s)
 	}
 
+	// Child command: the scripted TestChild's argv when supplied, else a
+	// long-lived no-op loop.
+	childCmd := []string{"/bin/sh", "-c", "while true; do sleep 1; done"}
+	if opts.Child != nil {
+		childCmd = opts.Child.Cmd().Command
+	}
+	cmdToml := "["
+	for i, a := range childCmd {
+		if i > 0 {
+			cmdToml += ", "
+		}
+		cmdToml += fmt.Sprintf("%q", a)
+	}
+	cmdToml += "]"
+
+	// cache_secrets_for_restart defaults to true (grace mode); Scenario 9a
+	// overrides it to false for strict overnight-expiry.
+	cacheEnabled := true
+	if opts.CacheSecretsForRestart != nil {
+		cacheEnabled = *opts.CacheSecretsForRestart
+	}
+	cacheToml := "cache_secrets_for_restart = false"
+	if cacheEnabled {
+		cacheToml = "cache_secrets_for_restart = true\ncache_grace_ttl = \"1h\""
+	}
+
 	body := fmt.Sprintf(`name = %q
 reason = "harness integration test"
 server_url = %q
@@ -501,13 +609,12 @@ boot_retry_timeout = %q
 status_socket = %q
 pid_file = %q
 audit_log = %q
-cache_secrets_for_restart = true
-cache_grace_ttl = "1h"
+%s
 
 scope = %s
 
 [child]
-command = ["/bin/sh", "-c", "while true; do sleep 1; done"]
+command = %s
 working_dir = "/tmp"
 env_passthrough = ["PATH"]
 
@@ -521,7 +628,9 @@ env_passthrough = ["PATH"]
 		socketPath,
 		pidPath,
 		auditPath,
+		cacheToml,
 		scopesToml,
+		cmdToml,
 		validatorsToml,
 	)
 

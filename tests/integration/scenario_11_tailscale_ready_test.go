@@ -95,4 +95,8 @@ func Test_Scenario_11_TailscaleReady(t *testing.T) {
 		nil, nil, // no captured child stdout/stderr in v0.1.0 (NotificationDiscard path)
 		harness.CollectErrors(errSyntheticTailscale),
 	)
+
+	// Audit-chain continuity — the supervisor chain is hash-linked and
+	// signature-valid under its audit key.
+	sup.AssertAuditChain(t)
 }

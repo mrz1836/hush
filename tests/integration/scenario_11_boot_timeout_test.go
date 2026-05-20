@@ -88,4 +88,7 @@ func Test_Scenario_11_BootTimeout(t *testing.T) {
 		nil, // no child stderr
 		harness.CollectErrors(errSyntheticTailscale),
 	)
+
+	// Audit-chain continuity — boot-timeout still produces a valid chain.
+	sup.AssertAuditChain(t)
 }
