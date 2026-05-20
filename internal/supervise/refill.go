@@ -53,14 +53,16 @@ const refillBodyCap = 64 * 1024
 // supervisor state machine — Refill is NOT safe for concurrent
 // invocation against the same instance.
 //
-// The constructor signature accepts only client/store/logger. Three
-// additional dependencies (Grace handle, ECIES private key, server
-// URL prefix) are wired post-construction by the orchestrator via the
-// package-private (*Refiller).attach method.
+// The constructor signature accepts only client/store/logger. Two
+// additional dependencies (ECIES private key, server URL prefix) are
+// wired post-construction by the orchestrator via the package-private
+// (*Refiller).attach method. Refill returns the freshly decrypted
+// secrets to the caller; the caller — not the Refiller — owns the
+// retention decision (Grace cache) and the lifetime of the returned
+// *SecureBytes.
 type Refiller struct {
 	client *http.Client
 	store  *Store
-	grace  *Grace
 	priv   *ecdsa.PrivateKey
 	logger *slog.Logger
 	server string
@@ -83,10 +85,11 @@ func NewRefiller(client *http.Client, store *Store, logger *slog.Logger) *Refill
 }
 
 // Refill fetches every name in scopes from the vault server using
-// the JWT held in store.Snapshot().Token. On success, every decrypted
-// *SecureBytes is handed to grace.Set(name, sb) and Refill returns
-// nil. On any error, every successfully decrypted *SecureBytes from
-// the current call is destroyed BEFORE Refill returns.
+// the JWT held in store.Snapshot().Token. On success it returns a map
+// of scope name → freshly decrypted *SecureBytes; ownership of every
+// returned *SecureBytes transfers to the caller. On any error, every
+// successfully decrypted *SecureBytes from the current call is
+// destroyed BEFORE Refill returns and the map is nil.
 //
 // Returned errors:
 //   - errors.Is(err, ErrJTIUnknown): the server returned 401 with
@@ -100,24 +103,21 @@ func NewRefiller(client *http.Client, store *Store, logger *slog.Logger) *Refill
 // Refill MUST NOT log decrypted secret values; the SOLE permitted
 // string(...) materialization in this method is the JWT bearer-header
 // path inside Snapshot.Token.Use.
-func (r *Refiller) Refill(ctx context.Context, scopes []string) error {
+func (r *Refiller) Refill(ctx context.Context, scopes []string) (map[string]*securebytes.SecureBytes, error) {
 	committed := false
-	decrypted := make([]struct {
-		name string
-		sb   *securebytes.SecureBytes
-	}, 0, len(scopes))
+	out := make(map[string]*securebytes.SecureBytes, len(scopes))
 	defer func() {
 		if committed {
 			return
 		}
-		for i := range decrypted {
-			_ = decrypted[i].sb.Destroy()
+		for name := range out {
+			_ = out[name].Destroy()
 		}
 	}()
 
 	snap := r.store.Snapshot()
 	if snap.Token == nil {
-		return errNilBearerToken
+		return nil, errNilBearerToken
 	}
 
 	for _, name := range scopes {
@@ -128,23 +128,17 @@ func (r *Refiller) Refill(ctx context.Context, scopes []string) error {
 				slog.String("outcome", classifyOutcome(err)),
 				slog.Any("err", err),
 			)
-			return err
+			return nil, err
 		}
-		decrypted = append(decrypted, struct {
-			name string
-			sb   *securebytes.SecureBytes
-		}{name: name, sb: sb})
+		out[name] = sb
 		r.logger.Info("refill: scope ok",
 			slog.String("scope", name),
 			slog.String("outcome", "ok"),
 		)
 	}
 
-	for i := range decrypted {
-		r.grace.Set(decrypted[i].name, decrypted[i].sb)
-	}
 	committed = true
-	return nil
+	return out, nil
 }
 
 // fetchOne issues a single GET <server>/s/<name> call and returns the
@@ -194,8 +188,7 @@ func (r *Refiller) fetchOne(ctx context.Context, name string, tok *securebytes.S
 // orchestrator after construction. It preserves the 3-arg
 // NewRefiller signature while giving the orchestrator a way to
 // inject post-init dependencies.
-func (r *Refiller) attach(grace *Grace, priv *ecdsa.PrivateKey, serverURL string) {
-	r.grace = grace
+func (r *Refiller) attach(priv *ecdsa.PrivateKey, serverURL string) {
 	r.priv = priv
 	r.server = serverURL
 }

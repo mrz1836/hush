@@ -113,6 +113,16 @@ func (g *Grace) Evict(name string) {
 	}
 }
 
+// Enabled reports whether the cache will actually retain entries —
+// true only when retention was enabled at construction AND the
+// effective window is positive. When false, Set is a no-op and the
+// caller retains ownership of any value it would have cached.
+func (g *Grace) Enabled() bool {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return g.enabled && g.window > 0
+}
+
 // setClockForTest replaces the clock source used for expiry
 // computation. The seam is unexported and only available to package-
 // internal tests.

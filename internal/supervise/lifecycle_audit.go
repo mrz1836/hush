@@ -135,10 +135,7 @@ func (l *Lifecycle) emitStaleAlert(ctx context.Context, class AlertClass, scope,
 }
 
 // emitGraceEntered appends supervisor_grace_entered when grace-cache
-// restart activates. Reserved for the grace-restart wiring landing in a
-// follow-up.
-//
-//nolint:unused // wired by grace-restart follow-up
+// restart activates.
 func (l *Lifecycle) emitGraceEntered(ctx context.Context, scopes []string, ttlRem time.Duration) {
 	l.appendAudit(ctx, audit.ActionSupervisorGraceEntered, map[string]any{
 		"scopes":              append([]string(nil), scopes...),
@@ -147,10 +144,7 @@ func (l *Lifecycle) emitGraceEntered(ctx context.Context, scopes []string, ttlRe
 }
 
 // emitGraceExited appends supervisor_grace_exited when grace-cache restart
-// completes. outcome ∈ {"restart_ok", "refresh_window", "expired"}. Reserved
-// for the grace-restart wiring landing in a follow-up.
-//
-//nolint:unused // wired by grace-restart follow-up
+// completes. outcome ∈ {"restart_ok", "refresh_window", "expired"}.
 func (l *Lifecycle) emitGraceExited(ctx context.Context, scopes []string, outcome string) {
 	l.appendAudit(ctx, audit.ActionSupervisorGraceExited, map[string]any{
 		"scopes":  append([]string(nil), scopes...),

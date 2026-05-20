@@ -20,25 +20,32 @@ import (
 )
 
 // newRefillerForTest constructs a Refiller wired with the supplied
-// HTTP transport and store, then attaches a Grace, ECIES key, and
-// server URL prefix via the package-private (*Refiller).attach.
-func newRefillerForTest(t *testing.T, rt http.RoundTripper, store *Store, grace *Grace, priv *ecdsa.PrivateKey) *Refiller {
+// HTTP transport and store, then attaches an ECIES key and server URL
+// prefix via the package-private (*Refiller).attach.
+func newRefillerForTest(t *testing.T, rt http.RoundTripper, store *Store, priv *ecdsa.PrivateKey) *Refiller {
 	t.Helper()
 	logger, _ := newRecordingLogger()
 	r := NewRefiller(&http.Client{Transport: rt}, store, logger)
-	r.attach(grace, priv, "https://vault.test")
+	r.attach(priv, "https://vault.test")
 	return r
 }
 
+// useBytes returns a copy of the plaintext held by sb.
+func useBytes(t *testing.T, sb *securebytes.SecureBytes) []byte {
+	t.Helper()
+	var got []byte
+	if err := sb.Use(func(b []byte) { got = append(got, b...) }); err != nil {
+		t.Fatalf("sb.Use: %v", err)
+	}
+	return got
+}
+
 // TestRefill_SilentOnCleanExit verifies the hot path: two scopes,
-// HTTP 200 + valid ECIES envelopes for both, Refill returns nil and
-// each scope is committed to Grace via one Set call.
+// HTTP 200 + valid ECIES envelopes for both, Refill returns the
+// decrypted secret set for both scopes.
 func TestRefill_SilentOnCleanExit(t *testing.T) {
 	priv := newECIESKey(t)
 	store := newTestStoreWithToken(t, []byte("eyJhbGciOi.JWT.SIG"))
-	grace := NewGrace(time.Hour, true)
-	defer grace.Evict("S1")
-	defer grace.Evict("S2")
 
 	want := map[string][]byte{
 		"S1": []byte("super-secret-one"),
@@ -57,36 +64,31 @@ func TestRefill_SilentOnCleanExit(t *testing.T) {
 			Header:     http.Header{},
 		}, nil
 	})
-	r := newRefillerForTest(t, rt, store, grace, priv)
+	r := newRefillerForTest(t, rt, store, priv)
 
-	if err := r.Refill(context.Background(), []string{"S1", "S2"}); err != nil {
+	secrets, err := r.Refill(context.Background(), []string{"S1", "S2"})
+	if err != nil {
 		t.Fatalf("Refill returned %v, want nil", err)
 	}
+	defer destroySecrets(secrets)
 	for name, expect := range want {
-		sb, ok := grace.Get(name)
-		if !ok {
-			t.Fatalf("Grace.Get(%q) miss", name)
+		sb, ok := secrets[name]
+		if !ok || sb == nil {
+			t.Fatalf("Refill result missing scope %q", name)
 		}
-		var got []byte
-		if err := sb.Use(func(b []byte) {
-			got = append(got, b...)
-		}); err != nil {
-			t.Fatalf("sb.Use: %v", err)
-		}
-		if !bytes.Equal(got, expect) {
-			t.Fatalf("Grace cached bytes mismatch for %q", name)
+		if !bytes.Equal(useBytes(t, sb), expect) {
+			t.Fatalf("decrypted bytes mismatch for %q", name)
 		}
 	}
 }
 
 // TestRefill_401UnknownJTITransitions: a 401 with body
 // {"error":"unknown_jti"} for one scope produces a wrapped
-// ErrJTIUnknown; the loop short-circuits at the failing scope; no
-// Grace.Set is committed.
+// ErrJTIUnknown; the loop short-circuits at the failing scope; the
+// returned secret set is nil.
 func TestRefill_401UnknownJTITransitions(t *testing.T) {
 	priv := newECIESKey(t)
 	store := newTestStoreWithToken(t, []byte("eyJhbGciOi.JWT.SIG"))
-	grace := NewGrace(time.Hour, true)
 
 	rt := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		return &http.Response{
@@ -95,17 +97,17 @@ func TestRefill_401UnknownJTITransitions(t *testing.T) {
 			Header:     http.Header{},
 		}, nil
 	})
-	r := newRefillerForTest(t, rt, store, grace, priv)
+	r := newRefillerForTest(t, rt, store, priv)
 
-	err := r.Refill(context.Background(), []string{"S1", "S2"})
+	secrets, err := r.Refill(context.Background(), []string{"S1", "S2"})
 	if err == nil {
-		t.Fatalf("Refill returned nil, want non-nil")
+		t.Fatalf("Refill returned nil err, want non-nil")
 	}
 	if !errors.Is(err, ErrJTIUnknown) {
 		t.Fatalf("err = %v, want errors.Is ErrJTIUnknown", err)
 	}
-	if _, ok := grace.Get("S1"); ok {
-		t.Fatalf("Grace.Get(S1) hit; expected miss after JTI rejection")
+	if secrets != nil {
+		t.Fatalf("Refill returned non-nil secrets on JTI rejection")
 	}
 }
 
@@ -114,15 +116,14 @@ func TestRefill_401UnknownJTITransitions(t *testing.T) {
 func TestRefill_NetworkErrorIsRetryable(t *testing.T) {
 	priv := newECIESKey(t)
 	store := newTestStoreWithToken(t, []byte("eyJhbGciOi.JWT.SIG"))
-	grace := NewGrace(time.Hour, true)
 
 	netErr := &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}
 	rt := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		return nil, netErr
 	})
-	r := newRefillerForTest(t, rt, store, grace, priv)
+	r := newRefillerForTest(t, rt, store, priv)
 
-	err := r.Refill(context.Background(), []string{"S1"})
+	_, err := r.Refill(context.Background(), []string{"S1"})
 	if err == nil {
 		t.Fatalf("Refill returned nil, want non-nil")
 	}
@@ -136,13 +137,12 @@ func TestRefill_NetworkErrorIsRetryable(t *testing.T) {
 }
 
 // TestRefill_AtomicDestructionOnPartialFailure: three scopes; first
-// two succeed, the third fails. After Refill returns, the first two
-// SecureBytes are destroyed (Use returns ErrDestroyed) and no
-// Grace.Set was committed for any of the three.
+// two succeed, the third fails. After Refill returns, the returned
+// secret set is nil — the committed-bool defer destroyed every
+// successfully-decrypted SecureBytes.
 func TestRefill_AtomicDestructionOnPartialFailure(t *testing.T) {
 	priv := newECIESKey(t)
 	store := newTestStoreWithToken(t, []byte("eyJhbGciOi.JWT.SIG"))
-	grace := NewGrace(time.Hour, true)
 
 	want := map[string][]byte{
 		"S1": []byte("aaa"),
@@ -165,26 +165,14 @@ func TestRefill_AtomicDestructionOnPartialFailure(t *testing.T) {
 			Header:     http.Header{},
 		}, nil
 	})
-	r := newRefillerForTest(t, rt, store, grace, priv)
+	r := newRefillerForTest(t, rt, store, priv)
 
-	err := r.Refill(context.Background(), []string{"S1", "S2", "S3"})
+	secrets, err := r.Refill(context.Background(), []string{"S1", "S2", "S3"})
 	if err == nil {
 		t.Fatalf("Refill returned nil, want non-nil")
 	}
-
-	for _, name := range []string{"S1", "S2", "S3"} {
-		if _, ok := grace.Get(name); ok {
-			t.Fatalf("Grace.Get(%q) hit; expected miss after partial failure", name)
-		}
-	}
-	// We cannot reach the destroyed sb pointers via Grace (none stored).
-	// The committed-bool defer in Refill destroyed them. We assert
-	// indirectly: a fresh Set + Get cycle with an unrelated sb still
-	// works (cache machinery healthy, no leaked-state corruption).
-	probe := newSecureBytes(t, []byte("probe"))
-	grace.Set("PROBE", probe)
-	if _, ok := grace.Get("PROBE"); !ok {
-		t.Fatalf("Grace probe entry missing after partial-failure cycle")
+	if secrets != nil {
+		t.Fatalf("Refill returned non-nil secrets on partial failure")
 	}
 }
 
@@ -194,7 +182,6 @@ func TestRefill_NeverStringifiesDecryptedBytes(t *testing.T) {
 	const marker = "HUSH-MARKER-21-PLAINTEXT"
 	priv := newECIESKey(t)
 	store := newTestStoreWithToken(t, []byte("eyJhbGciOi.JWT.SIG"))
-	grace := NewGrace(time.Hour, true)
 
 	rt := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		env := encryptForTest(t, priv, []byte(marker))
@@ -206,23 +193,21 @@ func TestRefill_NeverStringifiesDecryptedBytes(t *testing.T) {
 	})
 	logger, buf := newRecordingLogger()
 	r := NewRefiller(&http.Client{Transport: rt}, store, logger)
-	r.attach(grace, priv, "https://vault.test")
+	r.attach(priv, "https://vault.test")
 
-	if err := r.Refill(context.Background(), []string{"S1"}); err != nil {
+	secrets, err := r.Refill(context.Background(), []string{"S1"})
+	if err != nil {
 		t.Fatalf("Refill: %v", err)
 	}
+	defer destroySecrets(secrets)
 	if bytes.Contains(buf.Bytes(), []byte(marker)) {
 		t.Fatalf("operational log leaked marker plaintext: %s", buf.String())
 	}
-	sb, ok := grace.Get("S1")
-	if !ok {
-		t.Fatalf("Grace miss")
+	sb, ok := secrets["S1"]
+	if !ok || sb == nil {
+		t.Fatalf("Refill result missing S1")
 	}
-	var got []byte
-	if err := sb.Use(func(b []byte) { got = append(got, b...) }); err != nil {
-		t.Fatalf("Use: %v", err)
-	}
-	if string(got) != marker {
+	if got := string(useBytes(t, sb)); got != marker {
 		t.Fatalf("plaintext mismatch: got %q want %q", got, marker)
 	}
 	// LogValue must redact.
@@ -269,11 +254,11 @@ func TestRefill_AuditEventsDistinctByOutcome(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			store := newTestStoreWithToken(t, []byte("eyJhbGciOi.JWT.SIG"))
-			grace := NewGrace(time.Hour, true)
 			logger, buf := newRecordingLogger()
 			r := NewRefiller(&http.Client{Transport: tc.rt}, store, logger)
-			r.attach(grace, priv, "https://vault.test")
-			_ = r.Refill(context.Background(), []string{"S1"})
+			r.attach(priv, "https://vault.test")
+			secrets, _ := r.Refill(context.Background(), []string{"S1"})
+			destroySecrets(secrets)
 			out := buf.String()
 			if !strings.Contains(out, `"outcome":"`+tc.wantOutcome+`"`) {
 				t.Fatalf("expected outcome=%q in log, got %s", tc.wantOutcome, out)
@@ -292,7 +277,6 @@ func TestRefill_BearerTokenNeverLeaksToLogs(t *testing.T) {
 	const marker = "HUSH-MARKER-JWT-CAFEBABE"
 	priv := newECIESKey(t)
 	store := newTestStoreWithToken(t, []byte(marker))
-	grace := NewGrace(time.Hour, true)
 
 	rt := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		env := encryptForTest(t, priv, []byte("payload"))
@@ -300,11 +284,13 @@ func TestRefill_BearerTokenNeverLeaksToLogs(t *testing.T) {
 	})
 	logger, buf := newRecordingLogger()
 	r := NewRefiller(&http.Client{Transport: rt}, store, logger)
-	r.attach(grace, priv, "https://vault.test")
+	r.attach(priv, "https://vault.test")
 
-	if err := r.Refill(context.Background(), []string{"S1"}); err != nil {
+	secrets, err := r.Refill(context.Background(), []string{"S1"})
+	if err != nil {
 		t.Fatalf("Refill: %v", err)
 	}
+	defer destroySecrets(secrets)
 	if bytes.Contains(buf.Bytes(), []byte(marker)) {
 		t.Fatalf("log leaked JWT marker: %s", buf.String())
 	}
@@ -327,17 +313,16 @@ func TestRefill_BearerTokenNeverLeaksToLogs(t *testing.T) {
 func TestBootRetry_BackoffRespected(t *testing.T) {
 	priv := newECIESKey(t)
 	store := newTestStoreWithToken(t, []byte("eyJhbGciOi.JWT.SIG"))
-	grace := NewGrace(time.Hour, true)
 
 	var calls atomic.Int32
 	rt := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		calls.Add(1)
 		return &http.Response{StatusCode: 503, Body: io.NopCloser(strings.NewReader("unavailable")), Header: http.Header{}}, nil
 	})
-	r := newRefillerForTest(t, rt, store, grace, priv)
+	r := newRefillerForTest(t, rt, store, priv)
 
 	for i := 0; i < 2; i++ {
-		err := r.Refill(context.Background(), []string{"S1"})
+		_, err := r.Refill(context.Background(), []string{"S1"})
 		if err == nil {
 			t.Fatalf("Refill returned nil on iter %d, want non-nil", i)
 		}
@@ -356,17 +341,16 @@ func TestBootRetry_BackoffRespected(t *testing.T) {
 func TestBootRetry_NeverPromptsDiscord(t *testing.T) {
 	priv := newECIESKey(t)
 	store := newTestStoreWithToken(t, []byte("eyJhbGciOi.JWT.SIG"))
-	grace := NewGrace(time.Hour, true)
 
 	rt := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: 500, Body: io.NopCloser(strings.NewReader("boom")), Header: http.Header{}}, nil
 	})
 	logger, buf := newRecordingLogger()
 	r := NewRefiller(&http.Client{Transport: rt}, store, logger)
-	r.attach(grace, priv, "https://vault.test")
+	r.attach(priv, "https://vault.test")
 
 	for i := 0; i < 5; i++ {
-		_ = r.Refill(context.Background(), []string{"S1"})
+		_, _ = r.Refill(context.Background(), []string{"S1"})
 	}
 	out := buf.String()
 	if strings.Contains(out, "approver") || strings.Contains(out, "discord.prompt") || strings.Contains(out, "DM ") {
@@ -377,7 +361,7 @@ func TestBootRetry_NeverPromptsDiscord(t *testing.T) {
 	}
 	// Verify error class wraps a non-JTI error each time (no path
 	// where Refill would prompt Discord directly).
-	err := r.Refill(context.Background(), []string{"S1"})
+	_, err := r.Refill(context.Background(), []string{"S1"})
 	if err == nil {
 		t.Fatalf("Refill returned nil, want non-nil")
 	}
@@ -417,15 +401,14 @@ func TestRefill_NilToken(t *testing.T) {
 	priv := newECIESKey(t)
 	clk := &storeClock{now: time.Unix(1700000000, 0)}
 	store := NewStore(context.Background(), clk)
-	grace := NewGrace(time.Hour, true)
 
 	rt := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		t.Fatalf("transport should not be invoked when token is nil")
 		return nil, errors.New("unreachable")
 	})
-	r := newRefillerForTest(t, rt, store, grace, priv)
+	r := newRefillerForTest(t, rt, store, priv)
 
-	err := r.Refill(context.Background(), []string{"S1"})
+	_, err := r.Refill(context.Background(), []string{"S1"})
 	if err == nil {
 		t.Fatalf("Refill returned nil, want non-nil")
 	}
@@ -439,15 +422,14 @@ func TestRefill_NilToken(t *testing.T) {
 func TestRefill_CtxCancelled(t *testing.T) {
 	priv := newECIESKey(t)
 	store := newTestStoreWithToken(t, []byte("eyJ"))
-	grace := NewGrace(time.Hour, true)
 	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		<-req.Context().Done()
 		return nil, req.Context().Err()
 	})
-	r := newRefillerForTest(t, rt, store, grace, priv)
+	r := newRefillerForTest(t, rt, store, priv)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	err := r.Refill(ctx, []string{"S1"})
+	_, err := r.Refill(ctx, []string{"S1"})
 	if err == nil || !errors.Is(err, context.Canceled) {
 		t.Fatalf("Refill err=%v want wrapped context.Canceled", err)
 	}
@@ -458,12 +440,11 @@ func TestRefill_CtxCancelled(t *testing.T) {
 func TestRefill_401UnparseableBody(t *testing.T) {
 	priv := newECIESKey(t)
 	store := newTestStoreWithToken(t, []byte("eyJ"))
-	grace := NewGrace(time.Hour, true)
 	rt := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: 401, Body: io.NopCloser(strings.NewReader("not-json")), Header: http.Header{}}, nil
 	})
-	r := newRefillerForTest(t, rt, store, grace, priv)
-	err := r.Refill(context.Background(), []string{"S1"})
+	r := newRefillerForTest(t, rt, store, priv)
+	_, err := r.Refill(context.Background(), []string{"S1"})
 	if err == nil {
 		t.Fatalf("Refill returned nil, want non-nil")
 	}
@@ -477,12 +458,11 @@ func TestRefill_401UnparseableBody(t *testing.T) {
 func TestRefill_401NonJTIError(t *testing.T) {
 	priv := newECIESKey(t)
 	store := newTestStoreWithToken(t, []byte("eyJ"))
-	grace := NewGrace(time.Hour, true)
 	rt := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: 401, Body: io.NopCloser(strings.NewReader(`{"error":"banned"}`)), Header: http.Header{}}, nil
 	})
-	r := newRefillerForTest(t, rt, store, grace, priv)
-	err := r.Refill(context.Background(), []string{"S1"})
+	r := newRefillerForTest(t, rt, store, priv)
+	_, err := r.Refill(context.Background(), []string{"S1"})
 	if err == nil {
 		t.Fatalf("Refill returned nil, want non-nil")
 	}
@@ -496,12 +476,11 @@ func TestRefill_401NonJTIError(t *testing.T) {
 func TestRefill_DecryptFailure(t *testing.T) {
 	priv := newECIESKey(t)
 	store := newTestStoreWithToken(t, []byte("eyJ"))
-	grace := NewGrace(time.Hour, true)
 	rt := roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader([]byte("XXXXgarbage"))), Header: http.Header{}}, nil
 	})
-	r := newRefillerForTest(t, rt, store, grace, priv)
-	err := r.Refill(context.Background(), []string{"S1"})
+	r := newRefillerForTest(t, rt, store, priv)
+	_, err := r.Refill(context.Background(), []string{"S1"})
 	if err == nil {
 		t.Fatalf("Refill returned nil")
 	}
@@ -515,11 +494,10 @@ func TestRefill_DecryptFailure(t *testing.T) {
 func TestRefill_BadServerURL(t *testing.T) {
 	priv := newECIESKey(t)
 	store := newTestStoreWithToken(t, []byte("eyJ"))
-	grace := NewGrace(time.Hour, true)
 	logger, _ := newRecordingLogger()
 	r := NewRefiller(&http.Client{}, store, logger)
-	r.attach(grace, priv, "://bad-url\x7f")
-	err := r.Refill(context.Background(), []string{"S1"})
+	r.attach(priv, "://bad-url\x7f")
+	_, err := r.Refill(context.Background(), []string{"S1"})
 	if err == nil {
 		t.Fatalf("Refill returned nil, want non-nil")
 	}

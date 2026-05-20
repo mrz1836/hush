@@ -141,9 +141,15 @@ func (l *Lifecycle) handleStatusRefreshVerb(ctx context.Context) error {
 }
 
 // dispatchRefreshVerb is mainLoop's arm for the status-socket refresh verb:
-//   - StateAwaitingApproval → drive the full refill+validate+restart
-//   - StateRunning / StateGraceRestart → coalesce with in-flight refill
+//   - StateAwaitingApproval → re-approve: refill + validate + restart
+//   - StateRunning / StateGraceRestart → stop the child, refetch, restart it
+//     (docs §13 — rotation propagation is intentional and visible)
 //   - StateFetching / StateStopped → reject with state ack
+//
+// Both the awaiting-approval and running arms route through
+// silentRefillAndRestart, which itself attempts a grace-cache restart before
+// paging. Each arm first normalizes the state machine into StateFetching so
+// silentRefillAndRestart's transitions are always legal.
 //
 //nolint:gocognit // closed-set state switch with documented per-arm side effects
 func (l *Lifecycle) dispatchRefreshVerb(ctx context.Context, verb refreshVerb) {
@@ -151,6 +157,7 @@ func (l *Lifecycle) dispatchRefreshVerb(ctx context.Context, verb refreshVerb) {
 	state := snap.State
 	switch state {
 	case StateAwaitingApproval:
+		l.transition(ctx, EventApprovalGranted)
 		err := l.silentRefillAndRestart(ctx)
 		outcome := "recovered"
 		if err != nil {
@@ -162,7 +169,9 @@ func (l *Lifecycle) dispatchRefreshVerb(ctx context.Context, verb refreshVerb) {
 		default:
 		}
 	case StateRunning, StateGraceRestart:
-		err := l.coalescer.Handle(ctx)
+		l.stopChildForRefresh()
+		l.transition(ctx, EventRefreshRequested)
+		err := l.silentRefillAndRestart(ctx)
 		outcome := "ok"
 		if err != nil {
 			outcome = "failed"

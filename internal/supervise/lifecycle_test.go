@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mrz1836/hush/internal/audit"
+	"github.com/mrz1836/hush/internal/supervise/config"
 )
 
 // shortChildCmd returns a long-enough-running child command so the
@@ -332,7 +333,12 @@ func TestLifecycle_ChildExit78EmitsStaleAlertNoRestart(t *testing.T) {
 // exits 0; mockVault returns 401 unknown_jti on second Refill; expect
 // StateAwaitingApproval + AlertClassVaultRejectedJWT.
 func TestLifecycle_RefillJTIUnknownTransitionsToAwaitingApproval(t *testing.T) {
-	tl := newTestLifecycle(t, shortChildCmd(t, 0))
+	// Strict mode (grace cache disabled): a refill failure has no
+	// last-known-good fallback and MUST page the operator.
+	tl := newTestLifecycle(t, shortChildCmd(t, 0), func(c *config.Supervisor) {
+		c.CacheSecretsForRestart = false
+		c.CacheGraceTTL = 0
+	})
 	tl.vault.QueueOK()
 
 	// Initial refill must succeed; subsequent must 401.
@@ -372,7 +378,12 @@ func TestLifecycle_RefillJTIUnknownTransitionsToAwaitingApproval(t *testing.T) {
 // child exits 0; mockVault returns 500 on second Refill; expect
 // StateAwaitingApproval + AlertClassRefillFailed.
 func TestLifecycle_RefillTransientErrorPostRunningEmitsRefillFailed(t *testing.T) {
-	tl := newTestLifecycle(t, shortChildCmd(t, 0))
+	// Strict mode (grace cache disabled): a transient refill failure has
+	// no last-known-good fallback and MUST page the operator.
+	tl := newTestLifecycle(t, shortChildCmd(t, 0), func(c *config.Supervisor) {
+		c.CacheSecretsForRestart = false
+		c.CacheGraceTTL = 0
+	})
 	tl.vault.QueueOK()
 
 	go func() {

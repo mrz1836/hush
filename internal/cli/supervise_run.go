@@ -17,6 +17,8 @@ import (
 	"github.com/mrz1836/hush/internal/keychain"
 	"github.com/mrz1836/hush/internal/supervise"
 	superviseconfig "github.com/mrz1836/hush/internal/supervise/config"
+	"github.com/mrz1836/hush/internal/supervise/validators"
+	"github.com/mrz1836/hush/internal/supervise/watchdog"
 	"github.com/mrz1836/hush/internal/vault/securebytes"
 )
 
@@ -173,6 +175,9 @@ func runLifecycle(rootCtx context.Context, cfg *superviseconfig.Supervisor, pidf
 		DecryptKey:      decryptKey,
 		AuditWriter:     auditWriter,
 		PidFile:         pidfile,
+		Validators:      buildSuperviseValidators(cfg),
+		Alerts:          loggingAlerts{logger: logger},
+		Watchdog:        startSuperviseWatchdog(rootCtx, cfg, logger, loggingAlerts{logger: logger}),
 		NowFn:           time.Now,
 		NonceFn:         defaultNonceFn,
 		RequestIDFn:     defaultRequestIDFn,
@@ -180,6 +185,85 @@ func runLifecycle(rootCtx context.Context, cfg *superviseconfig.Supervisor, pidf
 
 	lc := supervise.NewLifecycle(rootCtx, cfg, deps)
 	return lc.Run(rootCtx)
+}
+
+// loggingAlerts is the production supervise.Alerts sink. Each alert is
+// surfaced as a WARN operational-log record carrying the closed-set class /
+// scope / error-class / reason labels — never any secret material
+// (Constitution X: AlertPayload is structurally non-secret).
+type loggingAlerts struct {
+	logger *slog.Logger
+}
+
+// Emit records one alert at WARN level.
+func (a loggingAlerts) Emit(ctx context.Context, class supervise.AlertClass, p supervise.AlertPayload) {
+	a.logger.LogAttrs(ctx, slog.LevelWarn, "supervisor alert",
+		slog.String("class", class.String()),
+		slog.String("scope", p.Scope),
+		slog.String("error_class", p.ErrorClass),
+		slog.String("reason", p.Reason),
+	)
+}
+
+// scopedValidator adapts a validators.Validator (scope-agnostic) to the
+// supervise.Validator interface (scope-aware). The wrapper names the failing
+// scope without ever materializing the secret value.
+type scopedValidator struct {
+	name  string
+	inner validators.Validator
+}
+
+// Validate runs the underlying probe and, on failure, wraps the error with
+// the scope name.
+func (v scopedValidator) Validate(ctx context.Context, scope string, secret *securebytes.SecureBytes) error {
+	if err := v.inner.Validate(ctx, secret); err != nil {
+		return fmt.Errorf("hush: supervise: validator %q rejected scope %q: %w", v.name, scope, err)
+	}
+	return nil
+}
+
+// buildSuperviseValidators maps the config's scope→validator-name table onto
+// concrete supervise.Validator implementations from the builtin registry.
+// Config load has already rejected unknown validator names, so every lookup
+// resolves; an unexpected miss is skipped (no-op validator applies).
+func buildSuperviseValidators(cfg *superviseconfig.Supervisor) map[string]supervise.Validator {
+	if len(cfg.Validators) == 0 {
+		return nil
+	}
+	registry := validators.NewRegistry(nil)
+	out := make(map[string]supervise.Validator, len(cfg.Validators))
+	for scope, name := range cfg.Validators {
+		v, ok := registry.Get(string(name))
+		if !ok {
+			continue
+		}
+		out[scope] = scopedValidator{name: string(name), inner: v}
+	}
+	return out
+}
+
+// startSuperviseWatchdog builds the log-pattern watchdog from config, spawns
+// its matcher loop plus the Event→Alerts bridge, and returns it for
+// Deps.Watchdog. Returns nil when the watchdog is disabled or misconfigured —
+// the orchestrator wires its no-op default for a nil Watchdog.
+func startSuperviseWatchdog(ctx context.Context, cfg *superviseconfig.Supervisor, logger *slog.Logger, alerts supervise.Alerts) supervise.Watchdog {
+	if !cfg.Watchdog.Enabled || len(cfg.Watchdog.Patterns) == 0 {
+		return nil
+	}
+	patterns, err := watchdog.BuildPatterns(cfg.Watchdog.Patterns, cfg.Watchdog.MaxAlertsPerHour)
+	if err != nil {
+		logger.Warn("hush: supervise: watchdog disabled (pattern compile failed)", slog.Any("err", err))
+		return nil
+	}
+	events := make(chan watchdog.Event, 64)
+	wd, err := watchdog.NewWatchdog(patterns, events, logger)
+	if err != nil {
+		logger.Warn("hush: supervise: watchdog disabled (construction failed)", slog.Any("err", err))
+		return nil
+	}
+	go func() { _ = wd.Run(ctx) }()
+	go watchdog.DrainToAlerts(ctx, events, alerts)
+	return wd
 }
 
 // defaultNonceFn / defaultRequestIDFn produce small random tokens for

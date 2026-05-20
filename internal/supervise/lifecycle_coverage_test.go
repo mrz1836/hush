@@ -222,38 +222,6 @@ func TestDefaultRequestIDFn(t *testing.T) {
 	}
 }
 
-// TestRefreshCoalescer_SingleFlight covers the in-package coalescer.
-func TestRefreshCoalescer_SingleFlight(t *testing.T) {
-	var calls int
-	c := &refreshCoalescer{
-		perform: func(ctx context.Context) error {
-			calls++
-			time.Sleep(20 * time.Millisecond)
-			return errors.New("performed")
-		},
-	}
-	results := make(chan error, 4)
-	for range 4 {
-		go func() { results <- c.Handle(context.Background()) }()
-	}
-	for range 4 {
-		if err := <-results; err == nil || err.Error() != "performed" {
-			t.Errorf("Handle: %v", err)
-		}
-	}
-	if calls > 2 {
-		t.Errorf("perform called %d times, want 1-2 (coalesced)", calls)
-	}
-}
-
-// TestRefreshCoalescer_NotWired surfaces the sentinel.
-func TestRefreshCoalescer_NotWired(t *testing.T) {
-	c := &refreshCoalescer{}
-	if err := c.Handle(context.Background()); !errors.Is(err, errRefreshPerformNotWired) {
-		t.Errorf("Handle without perform: %v", err)
-	}
-}
-
 // TestDefaultVaultHzProbe_OK exercises the default probe against a tiny
 // httptest server.
 func TestDefaultVaultHzProbe_OK(t *testing.T) {

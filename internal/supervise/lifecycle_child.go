@@ -17,14 +17,24 @@ import (
 	"io"
 	"log/slog"
 	"sync"
+	"syscall"
 	"time"
+
+	"github.com/mrz1836/hush/internal/vault/securebytes"
 )
+
+// secretSet is the per-scope plaintext map handed from the Refiller to the
+// validator pass and the child env builder. Ownership of every *SecureBytes
+// either transfers to the Grace cache (retainSecrets) or is destroyed
+// (destroySecrets) before the orchestrator drops its reference.
+type secretSet = map[string]*securebytes.SecureBytes
 
 // initialRefillAndStart performs the boot-time Refiller.Refill → validators
 // → child env build → Child.Start sequence. Returns nil on entry to mainLoop
 // with the child running.
 func (l *Lifecycle) initialRefillAndStart(ctx context.Context) error {
-	if err := l.refiller.Refill(ctx, l.config.Scope); err != nil {
+	secrets, err := l.refiller.Refill(ctx, l.config.Scope)
+	if err != nil {
 		if errors.Is(err, ErrJTIUnknown) {
 			l.deps.Alerts.Emit(ctx, AlertClassVaultRejectedJWT, AlertPayload{
 				ErrorClass: errorClassUnknownJTI,
@@ -49,32 +59,58 @@ func (l *Lifecycle) initialRefillAndStart(ctx context.Context) error {
 	}
 
 	// Validator failure: validateAllScopes already emitted the alert + audit
-	// and transitioned to StateAwaitingApproval; the err is informational.
-	_ = l.validateAllScopes(ctx)
-	if snap := l.store.Snapshot(); snap.State == StateAwaitingApproval {
-		return nil
+	// and transitioned to StateAwaitingApproval. Boot itself succeeded — the
+	// supervisor is up, parked awaiting approval — so Run returns nil here.
+	if verr := l.validateAllScopes(ctx, secrets); verr != nil {
+		destroySecrets(secrets)
+		return nil //nolint:nilerr // verr is handled in-band (state → awaiting-approval); boot did not fail
 	}
 
-	if err := l.startChild(ctx); err != nil {
+	if err := l.startChild(ctx, secrets); err != nil {
+		destroySecrets(secrets)
 		return err
 	}
+	l.retainSecrets(secrets)
 	l.transition(ctx, EventFetchOK)
 	return nil
 }
 
-// validateAllScopes runs every configured Validator once per scope. On any
-// non-nil return, emits AlertClassValidatorFailure with the scope name,
-// appends supervisor_awaiting_approval(cause=validator) +
+// destroySecrets destroys every *SecureBytes in the set. Used on any path
+// where ownership is NOT transferred to the Grace cache.
+func destroySecrets(secrets secretSet) {
+	for name := range secrets {
+		if secrets[name] != nil {
+			_ = secrets[name].Destroy()
+		}
+	}
+}
+
+// retainSecrets hands every secret to the Grace cache. When the cache is
+// enabled the cache takes ownership (and enforces the grace TTL); when it is
+// disabled the secrets are destroyed immediately — no plaintext outlives the
+// child env build (docs §2 step 11: zeroed unless grace cache is enabled).
+func (l *Lifecycle) retainSecrets(secrets secretSet) {
+	if !l.grace.Enabled() {
+		destroySecrets(secrets)
+		return
+	}
+	for name := range secrets {
+		l.grace.Set(name, secrets[name])
+	}
+}
+
+// validateAllScopes runs every configured Validator once per scope against
+// the freshly fetched plaintext. On any non-nil return, emits
+// AlertClassValidatorFailure with the scope name, appends
+// supervisor_awaiting_approval(cause=validator) +
 // supervisor_stale_alert(class=ValidatorFailure), transitions to
-// StateAwaitingApproval, and returns ErrValidatorFailed.
-func (l *Lifecycle) validateAllScopes(ctx context.Context) error {
+// StateAwaitingApproval, and returns ErrValidatorFailed. The secrets are
+// borrowed — validateAllScopes neither retains nor destroys them.
+func (l *Lifecycle) validateAllScopes(ctx context.Context, secrets secretSet) error {
 	for _, scope := range l.config.Scope {
 		v := l.lookupValidator(scope)
-		sb, ok := l.grace.Get(scope)
-		if !ok || sb == nil {
-			// Refill succeeded but Grace didn't cache (cache disabled).
-			// Skip the validator for this scope — the no-op default semantics
-			// still apply, and the secret will be re-fetched on restart.
+		sb := secrets[scope]
+		if sb == nil {
 			continue
 		}
 		if err := v.Validate(ctx, scope, sb); err != nil {
@@ -105,14 +141,14 @@ func (l *Lifecycle) lookupValidator(scope string) Validator {
 	return noopValidator{}
 }
 
-// startChild builds ChildConfig.Env from Grace-resident secrets, instantiates
-// the Child, calls Start(ctx), spawns childWaitLoop, and updates inputs.
+// startChild builds ChildConfig.Env from the supplied per-scope plaintext,
+// instantiates the Child, calls Start(ctx), spawns childWaitLoop, and updates
+// inputs. The secrets are borrowed — startChild neither retains nor destroys
+// them.
 //
 // This is the ONE permitted `string(*SecureBytes)` site — the OS fork
 // boundary. The env slice is zeroed after Start returns.
-//
-//nolint:gocognit // sequential fork-boundary plumbing: deferred wipe + per-scope SecureBytes use
-func (l *Lifecycle) startChild(ctx context.Context) error {
+func (l *Lifecycle) startChild(ctx context.Context, secrets secretSet) error {
 	env := append([]string(nil), l.config.Child.EnvPassthrough...)
 	// Zero the env slice on every exit path — success, every
 	// error return below, and any panic that unwinds through this frame.
@@ -124,9 +160,9 @@ func (l *Lifecycle) startChild(ctx context.Context) error {
 		}
 	}()
 	for _, scope := range l.config.Scope {
-		sb, ok := l.grace.Get(scope)
-		if !ok || sb == nil {
-			return fmt.Errorf("%w: %q (enable cache_secrets_for_restart)", errGraceEmptyScope, scope)
+		sb := secrets[scope]
+		if sb == nil {
+			return fmt.Errorf("%w: scope %q", errEnvBuildScope, scope)
 		}
 		var added bool
 		if useErr := sb.Use(func(b []byte) {
@@ -195,9 +231,17 @@ func (l *Lifecycle) childWaitLoop(ctx context.Context, child *Child) {
 //   - !=0 && !=78 → emit crash      → silent refill + restart
 //   - Exit78      → emit exit_78    → stale alert + StateAwaitingApproval
 //
+// A child the orchestrator deliberately terminated for a refresh (see
+// stopChildForRefresh) is flagged via suppressNextChildExit; that exit is not
+// a lifecycle event and is dropped here.
+//
 // The orchestrator references the Exit78 constant — never the raw
 // `78` literal.
 func (l *Lifecycle) dispatchChildExit(ctx context.Context, exit childExit) {
+	if l.suppressNextChildExit.Swap(false) {
+		l.deps.Logger.Debug("supervise: child exit suppressed (refresh restart)")
+		return
+	}
 	l.childRunning.Store(false)
 	l.childMu.Lock()
 	pid := 0
@@ -237,12 +281,24 @@ func (l *Lifecycle) dispatchChildExit(ctx context.Context, exit childExit) {
 }
 
 // silentRefillAndRestart re-calls Refiller.Refill using the cached JWT,
-// re-runs validators, re-builds env, re-instantiates Child + Start.
-// Spawns a fresh childWaitLoop:
+// re-runs validators, re-builds env, re-instantiates Child + Start, and
+// spawns a fresh childWaitLoop.
+//
+// It MUST be called with the state machine in StateFetching (callers
+// transition first) and with no live child. On a refill failure it first
+// attempts a grace-cache restart (tryGraceRestart); only when that is
+// unavailable does it page the operator:
 //   - errors.Is(err, ErrJTIUnknown) → AlertClassVaultRejectedJWT + awaiting-approval
 //   - any other error              → AlertClassRefillFailed + awaiting-approval
 func (l *Lifecycle) silentRefillAndRestart(ctx context.Context) error {
-	if err := l.refiller.Refill(ctx, l.config.Scope); err != nil {
+	secrets, err := l.refiller.Refill(ctx, l.config.Scope)
+	if err != nil {
+		// Grace-cache restart: docs §9 — when the operator opted into
+		// cache_secrets_for_restart, a refill failure restarts the child
+		// from the last-known-good plaintext instead of paging.
+		if l.tryGraceRestart(ctx) {
+			return nil
+		}
 		if errors.Is(err, ErrJTIUnknown) {
 			l.deps.Alerts.Emit(ctx, AlertClassVaultRejectedJWT, AlertPayload{
 				ErrorClass: errorClassUnknownJTI,
@@ -265,18 +321,81 @@ func (l *Lifecycle) silentRefillAndRestart(ctx context.Context) error {
 		return fmt.Errorf("supervise: %w: %w", ErrRefillFailedPostRunning, err)
 	}
 
-	if err := l.validateAllScopes(ctx); err != nil {
-		return err
+	if verr := l.validateAllScopes(ctx, secrets); verr != nil {
+		destroySecrets(secrets)
+		return verr
 	}
-	if err := l.startChild(ctx); err != nil {
-		l.deps.Logger.Warn("supervise: child restart failed", slog.Any("err", err))
+	if serr := l.startChild(ctx, secrets); serr != nil {
+		destroySecrets(secrets)
+		l.deps.Logger.Warn("supervise: child restart failed", slog.Any("err", serr))
 		l.transition(ctx, EventClaimUnavailable)
-		return err
+		return serr
 	}
+	l.retainSecrets(secrets)
 	l.inputs.restartCount.Add(1)
 	l.emitSilentRefill(ctx, l.config.Scope)
 	l.transition(ctx, EventFetchOK)
 	return nil
+}
+
+// tryGraceRestart restarts the child from the Grace cache when every scope is
+// still cached and unexpired. Returns true when it handled the refill failure
+// (whether the restart itself succeeded or fell through to awaiting-approval).
+// Cached secrets are borrowed from Grace — never destroyed or re-retained.
+func (l *Lifecycle) tryGraceRestart(ctx context.Context) bool {
+	if !l.grace.Enabled() {
+		return false
+	}
+	cached := make(secretSet, len(l.config.Scope))
+	for _, scope := range l.config.Scope {
+		sb, ok := l.grace.Get(scope)
+		if !ok || sb == nil {
+			return false
+		}
+		cached[scope] = sb
+	}
+
+	l.emitGraceEntered(ctx, l.config.Scope, l.config.CacheGraceTTL)
+	l.deps.Alerts.Emit(ctx, AlertClassGraceEntered, AlertPayload{
+		ErrorClass: errorClassTransient,
+		Reason:     alertReasonFor(AlertClassGraceEntered),
+	})
+	if verr := l.validateAllScopes(ctx, cached); verr != nil {
+		// validateAllScopes already transitioned to StateAwaitingApproval.
+		l.emitGraceExited(ctx, l.config.Scope, "expired")
+		return true
+	}
+	if serr := l.startChild(ctx, cached); serr != nil {
+		l.deps.Logger.Warn("supervise: grace restart child start failed", slog.Any("err", serr))
+		l.emitGraceExited(ctx, l.config.Scope, "expired")
+		l.emitAwaitingApproval(ctx, causeRefillFailed)
+		l.markAllScopesStale()
+		l.transition(ctx, EventClaimUnavailable)
+		return true
+	}
+	l.inputs.restartCount.Add(1)
+	l.emitGraceExited(ctx, l.config.Scope, "restart_ok")
+	l.transition(ctx, EventFetchOK)
+	return true
+}
+
+// stopChildForRefresh terminates the live child (if any) ahead of an
+// operator-driven refresh. The child's pending exit is flagged so
+// dispatchChildExit drops it — the refresh path, not the exit path, owns the
+// restart. No-op when no child is running.
+func (l *Lifecycle) stopChildForRefresh() {
+	l.childMu.Lock()
+	child := l.child
+	l.child = nil
+	l.childMu.Unlock()
+	if child == nil {
+		return
+	}
+	l.suppressNextChildExit.Store(true)
+	l.childRunning.Store(false)
+	zeroTime := time.Time{}
+	l.inputs.childStartedAt.Store(&zeroTime)
+	_ = child.Forward(syscall.SIGTERM)
 }
 
 // markAllScopesStale marks every configured scope as stale on statusInputs.

@@ -32,10 +32,9 @@ import (
 
 // Package-private boot-path sentinels for err113 compliance.
 var (
-	errClaimEmptyJWT   = errors.New("supervise: empty JWT")
-	errHzNon200        = errors.New("supervise: /hz non-200")
-	errGraceEmptyScope = errors.New("supervise: grace cache empty for scope")
-	errEnvBuildScope   = errors.New("supervise: env build scope add failed")
+	errClaimEmptyJWT = errors.New("supervise: empty JWT")
+	errHzNon200      = errors.New("supervise: /hz non-200")
+	errEnvBuildScope = errors.New("supervise: env build scope add failed")
 )
 
 // claimWireRequest mirrors internal/server/claim_handler.go::claimRequest.
@@ -213,6 +212,10 @@ func (l *Lifecycle) submitClaim(ctx context.Context) error {
 				Reason:     alertReasonFor(AlertClassBootTimeout),
 			})
 			l.emitBootTimeout(ctx, errorClassDiscordUnavailable)
+			// Drive the documented terminal transition so the state machine
+			// settles at StateStopped rather than freezing at StateFetching
+			// when Run unwinds (mirrors bootPreconditionsLoop exhaustion).
+			l.transition(ctx, EventBootRetryExhausted)
 			return fmt.Errorf("supervise: boot: %w", ErrBootTimeout)
 		}
 		timer := time.NewTimer(sleep)

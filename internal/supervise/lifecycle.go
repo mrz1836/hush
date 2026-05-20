@@ -241,7 +241,6 @@ type Lifecycle struct {
 	refiller     *Refiller
 	refresher    *Refresher
 	statusServer *StatusServer
-	coalescer    *refreshCoalescer
 	inputs       *statusInputs
 
 	childExitCh   chan childExit
@@ -265,59 +264,11 @@ type Lifecycle struct {
 	// childRunning is set by initialRefillAndStart / silentRefillAndRestart
 	// when a child is alive, cleared by mainLoop's childExit dispatch.
 	childRunning atomic.Bool
-}
 
-// refreshFlight is one in-flight refresh attempt observed by every
-// concurrent caller of refreshCoalescer.Handle.
-type refreshFlight struct {
-	done chan struct{}
-	err  error
-}
-
-// errRefreshPerformNotWired is the sentinel surfaced by refreshCoalescer.Handle
-// when no perform closure has been wired.
-var errRefreshPerformNotWired = errors.New("supervise: refresh perform not wired")
-
-// refreshCoalescer is the single-flight gate for `hush client refresh`
-// callbacks invoked via the status socket. Mirrors the original cli-package
-// coalescer; lifted into the orchestrator.
-type refreshCoalescer struct {
-	mu       sync.Mutex
-	inflight *refreshFlight
-	perform  func(ctx context.Context) error
-}
-
-// Handle is the refreshHandler wired into the StatusServer. Returns the
-// terminal err observed by every caller of the in-flight refresh.
-func (c *refreshCoalescer) Handle(ctx context.Context) error {
-	c.mu.Lock()
-	if c.inflight != nil {
-		flight := c.inflight
-		c.mu.Unlock()
-		select {
-		case <-flight.done:
-			return flight.err
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}
-	flight := &refreshFlight{done: make(chan struct{})}
-	c.inflight = flight
-	perform := c.perform
-	c.mu.Unlock()
-
-	var err error
-	if perform == nil {
-		err = errRefreshPerformNotWired
-	} else {
-		err = perform(ctx)
-	}
-	c.mu.Lock()
-	flight.err = err
-	close(flight.done)
-	c.inflight = nil
-	c.mu.Unlock()
-	return err
+	// suppressNextChildExit, when set, makes dispatchChildExit drop the very
+	// next childExit message — used when the orchestrator itself terminates a
+	// child for an operator-driven refresh (stopChildForRefresh).
+	suppressNextChildExit atomic.Bool
 }
 
 // NewLifecycle constructs a Lifecycle. Validates required Deps fields and
@@ -369,18 +320,10 @@ func NewLifecycle(ctx context.Context, cfg *config.Supervisor, deps Deps) *Lifec
 	lc.store = NewStore(ctx, deps.Clock)
 	lc.grace = NewGrace(cfg.CacheGraceTTL, cfg.CacheSecretsForRestart)
 	lc.refiller = NewRefiller(deps.HTTPClient, lc.store, deps.Logger)
-	lc.refiller.attach(lc.grace, deps.DecryptKey, cfg.ServerURL)
+	lc.refiller.attach(deps.DecryptKey, cfg.ServerURL)
 
 	lc.statusServer = NewStatusServer(cfg.StatusSocket, lc.store, deps.Logger)
 	lc.statusServer.AttachStatusInputs(lc.inputs)
-
-	lc.coalescer = &refreshCoalescer{}
-	lc.coalescer.perform = func(ctx context.Context) error {
-		// Coalesced refresh path = silent refill (validators + restart) under
-		// the running session. Used by status-socket refresh in running /
-		// grace-restart and by Refresher window-tick handoff.
-		return lc.silentRefillAndRestart(ctx)
-	}
 
 	// Refresher's refill callback only NUDGES the refresh tick; the actual
 	// /claim swap happens inside claimRefreshLoop so the tick anchor stays
