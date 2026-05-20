@@ -10,7 +10,7 @@ One passphrase. No key files. No dotfiles on agent disks.
 
 <a href="https://github.com/mrz1836/hush/releases"><img src="https://img.shields.io/github/release-pre/mrz1836/hush?include_prereleases&style=flat-square&logo=github&color=black" alt="Release"></a>
 <a href="https://golang.org/"><img src="https://img.shields.io/github/go-mod/go-version/mrz1836/hush?style=flat-square&logo=go&color=00ADD8" alt="Go Version"></a>
-<a href="https://github.com/mrz1836/hush/blob/master/LICENSE"><img src="https://img.shields.io/github/license/mrz1836/hush?style=flat-square&color=blue&v=2" alt="License"></a>
+<a href="https://github.com/mrz1836/hush/blob/master/LICENSE"><img src="https://img.shields.io/github/license/mrz1836/hush?style=flat-square&color=blue&v=1" alt="License"></a>
 
 <br/>
 
