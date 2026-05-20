@@ -14,7 +14,7 @@ Any released version of **hush** that is not marked as deprecated is actively su
 If you’ve found a security issue, **please don’t open a public issue or PR**.
 
 Instead, send a private email to:
-📧 [hush@mrz1818.com](mailto:hush@mrz1818.com)
+📧 [sigil@mrz1818.com](mailto:sigil@mrz1818.com)
 
 Include the following:
 
