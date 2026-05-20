@@ -4,7 +4,6 @@ package supervise_test
 
 import (
 	"context"
-	"os"
 	"strconv"
 	"strings"
 	"syscall"
@@ -25,23 +24,7 @@ func TestChild_LinuxPdeathsig(t *testing.T) {
 	}
 	defer func() { _, _, _ = c.Wait() }()
 
-	// Wait for the sub-supervisor to print the grandchild PID.
-	var grandPID int
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		s := out.String()
-		if strings.Contains(s, "GRANDCHILD_PID=") {
-			for _, line := range strings.Split(s, "\n") {
-				if v, ok := strings.CutPrefix(line, "GRANDCHILD_PID="); ok {
-					grandPID, _ = strconv.Atoi(strings.TrimSpace(v))
-				}
-			}
-			if grandPID != 0 {
-				break
-			}
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+	grandPID := waitForGrandchildPID(out, 5*time.Second)
 	if grandPID == 0 {
 		t.Fatalf("grandchild pid not observed: %q", out.String())
 	}
@@ -56,16 +39,43 @@ func TestChild_LinuxPdeathsig(t *testing.T) {
 		t.Fatalf("kill sub-supervisor: %v", err)
 	}
 
-	if !waitGone(t, grandPID, 3*time.Second) {
-		// Probe: signal-0 to confirm.
-		if processAlive(grandPID) {
-			t.Fatalf("grandchild %d still alive after sub-supervisor SIGKILL", grandPID)
-		}
+	if !waitGone(t, grandPID, 3*time.Second) && processAlive(grandPID) {
+		t.Fatalf("grandchild %d still alive after sub-supervisor SIGKILL", grandPID)
 	}
 
 	// Cleanup: reap any straggler.
 	if processAlive(grandPID) {
 		_ = syscall.Kill(grandPID, syscall.SIGKILL)
 	}
-	_ = os.Getpid() // keep import if needed
+}
+
+// waitForGrandchildPID polls the helper-process output until a
+// "GRANDCHILD_PID=" line carrying a non-zero PID appears, returning
+// 0 if the timeout elapses first.
+func waitForGrandchildPID(out *syncBuffer, timeout time.Duration) int {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if pid := parsePIDLine(out.String(), "GRANDCHILD_PID="); pid != 0 {
+			return pid
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return parsePIDLine(out.String(), "GRANDCHILD_PID=")
+}
+
+// parsePIDLine scans newline-delimited text for the last line
+// beginning with prefix and returns the non-zero PID that follows,
+// or 0 when no such line carries a parseable PID.
+func parsePIDLine(s, prefix string) int {
+	var pid int
+	for line := range strings.SplitSeq(s, "\n") {
+		v, ok := strings.CutPrefix(line, prefix)
+		if !ok {
+			continue
+		}
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n != 0 {
+			pid = n
+		}
+	}
+	return pid
 }
