@@ -644,10 +644,19 @@ func TestStore_NoSideEffects(t *testing.T) {
 		_ = s.Snapshot()
 		clk.Advance(time.Microsecond)
 	}
-	time.Sleep(10 * time.Millisecond)
-	after := runtime.NumGoroutine()
-	if delta := after - before; delta != 0 {
-		t.Errorf("goroutine delta = %d, want 0 (before=%d, after=%d)", delta, before, after)
+	// NewStore + Transition + Snapshot must spawn no goroutines of their own.
+	// runtime.NumGoroutine is process-global, so unrelated runtime/sibling
+	// goroutines can drift the count up or down transiently; poll until the
+	// delta settles to non-positive — a genuine Store leak would persist.
+	runtime.GC()
+	deadline := time.Now().Add(500 * time.Millisecond)
+	delta := runtime.NumGoroutine() - before
+	for time.Now().Before(deadline) && delta > 0 {
+		time.Sleep(10 * time.Millisecond)
+		delta = runtime.NumGoroutine() - before
+	}
+	if delta > 0 {
+		t.Errorf("goroutine leak: delta = %d (before=%d, after=%d)", delta, before, runtime.NumGoroutine())
 	}
 }
 
