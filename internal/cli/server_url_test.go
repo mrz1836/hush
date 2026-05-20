@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -12,6 +13,9 @@ import (
 func TestServerURL_PrintsURLFromConfig(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
+	// t.TempDir's subdir is created at 0755 (umask); the config
+	// validator requires the audit_log parent dir to be 0700.
+	require.NoError(t, os.Chmod(dir, 0o700))
 	configPath := filepath.Join(dir, "config.toml")
 	body := buildServerDecodedFromDefaults(serverInputs{
 		listenAddr:        testListenAddrInput,
