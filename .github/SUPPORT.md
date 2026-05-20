@@ -46,7 +46,7 @@ Everything from commit rules to contributor expectations is in [AGENTS.md](./AGE
 ## 📬 Private Contact
 
 For sensitive or non-public concerns, reach out to:
-📧 [hush@mrz1818.com](mailto:hush@mrz1818.com)
+📧 [sigil@mrz1818.com](mailto:sigil@mrz1818.com)
 
 <br/>
 

@@ -33,6 +33,10 @@ on:
         description: "Path to go.sum file for dependency verification"
         required: true
         type: string
+    secrets:
+      github-token:
+        description: "GitHub token for private module authentication (optional, only needed when GOPRIVATE is set)"
+        required: false
     outputs:
       pre-commit-version:
         description: "Version of go-pre-commit used"
@@ -87,6 +91,7 @@ jobs:
           go-secondary-version: ${{ inputs.go-primary-version }}
           go-sum-file: ${{ env.GO_SUM_FILE }}
           enable-multi-module: ${{ env.ENABLE_MULTI_MODULE_TESTING }}
+          github-token: ${{ secrets.github-token }}
 
       # --------------------------------------------------------------------
       # Extract Go module directory from GO_SUM_FILE path
@@ -286,6 +291,8 @@ jobs:
       - name: 🔨 Install go-pre-commit tool
         if: steps.go-pre-commit-cache.outputs.cache-hit != 'true' || env.GO_PRE_COMMIT_USE_LOCAL == 'true'
         id: install-pre-commit
+        env:
+          GH_TOKEN: ${{ secrets.github-token || github.token }}
         run: |
           # Check if we should use local development version
           if [[ "${{ env.GO_PRE_COMMIT_USE_LOCAL }}" == "true" ]]; then
@@ -325,24 +332,90 @@ jobs:
             echo "install_success=true" >> $GITHUB_OUTPUT
             echo "version=$VERSION" >> $GITHUB_OUTPUT
           else
-            # Use production version
+            # Use production version - download pre-built binary from GitHub releases
             VERSION="${{ env.GO_PRE_COMMIT_VERSION }}"
-            echo "⬇️ Cache miss – installing go-pre-commit version: $VERSION"
+            echo "⬇️ Cache miss – downloading go-pre-commit version: $VERSION"
 
-            # Install using go install
-            go install github.com/mrz1836/go-pre-commit/cmd/go-pre-commit@$VERSION
+            # Detect platform and architecture
+            OS=$(echo "${{ runner.os }}" | tr '[:upper:]' '[:lower:]')
+            ARCH=$(uname -m)
 
-            # Copy the freshly installed binary to cache directory
+            # Map architecture names
+            case "$ARCH" in
+              x86_64|amd64) ARCH="amd64" ;;
+              aarch64|arm64) ARCH="arm64" ;;
+              *) echo "❌ Unsupported architecture: $ARCH" && exit 1 ;;
+            esac
+
+            # Map OS names
+            case "$OS" in
+              linux) OS="linux" ;;
+              macos) OS="darwin" ;;
+              windows) OS="windows" ;;
+              *) echo "❌ Unsupported OS: $OS" && exit 1 ;;
+            esac
+
+            echo "📋 Detected platform: ${OS}_${ARCH}"
+
+            # Clean version (remove 'v' prefix if present)
+            CLEAN_VERSION="${VERSION#v}"
+
+            # Build asset name and download using gh CLI
+            ASSET_NAME="go-pre-commit_${CLEAN_VERSION}_${OS}_${ARCH}.tar.gz"
+            echo "📥 Downloading asset: $ASSET_NAME from mrz1836/go-pre-commit@$VERSION"
+
+            # Download and extract
+            TEMP_DIR=$(mktemp -d)
+            cd "$TEMP_DIR"
+
+            if gh release download "$VERSION" \
+                --repo mrz1836/go-pre-commit \
+                --pattern "$ASSET_NAME" \
+                --dir .; then
+              echo "✅ Download successful"
+            else
+              echo "❌ Download failed for $ASSET_NAME from mrz1836/go-pre-commit@$VERSION"
+              exit 1
+            fi
+
+            # Extract the tarball
+            if tar -xzf "$ASSET_NAME"; then
+              echo "✅ Extraction successful"
+            else
+              echo "❌ Extraction failed"
+              exit 1
+            fi
+
+            # Find the go-pre-commit binary
+            PRE_COMMIT_BINARY=$(find . -name "go-pre-commit" -type f | head -1)
+            if [[ -z "$PRE_COMMIT_BINARY" ]]; then
+              echo "❌ Could not find go-pre-commit binary in extracted files"
+              ls -la
+              exit 1
+            fi
+
+            echo "✅ Found go-pre-commit binary at: $PRE_COMMIT_BINARY"
+
+            # Make it executable and copy to cache directory
+            chmod +x "$PRE_COMMIT_BINARY"
             mkdir -p ~/.cache/go-pre-commit-bin
-            cp "$(go env GOPATH)/bin/go-pre-commit" ~/.cache/go-pre-commit-bin/
+            cp "$PRE_COMMIT_BINARY" ~/.cache/go-pre-commit-bin/go-pre-commit
+
+            # Copy to GOPATH/bin for immediate use
+            mkdir -p "$(go env GOPATH)/bin"
+            cp ~/.cache/go-pre-commit-bin/go-pre-commit "$(go env GOPATH)/bin/go-pre-commit"
 
             # Store the validated binary path
             GO_BIN="$(go env GOPATH)/bin"
             GO_PRE_COMMIT_PATH="$GO_BIN/go-pre-commit"
             echo "GO_PRE_COMMIT_BINARY=$GO_PRE_COMMIT_PATH" >> $GITHUB_ENV
 
+            # Cleanup temp directory
+            cd /
+            rm -rf "$TEMP_DIR"
+
             # Verify installation
-            echo "✅ go-pre-commit installed and stored in cache"
+            echo "✅ go-pre-commit downloaded and stored in cache"
             VERSION_OUTPUT=$("$GO_BIN/go-pre-commit" --version 2>&1 | head -1 || echo "$VERSION")
             echo "🏷️ Version: $VERSION_OUTPUT"
             echo "install_success=true" >> $GITHUB_OUTPUT
@@ -690,6 +763,14 @@ jobs:
 
           if [ "${CHECKS_EXIT:-0}" -ne 0 ]; then
             echo "❌ Pre-commit checks failed with exit code: ${CHECKS_EXIT}"
+            # Persist cleaned output to log file for summary and artifact upload
+            # Use printf to avoid echo misinterpreting leading -n/-e in output
+            printf '%s\n' "$CHECKS_OUTPUT" | \
+              sed -E 's/\x1b\[[0-9;]*[mGKH]//g' | \
+              sed 's/\xc2\x9b\[[0-9;]*[mGKH]//g' | \
+              sed 's/�\[[0-9;]*[mGKH]//g' | \
+              sed 's/�//g' | \
+              tr -d '\033' > pre-commit-output.log
             # Emit GitHub annotation for visibility at top of summary
             echo "::error title=Pre-commit Checks Failed::Code quality issues detected - formatting, linting, or other pre-commit checks failed"
             exit ${CHECKS_EXIT}
@@ -843,15 +924,35 @@ jobs:
               fi
             done
             echo "" >> $GITHUB_STEP_SUMMARY
-            if [[ "${{ env.GO_PRE_COMMIT_ALL_FILES }}" == "true" ]]; then
-              echo "🎯 **All pre-commit checks passed successfully on all repository files.**" >> $GITHUB_STEP_SUMMARY
-            elif [[ "${{ steps.detect-files.outputs.files_found }}" == "true" ]]; then
-              FILE_COUNT=$(echo "${{ steps.detect-files.outputs.changed_files }}" | wc -l | tr -d ' ')
-              echo "🎯 **All pre-commit checks passed successfully on $FILE_COUNT changed files.**" >> $GITHUB_STEP_SUMMARY
+            # Show failure details or success summary based on run-checks outcome + log presence
+            if [[ -f pre-commit-output.log ]]; then
+              # Normal failure: log file was created, show full error details
+              echo "### 🚨 Error Details" >> $GITHUB_STEP_SUMMARY
               echo "" >> $GITHUB_STEP_SUMMARY
-              echo "⚡ **Performance**: Fast CI execution by checking only changed files instead of entire repository." >> $GITHUB_STEP_SUMMARY
+              echo "<details>" >> $GITHUB_STEP_SUMMARY
+              echo "<summary>Click to expand full output</summary>" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo '```' >> $GITHUB_STEP_SUMMARY
+              head -200 pre-commit-output.log >> $GITHUB_STEP_SUMMARY
+              echo '```' >> $GITHUB_STEP_SUMMARY
+              echo "</details>" >> $GITHUB_STEP_SUMMARY
+            elif [[ "${{ steps.run-checks.outcome }}" == "failure" ]]; then
+              # Early failure: step failed before the log file could be written
+              # (e.g. invalid binary path, mktemp failure, etc.)
+              echo "### 🚨 Error Details" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "Pre-commit checks failed before an output log could be generated. Review the **Run pre-commit checks** step logs for details." >> $GITHUB_STEP_SUMMARY
             else
-              echo "🎯 **Pre-commit checks completed (no files required checking).**" >> $GITHUB_STEP_SUMMARY
+              if [[ "${{ env.GO_PRE_COMMIT_ALL_FILES }}" == "true" ]]; then
+                echo "🎯 **All pre-commit checks passed successfully on all repository files.**" >> $GITHUB_STEP_SUMMARY
+              elif [[ "${{ steps.detect-files.outputs.files_found }}" == "true" ]]; then
+                FILE_COUNT=$(echo "${{ steps.detect-files.outputs.changed_files }}" | wc -l | tr -d ' ')
+                echo "🎯 **All pre-commit checks passed successfully on $FILE_COUNT changed files.**" >> $GITHUB_STEP_SUMMARY
+                echo "" >> $GITHUB_STEP_SUMMARY
+                echo "⚡ **Performance**: Fast CI execution by checking only changed files instead of entire repository." >> $GITHUB_STEP_SUMMARY
+              else
+                echo "🎯 **Pre-commit checks completed (no files required checking).**" >> $GITHUB_STEP_SUMMARY
+              fi
             fi
           else
             echo "### ⚠️ Fallback Mode" >> $GITHUB_STEP_SUMMARY
@@ -859,6 +960,18 @@ jobs:
             echo "- ✅ magex lint" >> $GITHUB_STEP_SUMMARY
             echo "- ✅ magex tidy" >> $GITHUB_STEP_SUMMARY
           fi
+
+      # --------------------------------------------------------------------
+      # Upload pre-commit results (only present on failure)
+      # --------------------------------------------------------------------
+      - name: 📤 Upload pre-commit results
+        if: always()
+        uses: ./.github/actions/upload-artifact-resilient
+        with:
+          artifact-name: pre-commit-results
+          artifact-path: pre-commit-output.log
+          retention-days: "7"
+          if-no-files-found: ignore
 
       # --------------------------------------------------------------------
       # Collect cache statistics

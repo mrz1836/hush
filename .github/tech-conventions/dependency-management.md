@@ -147,7 +147,6 @@ go mod download -json | jq '.Dir' | xargs du -sh | sort -h
 * **Pin to specific versions** in production
 * **Review licenses** before adding dependencies
 * **Prefer standard library** when possible
-* **Walk the trusted-sources hierarchy** (sigil → bsv-blockchain → other) before reaching outside
 * **Use minimal dependencies** for core functionality
 * **Document unusual dependencies** in code comments
 
@@ -157,19 +156,6 @@ go mod download -json | jq '.Dir' | xargs du -sh | sort -h
 * **Use replace directives** except for emergencies
 * **Add dependencies for trivial functionality**
 * **Ignore security advisories**
-
-<br><br>
-
-## 🌐 Trusted Sources Hierarchy
-
-Before adding any new direct dependency, walk this hierarchy. Stop at the first tier that satisfies the need:
-
-1. **Go standard library** — always first (Principle XI).
-2. **Sigil baseline** — the curated dependency set used by [github.com/mrz1836/sigil](https://github.com/mrz1836/sigil). These are pre-vetted for maintainer activity, supply-chain provenance, and transitive footprint. Reuse the same module + version where possible.
-3. **`bsv-blockchain` GitHub organization** — trusted source for blockchain/crypto-adjacent packages not present in sigil. Prefer over third-party alternatives even when feature-equivalent.
-4. **Other third-party packages** — only when tiers 1–3 cannot meet the requirement. Requires the full justification block from Principle XI in the PR description (maintainer activity, provenance, transitive footprint, why no upstream tier suffices).
-
-> The hierarchy is about *preference under equivalence*, not exclusivity. A tier-4 package can still be the right answer — it just owes more justification than a tier-2 or tier-3 one.
 
 <br><br>
 

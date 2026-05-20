@@ -176,6 +176,7 @@ jobs:
           go-secondary-version: ${{ env.GO_SECONDARY_VERSION }}
           go-sum-file: ${{ inputs.go-sum-file }}
           enable-multi-module: ${{ env.ENABLE_MULTI_MODULE_TESTING }}
+          github-token: ${{ secrets.github-token }}
 
       # --------------------------------------------------------------------
       # Extract Go module directory from GO_SUM_FILE path
@@ -2483,6 +2484,9 @@ jobs:
       # --------------------------------------------------------------------
       # Upload to Codecov
       # --------------------------------------------------------------------
+      # NOTE: codecov/codecov-action@v5.5.3 is the latest release and still uses Node.js 20.
+      # This will trigger a "Node.js 20 actions are deprecated" warning until Codecov
+      # releases a new version with Node.js 24 support. Expected and harmless for now.
       - name: 📈 Upload coverage to Codecov
         uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354 # v6.0.1
         with:
