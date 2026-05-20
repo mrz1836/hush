@@ -1,13 +1,81 @@
-# Ignore test private keys and addresses in test files
-# Format: file:rule:line
+# gitleaks fingerprint allowlist — false positives only.
+# All entries below are spec/config example values, test sentinels, or
+# fuzz corpus data, not real secrets.
+# Format: file:rule:startline
 
-# Agent tests
+# --- Documentation: example Discord snowflakes ---
+docs/CONFIG-SCHEMA.md:discord-client-id:36
+docs/CONFIG-SCHEMA.md:discord-client-id:37
+
+# --- Config testdata: example Discord snowflakes ---
+internal/config/testdata/invalid/argon-memory-low.toml:discord-client-id:6
+internal/config/testdata/invalid/argon-threads-low.toml:discord-client-id:6
+internal/config/testdata/invalid/argon-time-low.toml:discord-client-id:6
+internal/config/testdata/invalid/audit-log-escape.toml:discord-client-id:6
+internal/config/testdata/invalid/audit-log-traversal.toml:discord-client-id:6
+internal/config/testdata/invalid/bad-duration-clock-skew.toml:discord-client-id:6
+internal/config/testdata/invalid/bad-duration-max-clock-drift.toml:discord-client-id:6
+internal/config/testdata/invalid/bad-duration-max-interactive-ttl.toml:discord-client-id:6
+internal/config/testdata/invalid/bad-duration-max-supervisor-ttl.toml:discord-client-id:6
+internal/config/testdata/invalid/bad-duration-nonce-ttl.toml:discord-client-id:6
+internal/config/testdata/invalid/bad-duration.toml:discord-client-id:6
+internal/config/testdata/invalid/health-bind-loopback.toml:discord-client-id:6
+internal/config/testdata/invalid/health-bind-malformed.toml:discord-client-id:6
+internal/config/testdata/invalid/health-bind-public.toml:discord-client-id:6
+internal/config/testdata/invalid/loopback.toml:discord-client-id:6
+internal/config/testdata/invalid/malformed-listen.toml:discord-client-id:6
+internal/config/testdata/invalid/missing-listen-addr.toml:discord-client-id:5
+internal/config/testdata/invalid/missing-path-prefix.toml:discord-client-id:5
+internal/config/testdata/invalid/path-prefix-bad-charset.toml:discord-client-id:6
+internal/config/testdata/invalid/path-prefix-too-long.toml:discord-client-id:6
+internal/config/testdata/invalid/path-prefix-too-short.toml:discord-client-id:6
+internal/config/testdata/invalid/public.toml:discord-client-id:6
+internal/config/testdata/invalid/supervisor-ttl-above-cap.toml:discord-client-id:6
+internal/config/testdata/invalid/supervisor-ttl-below-jwt.toml:discord-client-id:6
+internal/config/testdata/invalid/tailscale-required.toml:discord-client-id:6
+internal/config/testdata/invalid/unknown-field.toml:discord-client-id:7
+internal/config/testdata/invalid/unspecified.toml:discord-client-id:6
+internal/config/testdata/invalid/wrong-type.toml:discord-client-id:6
+internal/config/testdata/valid/full-default.toml:discord-client-id:6
+internal/config/testdata/valid/full-maximal.toml:discord-client-id:6
+internal/config/testdata/valid/full-maximal.toml:discord-client-id:8
+internal/config/testdata/valid/minimal-valid.toml:discord-client-id:6
+
+# --- Config tests ---
+internal/config/env_test.go:generic-api-key:269
+internal/config/env_test.go:generic-api-key:278
+internal/config/server_test.go:generic-api-key:340
+
+# --- Logging redaction tests: sentinel secrets exercised by the redactor ---
+internal/logging/redact_test.go:gcp-api-key:99
+internal/logging/redact_test.go:gcp-api-key:303
+internal/logging/redact_test.go:gcp-api-key:304
+internal/logging/redact_test.go:generic-api-key:206
+internal/logging/redact_test.go:private-key:124
+internal/logging/redact_test.go:private-key:129
+internal/logging/redact_test.go:slack-app-token:114
+internal/logging/redact_test.go:slack-bot-token:104
+internal/logging/redact_test.go:slack-webhook-url:119
+internal/logging/redact_test.go:slack-webhook-url:310
+internal/logging/redact_test.go:slack-webhook-url:311
+
+# --- Supervise validator tests ---
+internal/supervise/validators/anthropic_test.go:generic-api-key:90
+
+# --- Token fuzz corpus ---
+internal/token/testdata/fuzz/FuzzJWTValidate/alg-hs256:jwt:2
+internal/token/testdata/fuzz/FuzzJWTValidate/alg-none:jwt:2
+
+# --- Integration harness: example Discord snowflake ---
+tests/integration/harness/server.go:discord-client-id:442
+
+# --- Agent tests ---
 internal/agent/agent_test.go:generic-api-key:49
 
-# Cache tests
+# --- Cache tests ---
 internal/cache/file_test.go:generic-api-key:166
 
-# Crypto tests
+# --- Crypto tests ---
 internal/chain/eth/crypto/crypto_test.go:generic-api-key:58
 internal/chain/eth/crypto/crypto_test.go:generic-api-key:80
 internal/chain/eth/crypto/crypto_test.go:generic-api-key:96
@@ -15,17 +83,13 @@ internal/chain/eth/crypto/crypto_test.go:generic-api-key:215
 internal/chain/eth/crypto/crypto_test.go:generic-api-key:263
 internal/chain/eth/crypto/crypto_test.go:generic-api-key:512
 
-# CLI tests
+# --- CLI tests ---
 internal/cli/balance_test.go:generic-api-key:379
 internal/cli/config_test.go:generic-api-key:527
 internal/cli/config_test.go:generic-api-key:594
 internal/cli/wallet_restore_test.go:generic-api-key:209
 internal/cli/wallet_test.go:generic-api-key:603
 
-# Config tests
-internal/config/env_test.go:generic-api-key:269
-internal/config/env_test.go:generic-api-key:278
-
-# BSV tests
+# --- BSV tests ---
 internal/chain/bsv/tx_test_helpers_test.go:generic-api-key:161
 internal/chain/bsv/tx_test_helpers_test.go:generic-api-key:197
