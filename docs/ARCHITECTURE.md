@@ -2,7 +2,7 @@
 
 > Component model, trust boundaries, data flow, and lifecycle for hush v0.1.0.
 > This document explains *how* the system is shaped. The *why* lives in
-> `docs/SECURITY.md`. The *what ships* lives in `docs/SPEC.md`.
+> `docs/SECURITY.md`.
 
 ---
 
@@ -91,15 +91,15 @@ without re-verifying.
 | **Management CLI** (`hush secret`, `init`, `revoke`, `health`, `version`) | `internal/cli` | Vault management; client/server bootstrap; ad-hoc operations. |
 | **Audit log** | `internal/audit` (top-level package) | Hash-chained, ECDSA-signed `~/.hush/audit.jsonl`; flock-guarded single-writer goroutine; optionally mirrored to a Discord channel via the `MirrorSession` seam. Imported by `internal/server`, `internal/cli`, and `internal/supervise`. |
 
-See `docs/PACKAGE-MAP.md` for file-level responsibilities — the table
-above names the load-bearing components only. Eleven additional
-internal packages provide supporting concerns: `internal/audit`,
+The table above names the load-bearing components only. Eleven
+additional internal packages provide supporting concerns:
+`internal/audit`,
 `internal/config`, `internal/keychain`, `internal/logging`,
 `internal/supervise/config`, `internal/supervise/validators`,
 `internal/supervise/watchdog`, `internal/testutil`,
-`internal/vault/securebytes`, and `internal/discord/alerts` (`audit`
-is now its own row above; the rest are listed for completeness — each
-has its own `## \`internal/<pkg>\`` section in PACKAGE-MAP.md).
+`internal/vault/securebytes`, and `internal/discord/alerts`. (`audit`
+is its own row above; the rest are listed for completeness — refer to
+the package's own godoc for responsibilities.)
 
 ---
 
@@ -319,13 +319,10 @@ unambiguous to anyone reading the repo cold:
 
 | Topic | See |
 |-------|-----|
-| Spec, requirements, ACs | `docs/SPEC.md` |
 | Threat model + 7 layers | `docs/SECURITY.md` |
 | HTTP/socket schemas | `docs/API.md` |
 | Config formats | `docs/CONFIG-SCHEMA.md` |
-| Package layout | `docs/PACKAGE-MAP.md` |
 | Lifecycle scenarios | `docs/LIFECYCLE-SCENARIOS.md` |
-| Phase execution | `docs/IMPLEMENTATION-PLAN.md` |
-| Test plan | `docs/TESTING-STRATEGY.md` |
 | Operational runbooks | `docs/OPERATIONS.md` |
+| Daemon supervisor guide | `docs/DAEMONS.md` |
 | Constitutional principles | `.specify/memory/constitution.md` |

@@ -1,9 +1,11 @@
 # Lifecycle Scenarios
 
-This file defines the end-to-end runtime stories hush must handle.
-
-If the supervisor lifecycle is vague, the implementation will drift.
-These scenarios exist to keep `hush supervise` concrete before code deepens.
+This document is the canonical behavioral reference for hush's runtime —
+especially the supervisor. Each numbered scenario describes a concrete
+end-to-end story (normal use or failure), the flow it follows, and the
+outcomes hush guarantees. Operators read it to understand what hush will
+do under specific conditions; the integration suite under `tests/integration/`
+uses these scenarios as the spec it verifies against.
 
 ---
 

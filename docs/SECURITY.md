@@ -421,11 +421,9 @@ this doc is wrong.
 
 | Topic | See |
 |-------|-----|
-| Functional requirements + ACs | `docs/SPEC.md` |
 | Components, data flow, lifecycle | `docs/ARCHITECTURE.md` |
 | API payloads + signature canonicalization | `docs/API.md` |
 | Server config + supervisor TOML | `docs/CONFIG-SCHEMA.md` |
 | Lifecycle scenarios | `docs/LIFECYCLE-SCENARIOS.md` |
-| Test plan + fuzz | `docs/TESTING-STRATEGY.md` |
 | Operational runbooks | `docs/OPERATIONS.md` |
 | Constitutional principles | `.specify/memory/constitution.md` |

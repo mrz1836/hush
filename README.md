@@ -3,14 +3,6 @@
 > **Discord-gated secrets broker for AI agents.**
 > One passphrase. No key files. No dotfiles on agent disks.
 
-[![Build](https://github.com/mrz1836/hush/actions/workflows/fortress.yml/badge.svg)](https://github.com/mrz1836/hush/actions/workflows/fortress.yml)
-[![Coverage](https://codecov.io/gh/mrz1836/hush/branch/master/graph/badge.svg)](https://codecov.io/gh/mrz1836/hush)
-[![Latest Release](https://img.shields.io/github/v/release/mrz1836/hush?include_prereleases)](https://github.com/mrz1836/hush/releases)
-[![Go Version](https://img.shields.io/github/go-mod/go-version/mrz1836/hush)](go.mod)
-[![License](https://img.shields.io/github/license/mrz1836/hush)](LICENSE)
-[![govulncheck](https://img.shields.io/badge/govulncheck-clean-brightgreen)](https://github.com/mrz1836/hush/actions)
-[![gitleaks](https://img.shields.io/badge/gitleaks-zero-brightgreen)](https://github.com/mrz1836/hush/actions)
-
 **hush is a single Go binary that keeps every API key, OAuth token, and
 service credential encrypted on a single trusted host. Agents request
 short-lived, scoped sessions over Tailscale; the request is approved on
@@ -236,9 +228,6 @@ For the full architecture treatment, see [`docs/ARCHITECTURE.md`](docs/ARCHITECT
 The `SecureBytes` mlock pattern is custom-implemented in
 `internal/vault/securebytes/`; the design is inspired by
 [sigil](https://github.com/mrz1836/sigil) but takes no dependency on it.
-hush itself is built using the [Spec-Kit](https://github.com/github/spec-kit)
-spec-driven development methodology — see
-[`docs/SDD-GUIDE.md`](docs/SDD-GUIDE.md).
 
 <br>
 
@@ -246,22 +235,15 @@ spec-driven development methodology — see
 
 | Doc | Purpose |
 |-----|---------|
-| [`docs/SPEC.md`](docs/SPEC.md) | Functional requirements + acceptance criteria — single source of truth for what v0.1.0 ships |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Component model, trust boundaries, data flows, supervisor lifecycle |
-| [`docs/SECURITY.md`](docs/SECURITY.md) | Threat model, 7 security layers, residual risks, crypto requirements |
-| [`docs/CONFIG-SCHEMA.md`](docs/CONFIG-SCHEMA.md) | Server TOML and per-supervisor TOML schemas, defaults, validation rules |
-| [`docs/PACKAGE-MAP.md`](docs/PACKAGE-MAP.md) | Go package layout, ownership, dependency rules |
-| [`docs/LIFECYCLE-SCENARIOS.md`](docs/LIFECYCLE-SCENARIOS.md) | 15 named runtime scenarios — the AC-10 integration suite |
-| [`docs/DAEMONS.md`](docs/DAEMONS.md) | Supervisor pattern, refresh tuning, validator authoring, grace-window tradeoff |
-| [`docs/OPERATIONS.md`](docs/OPERATIONS.md) | Day-to-day modes, runbook list, operational truths |
-| [`docs/TESTING-STRATEGY.md`](docs/TESTING-STRATEGY.md) | Coverage targets, fuzz targets, test layers, sentinel-leak pattern |
-| [`docs/SDD-GUIDE.md`](docs/SDD-GUIDE.md) | Spec-driven development methodology used to build hush |
-| [`docs/SDD-PLAYBOOK.md`](docs/SDD-PLAYBOOK.md) | At-a-glance index of the SDD chunks + status dashboard |
-| [`docs/SDD-CATALOG.md`](docs/SDD-CATALOG.md) | Full catalog of chunks with ready-to-paste agent prompts |
-| [`docs/AC-MATRIX.md`](docs/AC-MATRIX.md) | AC-1..AC-10 ↔ chunk ↔ test path mapping (the v0.1.0 release gate) |
-| [`docs/IMPLEMENTATION-PLAN.md`](docs/IMPLEMENTATION-PLAN.md) | Phased build sequence, dependency direction, cross-phase invariants |
-| [`docs/TAILSCALE-ACLS.md`](docs/TAILSCALE-ACLS.md) | Recommended ACL pattern restricting the vault port to tagged agents |
-| [`docs/CLEAN-MACHINE.md`](docs/CLEAN-MACHINE.md) | Agent-machine cleanup checklist (Constitution Principle I) |
+| [`docs/OPERATIONS.md`](docs/OPERATIONS.md) | Setup, day-to-day modes, `--non-interactive`, Keychain recovery |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Component model, trust boundaries, supervisor lifecycle |
+| [`docs/SECURITY.md`](docs/SECURITY.md) | Threat model, 7 security layers, residual risks |
+| [`docs/CONFIG-SCHEMA.md`](docs/CONFIG-SCHEMA.md) | Server + supervisor TOML schemas, defaults, validation |
+| [`docs/DAEMONS.md`](docs/DAEMONS.md) | Supervisor pattern, refresh tuning, validator authoring |
+| [`docs/API.md`](docs/API.md) | HTTP endpoint reference |
+| [`docs/LIFECYCLE-SCENARIOS.md`](docs/LIFECYCLE-SCENARIOS.md) | 17 supervisor lifecycle scenarios — behavioral reference |
+| [`docs/TAILSCALE-ACLS.md`](docs/TAILSCALE-ACLS.md) | Recommended ACL pattern restricting the vault port |
+| [`docs/CLEAN-MACHINE.md`](docs/CLEAN-MACHINE.md) | Agent-machine cleanup checklist |
 | [`.specify/memory/constitution.md`](.specify/memory/constitution.md) | The 11 non-negotiable principles |
 
 <br>
@@ -287,8 +269,6 @@ none is on the v0.1.0 critical path):
 - TLS within Tailscale (defence-in-depth on top of WireGuard)
 - TOTP second factor on Discord approval
 - Custom validator authoring SDK
-
-Track progress on the v0.1.0 build via [`docs/SDD-PLAYBOOK.md`](docs/SDD-PLAYBOOK.md).
 
 <br>
 

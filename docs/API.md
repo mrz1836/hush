@@ -110,7 +110,6 @@ See `docs/CONFIG-SCHEMA.md` for the canonical JSON shape.
 
 ## Cross-references
 
-- request/response policy: `docs/SPEC.md`
 - transport and trust boundaries: `docs/ARCHITECTURE.md`
 - config fields and status schema: `docs/CONFIG-SCHEMA.md`
 - runtime scenarios: `docs/LIFECYCLE-SCENARIOS.md`

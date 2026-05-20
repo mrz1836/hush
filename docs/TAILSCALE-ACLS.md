@@ -192,8 +192,7 @@ These are tightenings; the **default pattern in this document is the floor**.
   doc covers the network perimeter only.
 - [`docs/CONFIG-SCHEMA.md`](CONFIG-SCHEMA.md) — server config:
   `[network] require_tailscale = true` and `allowed_cidrs`.
-- [`docs/SPEC.md`](SPEC.md) FR-8 — Tailscale-only network boundary
-  (functional requirement).
 - [`docs/CLEAN-MACHINE.md`](CLEAN-MACHINE.md) — companion checklist for
   removing on-host secrets from agent machines.
-- Constitution Principle VI: `.specify/memory/constitution.md`.
+- Constitution Principle VI (Tailscale-only network boundary):
+  `.specify/memory/constitution.md`.

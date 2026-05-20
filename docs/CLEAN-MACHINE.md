@@ -257,7 +257,7 @@ it to read from env vars before installing.
   machines (the threat-eliminated list).
 - [`docs/DAEMONS.md`](DAEMONS.md) — running long-running jobs under
   `hush supervise` instead of dotfile env vars.
-- [`docs/SPEC.md`](SPEC.md) Constitution Principle I — zero files at rest
-  on agent machines (non-negotiable).
+- Constitution Principle I (zero files at rest on agent machines):
+  `.specify/memory/constitution.md`.
 - [`docs/TAILSCALE-ACLS.md`](TAILSCALE-ACLS.md) — companion network-layer
   hardening.

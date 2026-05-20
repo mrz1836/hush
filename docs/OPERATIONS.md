@@ -452,9 +452,8 @@ If a doc surface legitimately needs to *describe* the forbidden constructs (e.g.
 
 ## 10. Cross-references
 
-- functional/acceptance scope: `docs/SPEC.md`
 - daemon lifecycle details: `docs/LIFECYCLE-SCENARIOS.md`
 - config locations and fields: `docs/CONFIG-SCHEMA.md`
-- build sequence: `docs/IMPLEMENTATION-PLAN.md`
+- supervisor pattern + validators: `docs/DAEMONS.md`
 - security posture (including Keychain vs env-token positioning): `docs/SECURITY.md`
 - structured error sentinels: `internal/cli/setup/errors.go`
