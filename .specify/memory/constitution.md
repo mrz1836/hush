@@ -1,20 +1,19 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version Change: 1.1.0 → 1.1.1 (PATCH amendment — SDD-31 FR-016)
+Version Change: 1.1.1 → 1.2.0 (MINOR amendment — accuracy pass for open-source release)
 Modified Principles:
-  - VIII (Testing Discipline) — codifies the existing security-critical
-    package set as a machine-readable fenced block so the
-    `.github/scripts/coverage-threshold/` tool can byte-equality-assert
-    against it (FR-016). No policy change; clarification only.
-Added Principles: N/A (PATCH)
+  - VII (CLI Design Standards) — subcommand list corrected to match the
+    shipped binary: added `server-url`, `keychain`, and `smoke`.
+  - VIII (Testing Discipline) — removed the obsolete acceptance-criteria
+    table and references to deleted spec docs; corrected the coverage
+    floor (90%) and the fuzz-target list (eight targets) to match the
+    `.github/scripts/coverage-threshold` tool and the repo's fuzz tests.
+Added Principles: N/A
 Added Sections: N/A
-Removed Sections: N/A
-Templates Requiring Updates:
-  - ✅ docs/SPEC.md (no change — AC-9 owner is now SDD-31 workflow files)
-  - ✅ docs/AC-MATRIX.md (AC-9 row updated by SDD-31)
-  - ✅ docs/PACKAGE-MAP.md (.github/workflows/ entry added by SDD-31)
-  - ✅ docs/TESTING-STRATEGY.md (aligned, no change required)
+Removed Sections: "Acceptance Criteria → required test types" table — the
+  acceptance-criteria vocabulary was retired project-wide.
+Templates Requiring Updates: N/A
 Follow-up TODOs: N/A
 -->
 
@@ -80,7 +79,7 @@ NOT enable secret extraction.
 **Required layers:**
 1. **BIP32 HD key hierarchy** — all signing/encryption keys derived at runtime from a
    passphrase + salt. NO key files on disk.
-2. **ES256K JWT signing** — asymmetric session tokens via secp256k1 (go-bitcoin)
+2. **ES256K JWT signing** — asymmetric session tokens via secp256k1 (decred/dcrd)
 3. **ECIES transport encryption** — secret values encrypted end-to-end client→server
 4. **ECDSA client request signing** — every client request MUST be signed with a
    registered client key
@@ -138,8 +137,8 @@ Silent stale-credential failures are unacceptable.
   to keep the vault isolated from outbound internet)
 - Validators MUST exist for: anthropic, anthropic-oauth, openai, google-ai, github
 - Exit code 78 MUST be the contract between child and supervisor for "my creds are stale"
-- A local Unix status socket at `$XDG_RUNTIME_DIR/hush-supervise-{name}.sock` MUST expose
-  freshness state to `hush client status`
+- A per-supervisor local Unix status socket (`0600`, OS-specific path) MUST
+  expose freshness state to `hush client status`
 - Log-pattern auth-failure tailing is alert-only — it MUST NOT control supervisor state
 - Vault server unreachability, Discord unavailability, and validator failures MUST all
   produce distinct, actionable alerts in Discord
@@ -170,14 +169,17 @@ The binary is small, single-file, with cobra subcommands.
 
 **Subcommands (v0.1.0):**
 - `serve` — start the vault server
-- `request` — interactive client request (use --exec to wrap shell or app)
-- `supervise` — run a child process under supervisor lifecycle
-- `init` — interactive bootstrap (passphrase, vault, keychain)
-- `secret` — manage secrets in the vault (add/remove/list/rotate)
-- `client` — client-side helpers (status, refresh)
+- `server-url` — print the configured server URL from `--config`
 - `health` — server health check
-- `revoke` — revoke an active token by jti
 - `version` — print version + build info
+- `revoke` — revoke an active token by jti
+- `init` — bootstrap the vault host or enroll an agent machine
+- `keychain` — inspect or repair the Discord bot-token Keychain item
+- `request` — interactive client request (use --exec to wrap shell or app)
+- `secret` — manage secrets in the vault (add/remove/list/rotate)
+- `smoke` — run the guided fake-secret end-to-end smoke test
+- `supervise` — run a child process under supervisor lifecycle
+- `client` — client-side helpers (status, refresh)
 
 **Non-negotiables:**
 - Global flags: `--config/-c`, `--verbose/-v`, `--quiet/-q`, `--no-color`
@@ -193,8 +195,8 @@ and reduces the chance of misuse via wrong invocation.
 ### VIII. Testing Discipline
 
 Security-critical code requires 100% test coverage. Fuzz testing is mandatory for all
-parsers and crypto entry points. Every acceptance criterion in `docs/SPEC.md`
-must map to a concrete, runnable test.
+parsers and crypto entry points. Every behavioral scenario in
+`docs/LIFECYCLE-SCENARIOS.md` must map to a concrete, runnable test.
 
 **Non-negotiables:**
 - Table-driven unit tests for all core functions, named per
@@ -204,19 +206,21 @@ must map to a concrete, runnable test.
 - Pre-commit MUST run `golangci-lint` + `go test -race`
 - Coverage is tracked by `codecov.yml`. No PR may regress overall coverage by
   more than 2%
-- v0.1.0 tag requires **≥80% overall coverage** AND **100% on security-critical
-  packages** (vault, keys, token, transport — i.e. the crypto/key/JWT/ECIES/
-  signing surface called out in `docs/SPEC.md` AC-9)
+- v0.1.0 tag requires **≥90% overall coverage** AND **100% on security-critical
+  packages** (vault, keys, token, transport — the crypto/key/JWT/ECIES/signing
+  surface enumerated in the machine-readable block below)
 
-**Mandatory fuzz targets** (from `docs/TESTING-STRATEGY.md` §2; required to run
-clean for ≥60s each in CI before v0.1.0 tag):
+**Mandatory fuzz targets** (required to run clean for ≥60s each in CI before
+the v0.1.0 tag):
 
-1. Vault file decode
-2. JWT parse/validate
-3. ECIES decrypt input handling
-4. Request signature payload parsing
-5. Supervisor config TOML parsing
-6. Status socket JSON encoding (when custom parsing exists)
+1. Vault file decode (`FuzzVaultDecode`)
+2. JWT parse/validate (`FuzzJWTValidate`)
+3. ECIES decrypt input handling (`FuzzECIESDecrypt`)
+4. Request signature payload parsing (`FuzzVerifyRequest`)
+5. Server config TOML parsing (`FuzzServerTOML`)
+6. Supervisor config TOML parsing (`FuzzSuperviseTOML`)
+7. Key derivation (`FuzzDeriveMaster`)
+8. Status socket JSON encoding (`FuzzStatusJSON_Encode`)
 
 Fuzz goals: no panics, no unbounded memory growth, malformed input returns
 explicit errors, no partial secret exposure in error messages.
@@ -229,28 +233,13 @@ explicit errors, no partial secret exposure in error messages.
 | Medium | Discord bot logic, CLI flags, config parsing | 85% |
 | Low | Help text, log formatting | 70% |
 
-**Acceptance Criteria → required test types:**
-| AC | Title | Unit | Fuzz | Integration |
-|----|-------|------|------|-------------|
-| AC-1 | `hush serve` startup | ✅ | — | ✅ |
-| AC-2 | Vault round-trip + SIGHUP reload | ✅ | ✅ (vault decode) | ✅ |
-| AC-3 | Discord approval flow | ✅ | — | ✅ |
-| AC-4 | JWT lifecycle (IP-bind, max-uses, revoke, claims) | ✅ | ✅ (JWT parse) | ✅ |
-| AC-5 | `--exec` injection safety | ✅ | — | ✅ |
-| AC-6 | Per-machine client keys + Keychain ACL | ✅ | — | ✅ |
-| AC-7 | End-to-end ECIES, no plaintext on the wire | ✅ | ✅ (ECIES decrypt) | ✅ |
-| AC-8 | Server hardening (bind, ACL, perms, NTP) | ✅ | ✅ (TOML parse) | ✅ |
-| AC-9 | Coverage + fuzz targets | — | ✅ (all six) | — |
-| AC-10 | Supervisor lifecycle (15 scenarios) | ✅ | ✅ (request signature, status socket) | ✅ |
+**Authoritative references:** `.github/tech-conventions/testing-standards.md`.
 
-**Authoritative references:** `.github/tech-conventions/testing-standards.md`,
-`docs/TESTING-STRATEGY.md`.
-
-**Security-critical packages** (FR-016 byte-equality anchor — the
-`.github/scripts/coverage-threshold/` tool reads the block below verbatim
+**Security-critical packages** (byte-equality anchor — the
+`.github/scripts/coverage-threshold` tool reads the block below verbatim
 and fails CI on divergence):
 
-<!-- security-critical-packages: BEGIN (FR-016 anchor — DO NOT EDIT without amending coverage-threshold/compute.go) -->
+<!-- security-critical-packages: BEGIN (DO NOT EDIT without amending .github/scripts/coverage-threshold/compute.go) -->
 internal/keys
 internal/vault
 internal/vault/securebytes
@@ -332,7 +321,7 @@ at all. Observability is mandatory; secret leakage in logs is unforgivable.
   ECDSA-signed audit chain (Principle III, layer 6) is the source of truth
   for "who fetched what, when". Operational logs are for debugging and MUST
   NOT duplicate audit entries.
-- **Discord alert tiers** (matches `docs/OPERATIONS.md`):
+- **Discord alert tiers:**
   - **Critical (page Z):** vault server unreachable, NTP drift > 60s on
     startup, audit-chain signature break, repeated denied requests from a
     single client.
@@ -342,8 +331,8 @@ at all. Observability is mandatory; secret leakage in logs is unforgivable.
   - **Info (audit log only, no Discord):** routine approve/deny, JWT
     issuance, secret rotation.
 - **Metrics:** processes expose minimal counters/gauges only over the local
-  Unix status socket (`$XDG_RUNTIME_DIR/hush-supervise-{name}.sock` per
-  Principle V) — no Prometheus endpoint, no remote metrics in v0.1.0.
+  Unix status socket (per Principle V) — no Prometheus endpoint, no remote
+  metrics in v0.1.0.
 
 **Authoritative references:** `docs/OPERATIONS.md`,
 `.github/tech-conventions/security-practices.md`.
@@ -459,8 +448,8 @@ All code MUST pass before merge:
   security-aware review
 - New dependencies require justification and basic supply-chain audit
 - The supervisor state machine and Discord bot interaction logic require integration
-  test coverage of all 15 lifecycle scenarios documented in `docs/SPEC.md` AC-10
-  (source of truth: `docs/LIFECYCLE-SCENARIOS.md`)
+  test coverage of all 15 lifecycle scenarios documented in
+  `docs/LIFECYCLE-SCENARIOS.md`
 
 ## Governance
 
@@ -473,7 +462,7 @@ Amendments require:
    - **MAJOR:** Principle removal or incompatible redefinition
    - **MINOR:** New principle or materially expanded guidance
    - **PATCH:** Clarifications, wording, non-semantic refinements
-4. Update to all dependent documentation (SPEC.md, MVP.md, SECURITY.md, ARCHITECTURE.md)
+4. Update to all dependent documentation (ARCHITECTURE.md, SECURITY.md, OPERATIONS.md)
 
 **Compliance:** All PRs and reviews MUST verify adherence to these principles.
 Deviations MUST be explicitly justified in the Complexity Tracking section of
@@ -481,10 +470,10 @@ implementation plans.
 
 **Public release:** The repository starts PRIVATE. Z transitions it to public only
 after:
-- All v0.1.0 acceptance criteria pass
+- All v0.1.0 release criteria pass (lifecycle scenarios in `docs/LIFECYCLE-SCENARIOS.md`)
 - 90%+ test coverage achieved
 - `magex format:fix && magex lint && magex test:race` all green
 - `go-pre-commit` zero gitleaks findings
 - README, ARCHITECTURE, SECURITY docs polished
 
-**Version:** 1.1.1 | **Ratified:** 2026-04-26 | **Last Amended:** 2026-05-14
+**Version:** 1.2.0 | **Ratified:** 2026-04-26 | **Last Amended:** 2026-05-20
