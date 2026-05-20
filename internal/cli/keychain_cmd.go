@@ -20,6 +20,7 @@ type keychainCmdDeps struct {
 	keychainFactory func(string) (keychain.Keychain, error)
 	binaryPath      func() (string, error)
 	repairACL       func(context.Context, keychain.Keychain, string, string) error
+	platformACL     func() bool
 }
 
 type keychainACLRepairer interface {
@@ -45,8 +46,9 @@ func productionKeychainCmdDeps() (*keychainCmdDeps, error) {
 		keychainFactory: func(path string) (keychain.Keychain, error) {
 			return keychain.NewAtPath(slog.Default(), path)
 		},
-		binaryPath: os.Executable,
-		repairACL:  defaultKeychainACLRepair,
+		binaryPath:  os.Executable,
+		repairACL:   defaultKeychainACLRepair,
+		platformACL: keychain.PerBinaryACLSupported,
 	}, nil
 }
 
@@ -135,7 +137,7 @@ type keychainCmdContext struct {
 }
 
 func prepareKeychainCmd(ctx context.Context, cmd *cobra.Command, stderr *Stream, deps *keychainCmdDeps, op string) (*keychainCmdContext, error) {
-	if !keychain.PerBinaryACLSupported() {
+	if !deps.platformACL() {
 		_ = stderr.WriteText(initMsgPlatformUnsupported, runtime.GOOS)
 		return nil, fmt.Errorf("%w: %s", errPlatformACLUnsupported, runtime.GOOS)
 	}

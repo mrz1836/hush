@@ -32,9 +32,10 @@ func (r *repairableACLKeychain) RepairACL(context.Context, string, string) error
 
 func newKeychainCmdDepsForTest(kc keychain.Keychain) *keychainCmdDeps {
 	return &keychainCmdDeps{
-		keychain:   kc,
-		binaryPath: func() (string, error) { return testInitBinaryPath, nil },
-		repairACL:  defaultKeychainACLRepair,
+		keychain:    kc,
+		binaryPath:  func() (string, error) { return testInitBinaryPath, nil },
+		repairACL:   defaultKeychainACLRepair,
+		platformACL: func() bool { return true },
 	}
 }
 

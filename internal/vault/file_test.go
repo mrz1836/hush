@@ -185,10 +185,23 @@ func TestVault_RoundTrip_5Secrets(t *testing.T) {
 	ctx := context.Background()
 
 	names := []string{"ALPHA", "BRAVO", "CHARLIE", "DELTA", "ECHO"}
+	// CHARLIE and ECHO carry multi-page payloads (8 KiB / 64 KiB) so large-value
+	// round-trip is covered here; five secrets lock only ~10 mlock regions, well
+	// under any RLIMIT_MEMLOCK ceiling.
+	rng := rand.New(rand.NewPCG(7, 0))
+	bigSizes := map[string]int{"CHARLIE": 8 * 1024, "ECHO": 64 * 1024}
 	secrets := make([]Secret, len(names))
 	values := make([][]byte, len(names))
 	for i, n := range names {
-		v := []byte(fmt.Sprintf("value-for-%s", n))
+		var v []byte
+		if size, big := bigSizes[n]; big {
+			v = make([]byte, size)
+			for j := range v {
+				v[j] = byte(rng.Uint32())
+			}
+		} else {
+			v = []byte(fmt.Sprintf("value-for-%s", n))
+		}
 		values[i] = append([]byte(nil), v...) // save copy before makeSecret zeroes v
 		secrets[i] = makeSecret(t, n, "desc-"+n, v)
 	}
@@ -241,6 +254,12 @@ func TestVault_RoundTrip_500Secrets(t *testing.T) {
 	}
 	secrets := make([]Secret, 500)
 	values := make([][]byte, 500)
+	// Locked-memory budget: mlock pins whole 4 KiB pages, and at peak this
+	// test holds ~1000 locked SecureBytes regions (500 source + 500 in the
+	// loaded store). Every payload tier here stays within a single page, so
+	// peak locked memory is ~4 MiB — within the GitHub Actions runner's fixed
+	// 8 MiB RLIMIT_MEMLOCK. Large-value (8 KiB / 64 KiB) round-trip coverage
+	// lives in TestVault_RoundTrip_5Secrets, which locks far fewer regions.
 	for i := range secrets {
 		name := fmt.Sprintf("SECRET_%04d", i)
 		var val []byte
@@ -248,10 +267,10 @@ func TestVault_RoundTrip_500Secrets(t *testing.T) {
 		case 0:
 			val = []byte{byte(i)}
 		case 1:
-			val = make([]byte, 8*1024)
+			val = make([]byte, 2*1024)
 			fillRand(val)
 		case 2:
-			val = make([]byte, 64*1024)
+			val = make([]byte, 4*1024)
 			fillRand(val)
 		}
 		values[i] = append([]byte(nil), val...) // save copy before makeSecret zeroes val
