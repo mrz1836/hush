@@ -12,12 +12,15 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // Static test sentinels — satisfy err113 (no dynamic errors in function bodies).
 var (
-	errTestMLock   = errors.New("simulated mlock failure")
-	errTestMUnlock = errors.New("simulated munlock failure")
+	errTestMLock     = errors.New("simulated mlock failure")
+	errTestMUnlock   = errors.New("simulated munlock failure")
+	errTestGetrlimit = errors.New("simulated getrlimit failure")
 )
 
 func TestSecureBytes_New_CopiesAndZeroesInput(t *testing.T) { //nolint:gocognit,gocyclo // table-driven sub-tests; complexity is structural, not accidental
@@ -444,5 +447,54 @@ func TestSecureBytes_Destroy_MunlockError(t *testing.T) {
 	// Container must be marked destroyed despite the munlock error.
 	if useErr := sb.Use(func(_ []byte) {}); !errors.Is(useErr, ErrDestroyed) {
 		t.Errorf("Use after failed Destroy = %v, want ErrDestroyed", useErr)
+	}
+}
+
+// TestRaiseMemlockLimit_GetrlimitError verifies a getrlimit failure
+// leaves the limit untouched and skips setrlimit entirely.
+func TestRaiseMemlockLimit_GetrlimitError(t *testing.T) {
+	restore := SetRlimitHooks(
+		func(int, *unix.Rlimit) error { return errTestGetrlimit },
+		func(int, *unix.Rlimit) error {
+			t.Error("setrlimit must not run after getrlimit failure")
+			return nil
+		},
+	)
+	defer restore()
+	RaiseMemlockLimit()
+}
+
+// TestRaiseMemlockLimit_AlreadyAtHardLimit verifies setrlimit is skipped
+// when the soft limit already meets the hard limit.
+func TestRaiseMemlockLimit_AlreadyAtHardLimit(t *testing.T) {
+	restore := SetRlimitHooks(
+		func(_ int, l *unix.Rlimit) error { l.Cur, l.Max = 100, 100; return nil },
+		func(int, *unix.Rlimit) error {
+			t.Error("setrlimit must not run when soft limit already meets hard limit")
+			return nil
+		},
+	)
+	defer restore()
+	RaiseMemlockLimit()
+}
+
+// TestRaiseMemlockLimit_RaisesSoftToHard verifies the soft limit is
+// lifted to the hard limit when it is the lower of the two.
+func TestRaiseMemlockLimit_RaisesSoftToHard(t *testing.T) {
+	var got unix.Rlimit
+	called := false
+	restore := SetRlimitHooks(
+		func(_ int, l *unix.Rlimit) error { l.Cur, l.Max = 8, 64; return nil },
+		func(_ int, l *unix.Rlimit) error { called = true; got = *l; return errTestGetrlimit },
+	)
+	defer restore()
+
+	RaiseMemlockLimit()
+
+	if !called {
+		t.Fatal("setrlimit was not called")
+	}
+	if got.Cur != 64 || got.Max != 64 {
+		t.Errorf("setrlimit got Cur=%d Max=%d, want 64/64", got.Cur, got.Max)
 	}
 }
