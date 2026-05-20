@@ -240,7 +240,8 @@ func TestNonceCache_RunSweeperFires(t *testing.T) {
 }
 
 func TestNewNonceCache_NoGoroutineSpawned(t *testing.T) {
-	t.Parallel()
+	// No t.Parallel(): runtime.NumGoroutine() is process-global, so concurrent
+	// sibling tests would pollute the before/after comparison below.
 	before := runtime.NumGoroutine()
 	_ = NewNonceCache()
 	after := runtime.NumGoroutine()
@@ -254,7 +255,6 @@ func TestNonceCache_RunStopsOnContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cache := newNonceCacheForTest(10 * time.Millisecond)
 
-	before := runtime.NumGoroutine()
 	done := make(chan struct{})
 	go func() {
 		cache.Run(ctx)
@@ -267,12 +267,6 @@ func TestNonceCache_RunStopsOnContextCancel(t *testing.T) {
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("Run did not return within 500ms after context cancel")
 	}
-
-	// Allow goroutine to fully exit.
-	runtime.Gosched()
-	after := runtime.NumGoroutine()
-	_ = before
-	_ = after
 }
 
 func TestNonceCache_RunLogsStoppedOnce(t *testing.T) {

@@ -494,7 +494,8 @@ func TestWatchdog_RunSingleShot(t *testing.T) {
 }
 
 func TestWatchdog_RunStopsOnCtxCancel(t *testing.T) {
-	t.Parallel()
+	// No t.Parallel(): runtime.NumGoroutine() is process-global, so concurrent
+	// sibling tests would pollute the pre/post comparison below.
 	logger, _ := newTestLogger()
 	alerts := make(chan Event, 1)
 	wd, err := NewWatchdog(nil, alerts, logger)
