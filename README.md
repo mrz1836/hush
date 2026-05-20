@@ -1,7 +1,108 @@
-# hush
+<div align="center">
 
-> **Discord-gated secrets broker for AI agents.**
-> One passphrase. No key files. No dotfiles on agent disks.
+# 🤫&nbsp;&nbsp;hush
+
+**Discord-gated secrets broker for AI agents**
+
+One passphrase. No key files. No dotfiles on agent disks.
+
+<br/>
+
+<a href="https://github.com/mrz1836/hush/releases"><img src="https://img.shields.io/github/release-pre/mrz1836/hush?include_prereleases&style=flat-square&logo=github&color=black" alt="Release"></a>
+<a href="https://golang.org/"><img src="https://img.shields.io/github/go-mod/go-version/mrz1836/hush?style=flat-square&logo=go&color=00ADD8" alt="Go Version"></a>
+<a href="https://github.com/mrz1836/hush/blob/master/LICENSE"><img src="https://img.shields.io/github/license/mrz1836/hush?style=flat-square&color=blue&v=2" alt="License"></a>
+
+<br/>
+
+<table align="center" border="0">
+  <tr>
+    <td align="right">
+       <code>CI / CD</code> &nbsp;&nbsp;
+    </td>
+    <td align="left">
+       <a href="https://github.com/mrz1836/hush/actions"><img src="https://img.shields.io/github/actions/workflow/status/mrz1836/hush/fortress.yml?branch=master&label=build&logo=github&style=flat-square" alt="Build"></a>
+       <a href="https://github.com/mrz1836/hush/actions"><img src="https://img.shields.io/github/last-commit/mrz1836/hush?style=flat-square&logo=git&logoColor=white&label=last%20update" alt="Last Commit"></a>
+    </td>
+    <td align="right">
+       &nbsp;&nbsp;&nbsp;&nbsp; <code>Quality</code> &nbsp;&nbsp;
+    </td>
+    <td align="left">
+       <a href="https://goreportcard.com/report/github.com/mrz1836/hush"><img src="https://goreportcard.com/badge/github.com/mrz1836/hush?style=flat-square&v=2" alt="Go Report"></a>
+       <a href="https://codecov.io/gh/mrz1836/hush"><img src="https://codecov.io/gh/mrz1836/hush/branch/master/graph/badge.svg?style=flat-square" alt="Coverage"></a>
+    </td>
+  </tr>
+
+  <tr>
+    <td align="right">
+       <code>Security</code> &nbsp;&nbsp;
+    </td>
+    <td align="left">
+       <a href="https://scorecard.dev/viewer/?uri=github.com/mrz1836/hush"><img src="https://api.scorecard.dev/projects/github.com/mrz1836/hush/badge?style=flat-square" alt="Scorecard"></a>
+       <a href=".github/SECURITY.md"><img src="https://img.shields.io/badge/policy-active-success?style=flat-square&logo=security&logoColor=white" alt="Security"></a>
+    </td>
+    <td align="right">
+       &nbsp;&nbsp;&nbsp;&nbsp; <code>Community</code> &nbsp;&nbsp;
+    </td>
+    <td align="left">
+       <a href="https://github.com/mrz1836/hush/graphs/contributors"><img src="https://img.shields.io/github/contributors/mrz1836/hush?style=flat-square&color=orange" alt="Contributors"></a>
+       <a href="https://mrz1818.com/"><img src="https://img.shields.io/badge/donate-bitcoin-ff9900?style=flat-square&logo=bitcoin" alt="Bitcoin"></a>
+    </td>
+  </tr>
+</table>
+
+</div>
+
+<br/>
+<br/>
+
+<div align="center">
+
+### <code>Project Navigation</code>
+
+</div>
+
+<table align="center">
+  <tr>
+    <td align="center" width="33%">
+       🚀&nbsp;<a href="#-installation"><code>Installation</code></a>
+    </td>
+    <td align="center" width="33%">
+       ⚡&nbsp;<a href="#-quick-start"><code>Quick&nbsp;Start</code></a>
+    </td>
+    <td align="center" width="33%">
+       📚&nbsp;<a href="#-documentation"><code>Documentation</code></a>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+       🔐&nbsp;<a href="#-security"><code>Security</code></a>
+    </td>
+    <td align="center">
+      🛠️&nbsp;<a href="#-code-standards"><code>Code&nbsp;Standards</code></a>
+    </td>
+    <td align="center">
+      🧪&nbsp;<a href="#-examples--tests"><code>Examples&nbsp;&&nbsp;Tests</code></a>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      🤖&nbsp;<a href="#-ai-usage--assistant-guidelines"><code>AI&nbsp;Usage</code></a>
+    </td>
+    <td align="center">
+       ⚖️&nbsp;<a href="#-license"><code>License</code></a>
+    </td>
+    <td align="center">
+       🤝&nbsp;<a href="#-contributing"><code>Contributing</code></a>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" colspan="3">
+       👥&nbsp;<a href="#-maintainers"><code>Maintainers</code></a>
+    </td>
+  </tr>
+</table>
+
+<br/>
 
 **hush is a single Go binary that keeps every API key, OAuth token, and
 service credential encrypted on a single trusted host. Agents request
@@ -17,96 +118,7 @@ is for you. Vault, 1Password CLI, and dotfile-based env vars all leave
 files on disk that commodity malware grep for first. hush makes those
 files not exist.
 
-<br>
-
-## Quick start
-
-> **Status:** v0.1.0 is a private MVP. Treat the steps below as the
-> documented happy path, not a guarantee.
-
-Prerequisites: a vault host and an agent host on the same Tailscale
-tailnet, plus a Discord bot you control
-(<https://discord.com/developers/applications>) for the approval channel.
-
-Build and install:
-
-```bash
-git clone https://github.com/mrz1836/hush.git && cd hush
-magex build && sudo install -m 0755 cmd/hush/hush /usr/local/bin/hush
-```
-
-Fast confidence check — **one command, fake secret, real Discord approval**:
-
-```bash
-hush smoke --state-dir ~/.hush-smoke --reset
-```
-
-`hush smoke` walks the setup prompts, creates an isolated test vault, adds
-`HUSH_SMOKE_TEST=hello-from-hush`, starts a temporary Tailscale-only server,
-enrolls a client, asks you to approve in Discord, verifies the fake secret,
-and then shuts the temporary server down. Clean smoke artifacts safely with
-`hush smoke clean` (archives by default).
-
-Bootstrap the vault host manually:
-
-```bash
-hush init server          # guided / interactive; preflight + prompts
-hush secret add OPENAI_API_KEY
-hush serve                # binds Tailscale interface, brokers approvals
-```
-
-During `hush init server`, set `discord_approval_channel_id` if you want
-approvals in a Discord channel instead of owner DMs. On macOS, if the login
-Keychain is locked or unavailable, choose the env-token fallback and run
-`hush serve` with `HUSH_DISCORD_BOT_TOKEN` exported in that terminal.
-
-Enrol the agent host:
-
-```bash
-hush init client --machine-index 1
-HUSH_SERVER="$(hush --config ~/.hush/config.toml server-url)"
-hush request \
-  --server "$HUSH_SERVER" \
-  --machine-index 1 --scope OPENAI_API_KEY \
-  --max-uses 1 --ttl 5m --reason "smoke test" \
-  --exec printenv -- OPENAI_API_KEY
-```
-
-Approve on Discord; the child process you named in `--exec` runs with
-`OPENAI_API_KEY` in its environment — and only there. `--exec` names a
-program, not a shell string; pass child arguments after `--`. Nothing is
-written to disk on the agent host.
-
-`hush init server` is the canonical first-run entry point. It runs a
-diagnostic-first preflight, prompts for the inputs it actually needs,
-classifies pre-existing state per-artifact, and never silently overwrites.
-When it asks for a listen address, use the **vault host's Tailscale IPv4**
-plus a free port (for example, run `printf '%s:7743\n' "$(tailscale ip -4)"`
-on the server host). Do not use the laptop/client IP.
-For the full walkthrough — Keychain ACL recovery, clock-skew override,
-`--non-interactive` mode — see [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
-For Keychain vs `HUSH_DISCORD_BOT_TOKEN` positioning and the threat
-model, see [`docs/SECURITY.md`](docs/SECURITY.md) §2.4. For long-running
-daemons, see [`docs/DAEMONS.md`](docs/DAEMONS.md) and
-[`deploy/examples/supervisors/`](deploy/examples/supervisors/).
-For server + supervisor TOML schemas, see
-[`docs/CONFIG-SCHEMA.md`](docs/CONFIG-SCHEMA.md).
-
-<br>
-
-## At a glance
-
-**What hush does:**
-
-- Keeps every secret encrypted in a single AES-256-GCM + Argon2id (256MB) vault file on one trusted host.
-- Requires phone approval (Discord DM with interactive buttons) for every fresh session.
-- Delivers secrets ECIES-encrypted end-to-end into agent process memory only — no disk writes on the agent.
-
-**What hush explicitly does NOT do (v0.1.0):**
-
-- No multi-owner approvals (a single configured operator approves; multi-owner is post-v0.1.0 future scope).
-- No cloud KMS / SaaS dependency. The vault is self-hosted and offline-capable.
-- No public network exposure. The vault server is bound to a Tailscale interface and refuses to start otherwise.
+<br/>
 
 ```
                             TAILSCALE MESH
@@ -136,9 +148,119 @@ For server + supervisor TOML schemas, see
   └─────────────────────────────────────────────────────────────────────┘
 ```
 
+<br/>
+
+## 🚀 Installation
+
+**hush** requires a [supported release of Go](https://golang.org/doc/devel/release.html#policy)
+(Go 1.26+) and is built `CGO_ENABLED=0` — a single static binary.
+
+> **Status:** v0.1.0 is a private MVP. Treat the steps below as the
+> documented happy path, not a guarantee.
+
+Prerequisites: a vault host and an agent host on the same Tailscale
+tailnet, plus a Discord bot you control
+(<https://discord.com/developers/applications>) for the approval channel.
+
+### Build from source
+
+```bash
+git clone https://github.com/mrz1836/hush.git && cd hush
+magex build && sudo install -m 0755 cmd/hush/hush /usr/local/bin/hush
+```
+
+<br/>
+
+## ⚡ Quick Start
+
+Get up and running with these essential commands:
+
 <br>
 
-## Why hush exists
+### Run a confidence check
+
+**One command, fake secret, real Discord approval:**
+
+```bash
+hush smoke --state-dir ~/.hush-smoke --reset
+```
+
+`hush smoke` walks the setup prompts, creates an isolated test vault, adds
+`HUSH_SMOKE_TEST=hello-from-hush`, starts a temporary Tailscale-only server,
+enrolls a client, asks you to approve in Discord, verifies the fake secret,
+and then shuts the temporary server down. Clean smoke artifacts safely with
+`hush smoke clean` (archives by default).
+
+<br>
+
+### Bootstrap the vault host
+
+```bash
+hush init server          # guided / interactive; preflight + prompts
+hush secret add OPENAI_API_KEY
+hush serve                # binds Tailscale interface, brokers approvals
+```
+
+`hush init server` is the canonical first-run entry point. It runs a
+diagnostic-first preflight, prompts for the inputs it actually needs,
+classifies pre-existing state per-artifact, and never silently overwrites.
+When it asks for a listen address, use the **vault host's Tailscale IPv4**
+plus a free port (for example, run `printf '%s:7743\n' "$(tailscale ip -4)"`
+on the server host). Do not use the laptop/client IP.
+
+During `hush init server`, set `discord_approval_channel_id` if you want
+approvals in a Discord channel instead of owner DMs. On macOS, if the login
+Keychain is locked or unavailable, choose the env-token fallback and run
+`hush serve` with `HUSH_DISCORD_BOT_TOKEN` exported in that terminal.
+
+<br>
+
+### Enrol the agent host
+
+```bash
+hush init client --machine-index 1
+HUSH_SERVER="$(hush --config ~/.hush/config.toml server-url)"
+hush request \
+  --server "$HUSH_SERVER" \
+  --machine-index 1 --scope OPENAI_API_KEY \
+  --max-uses 1 --ttl 5m --reason "smoke test" \
+  --exec printenv -- OPENAI_API_KEY
+```
+
+Approve on Discord; the child process you named in `--exec` runs with
+`OPENAI_API_KEY` in its environment — and only there. `--exec` names a
+program, not a shell string; pass child arguments after `--`. Nothing is
+written to disk on the agent host.
+
+<br/>
+
+> 📖 **For the full walkthrough — Keychain ACL recovery, clock-skew override,
+> `--non-interactive` mode — see [`docs/OPERATIONS.md`](docs/OPERATIONS.md).**
+> For Keychain vs `HUSH_DISCORD_BOT_TOKEN` positioning and the threat model,
+> see [`docs/SECURITY.md`](docs/SECURITY.md) §2.4. For long-running daemons,
+> see [`docs/DAEMONS.md`](docs/DAEMONS.md) and
+> [`deploy/examples/supervisors/`](deploy/examples/supervisors/). For server +
+> supervisor TOML schemas, see [`docs/CONFIG-SCHEMA.md`](docs/CONFIG-SCHEMA.md).
+
+<br/>
+
+## At a glance
+
+**What hush does:**
+
+- Keeps every secret encrypted in a single AES-256-GCM + Argon2id (256MB) vault file on one trusted host.
+- Requires phone approval (Discord DM with interactive buttons) for every fresh session.
+- Delivers secrets ECIES-encrypted end-to-end into agent process memory only — no disk writes on the agent.
+
+**What hush explicitly does NOT do (v0.1.0):**
+
+- No multi-owner approvals (a single configured operator approves; multi-owner is post-v0.1.0 future scope).
+- No cloud KMS / SaaS dependency. The vault is self-hosted and offline-capable.
+- No public network exposure. The vault server is bound to a Tailscale interface and refuses to start otherwise.
+
+<br/>
+
+### Why hush exists
 
 When untrusted code lands on a developer machine — via npm/pip
 supply-chain attacks, LLM-generated scripts, or trojans masquerading as
@@ -153,9 +275,9 @@ process memory and zeroed when the process exits. Nothing on disk.
 
 For the full threat model, see [`docs/SECURITY.md`](docs/SECURITY.md).
 
-<br>
+<br/>
 
-## Architecture summary
+### Architecture summary
 
 hush is a single Go binary playing three roles:
 
@@ -200,9 +322,9 @@ be wired without changing the rest of the system.
 
 For the full architecture treatment, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
-<br>
+<br/>
 
-## Tech stack
+### Tech stack
 
 - **[Go 1.26+](https://go.dev/)** — single static binary, `CGO_ENABLED=0`
   exclusively (Constitution Principle IX).
@@ -229,9 +351,11 @@ The `SecureBytes` mlock pattern is custom-implemented in
 `internal/vault/securebytes/`; the design is inspired by
 [sigil](https://github.com/mrz1836/sigil) but takes no dependency on it.
 
-<br>
+<br/>
 
-## Documentation
+## 📚 Documentation
+
+View the comprehensive documentation for hush:
 
 | Doc | Purpose |
 |-----|---------|
@@ -246,9 +370,9 @@ The `SecureBytes` mlock pattern is custom-implemented in
 | [`docs/CLEAN-MACHINE.md`](docs/CLEAN-MACHINE.md) | Agent-machine cleanup checklist |
 | [`.specify/memory/constitution.md`](.specify/memory/constitution.md) | The 11 non-negotiable principles |
 
-<br>
+<br/>
 
-## Goals
+### Goals
 
 The v0.1.0 goal is a working private MVP that proves the threat model in
 practice: an agent machine with a clean disk, a vault host on a phone-gated
@@ -270,15 +394,198 @@ none is on the v0.1.0 critical path):
 - TOTP second factor on Discord approval
 - Custom validator authoring SDK
 
-<br>
+<br/>
 
-## License
+## 🔐 Security
 
-This project is licensed under the terms of the [`LICENSE`](LICENSE) file
-at the repo root.
+### Important Disclaimer
 
-<br>
+> ⚠️ **Experimental Software — Use at Your Own Risk**
+>
+> hush is experimental, open-source software provided "AS-IS" without
+> warranty. By running it, you acknowledge:
+>
+> - **Private MVP:** v0.1.0 is an unproven private MVP — not production-grade,
+>   and the end-to-end round-trip has not been independently verified.
+> - **No formal audit:** hush has not been professionally audited or
+>   penetration-tested.
+> - **You own the host:** the trusted vault host, your Tailscale config, and
+>   your Discord bot are yours to secure — hush only does its part.
+> - **No liability:** the authors accept no responsibility for compromised
+>   secrets, downtime, or damages.
+>
+> **Don't trust hush with a secret you can't afford to rotate.** If it breaks,
+> you get to keep both pieces.
 
-*hush is a tool to make secrets management invisible — to attackers, and
-to the operator who just wants to write code without thinking about
-where their API keys live. If it's working, you barely notice it.*
+For the full threat model and the 7 security layers, see
+[`docs/SECURITY.md`](docs/SECURITY.md). For security issues, see our
+[Security Policy](.github/SECURITY.md) or contact: [hush@mrz1818.com](mailto:hush@mrz1818.com).
+
+<br/>
+
+### Additional Documentation & Repository Management
+
+<details>
+<summary><strong><code>Development Setup (Getting Started)</code></strong></summary>
+<br/>
+
+Install [MAGE-X](https://github.com/mrz1836/go-mage) build tool for development:
+
+```bash
+# Install MAGE-X for development and building
+go install github.com/magefile/mage@latest
+go install github.com/mrz1836/go-mage/magex@latest
+magex update:install
+```
+</details>
+
+<details>
+<summary><strong><code>Build Commands</code></strong></summary>
+<br/>
+
+View all build commands:
+
+```bash
+magex help
+```
+
+Common commands:
+- `magex build` — Build the binary
+- `magex test` — Run test suite
+- `magex lint` — Run all linters
+- `magex deps:update` — Update dependencies
+
+</details>
+
+<details>
+<summary><strong><code>Binary Deployment</code></strong></summary>
+<br/>
+
+This project uses [goreleaser](https://github.com/goreleaser/goreleaser) for
+streamlined binary deployment to GitHub. To get started, install it via:
+
+```bash
+brew install goreleaser
+```
+
+The release process is defined in the [.goreleaser.yml](.goreleaser.yml)
+configuration file. Then create and push a new Git tag using:
+
+```bash
+magex version:bump bump=patch push=true branch=master
+```
+
+This process ensures consistent, repeatable releases with properly versioned
+artifacts.
+
+</details>
+
+<details>
+<summary><strong><code>GitHub Workflows</code></strong></summary>
+<br/>
+
+hush uses the **Fortress** workflow system for comprehensive CI/CD:
+
+- **fortress-test-suite.yml** — Complete test suite across multiple Go versions
+- **fortress-code-quality.yml** — Code quality checks (gofmt, golangci-lint, staticcheck)
+- **fortress-security-scans.yml** — Security vulnerability scanning
+- **fortress-coverage.yml** — Code coverage reporting to Codecov
+- **fortress-release.yml** — Automated binary releases via GoReleaser
+
+See all workflows in [`.github/workflows/`](.github/workflows/).
+
+</details>
+
+<details>
+<summary><strong><code>Updating Dependencies</code></strong></summary>
+<br/>
+
+To update all dependencies (Go modules, linters, and related tools), run:
+
+```bash
+magex deps:update
+```
+
+This command ensures all dependencies are brought up to date in a single step,
+including Go modules and any managed tools. It is the recommended way to keep
+your development environment and CI in sync with the latest versions.
+
+</details>
+
+<br/>
+
+## 🧪 Examples & Tests
+
+All unit tests run via [GitHub Actions](https://github.com/mrz1836/hush/actions).
+View the [configuration file](.github/workflows/fortress.yml).
+
+Run all tests (fast):
+
+```bash
+magex test
+```
+
+Run all tests with race detector (slower):
+
+```bash
+magex test:race
+```
+
+### Test Coverage
+
+View coverage report:
+
+```bash
+magex test:coverage
+```
+
+Coverage reports are automatically uploaded to [Codecov](https://codecov.io/gh/mrz1836/hush)
+on every commit.
+
+<br/>
+
+## 🛠️ Code Standards
+
+Read more about this Go project's [code standards](.github/CODE_STANDARDS.md).
+
+<br/>
+
+## 🤖 AI Usage & Assistant Guidelines
+
+Read the [AI Usage & Assistant Guidelines](.github/CLAUDE.md) for details on
+how AI is used in this project and how to interact with AI assistants.
+
+<br/>
+
+## 👥 Maintainers
+
+| [<img src="https://github.com/mrz1836.png" height="50" alt="MrZ" />](https://github.com/mrz1836) |
+|:------------------------------------------------------------------------------------------------:|
+|                                [MrZ](https://github.com/mrz1836)                                 |
+
+<br/>
+
+## 🤝 Contributing
+
+View the [contributing guidelines](.github/CONTRIBUTING.md) and please follow
+the [code of conduct](.github/CODE_OF_CONDUCT.md).
+
+### How can I help?
+
+All kinds of contributions are welcome :raised_hands:!
+The most basic way to show your support is to star :star2: the project, or to
+raise issues :speech_balloon:.
+You can also support this project by [becoming a sponsor on GitHub](https://github.com/sponsors/mrz1836) :clap:
+or by making a [**bitcoin donation**](https://mrz1818.com/?tab=tips&utm_source=github&utm_medium=sponsor-link&utm_campaign=hush&utm_term=hush&utm_content=hush)
+to ensure this journey continues indefinitely! :rocket:
+
+[![Stars](https://img.shields.io/github/stars/mrz1836/hush?label=Please%20like%20us&style=social)](https://github.com/mrz1836/hush/stargazers)
+
+<br/>
+
+## 📝 License
+
+[![License](https://img.shields.io/github/license/mrz1836/hush.svg?style=flat&v=2)](LICENSE)
+
+This project is licensed under the terms of the [`LICENSE`](LICENSE) file at
+the repo root.
