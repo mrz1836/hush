@@ -231,13 +231,6 @@ jobs:
         id: run-tests
         continue-on-error: true
         run: |
-          # Lift the locked-memory ceiling so mlock-backed SecureBytes
-          # tests are not capped by the ~8 MiB default RLIMIT_MEMLOCK.
-          # Best-effort: the securebytes package also raises this at
-          # runtime; this is a belt-and-suspenders guard for the runner.
-          ulimit -l unlimited 2>/dev/null || true
-          echo "🔒 Locked-memory limit: $(ulimit -l)"
-
           # Determine test type based on inputs
           RACE="${{ inputs.race-detection-enabled || 'false' }}"
           COVER="${{ inputs.code-coverage-enabled || 'false' }}"
