@@ -77,11 +77,10 @@ func (s *Stream) WriteJSON(v any) error {
 	if err != nil {
 		return fmt.Errorf("hush/cli: encode json: %w", err)
 	}
-	out := make([]byte, 0, len(body)+1)
-	out = append(out, body...)
-	out = append(out, '\n')
-	body = out
-	_, err = s.w.Write(body)
+	if _, err = s.w.Write(body); err != nil {
+		return err
+	}
+	_, err = io.WriteString(s.w, "\n")
 	return err
 }
 
