@@ -585,7 +585,7 @@ to ensure this journey continues indefinitely! :rocket:
 
 ## 📝 License
 
-[![License](https://img.shields.io/github/license/mrz1836/hush.svg?style=flat&v=2)](LICENSE)
+[![License](https://img.shields.io/github/license/mrz1836/hush.svg?style=flat&v=1)](LICENSE)
 
 This project is licensed under the terms of the [`LICENSE`](LICENSE) file at
 the repo root.
