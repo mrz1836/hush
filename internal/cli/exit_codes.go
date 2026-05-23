@@ -14,6 +14,7 @@ import (
 	supcfg "github.com/mrz1836/hush/internal/supervise/config"
 	"github.com/mrz1836/hush/internal/token"
 	"github.com/mrz1836/hush/internal/transport/sign"
+	"github.com/mrz1836/hush/internal/upgrade"
 	"github.com/mrz1836/hush/internal/vault"
 )
 
@@ -300,7 +301,8 @@ func mapErr(err error) int {
 		errors.Is(err, server.ErrFileModeLoose),
 		errors.Is(err, vault.ErrFilePermsLoose),
 		errors.Is(err, config.ErrConfigFileMode),
-		errors.Is(err, keychain.ErrKeychainPermissionDenied):
+		errors.Is(err, keychain.ErrKeychainPermissionDenied),
+		errors.Is(err, upgrade.ErrInstallDirNotWritable):
 		return ExitPerm
 	}
 

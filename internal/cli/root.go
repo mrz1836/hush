@@ -60,6 +60,7 @@ func newRootCmd(initialOut *outputContext) *cobra.Command {
 	root.AddCommand(newSmokeCmd())
 	root.AddCommand(newSuperviseCmd())
 	root.AddCommand(newClientCmd())
+	root.AddCommand(newUpgradeCmd())
 
 	return root
 }

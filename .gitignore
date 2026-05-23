@@ -62,7 +62,7 @@ node_modules/
 /hush
 coverage_integration.txt
 cmd/hush/hush
-.mage-cache/builds/418d8a31dad56084.json
+.mage-cache/builds/*.json
 
 # Compiled binaries from .github/scripts Go tooling
 .github/scripts/coverage-threshold/coverage-threshold

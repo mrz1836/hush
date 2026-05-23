@@ -171,6 +171,43 @@ magex build && sudo install -m 0755 cmd/hush/hush /usr/local/bin/hush
 
 <br/>
 
+### Upgrade
+
+Once `hush` is on your `PATH`, the binary can upgrade itself in place
+from the [GitHub releases](https://github.com/mrz1836/hush/releases):
+
+```bash
+hush upgrade          # download the latest release tarball, verify SHA-256, install in place
+hush upgrade --check  # report the latest available version without installing
+hush upgrade --force  # reinstall the latest release even when already current
+```
+
+Channel selection is controlled by the `UPDATE_CHANNEL` environment
+variable (case-insensitive; default `stable`):
+
+```bash
+UPDATE_CHANNEL=stable hush upgrade   # latest non-prerelease (default)
+UPDATE_CHANNEL=beta   hush upgrade   # latest prerelease, falls back to stable when none
+UPDATE_CHANNEL=edge   hush upgrade   # most recent release of any kind (excludes drafts)
+
+# Or override the env per-invocation with --channel:
+hush upgrade --channel beta
+```
+
+The install target is the resolved path of the running binary
+(`os.Executable()` with symlinks evaluated — typically `$(which hush)`).
+`hush upgrade` requires write access to that directory; when the
+directory is not writable the command exits with a clear error naming
+the directory rather than silently installing elsewhere. Re-run the
+command under `sudo` (or copy the new binary into place manually) when
+that happens.
+
+After a successful upgrade `hush upgrade` prints a `Restart any
+running 'hush serve' to pick up the new version` reminder — the
+upgrade does not touch any supervised process.
+
+<br/>
+
 ## ⚡ Quick Start
 
 Get up and running with these essential commands:
