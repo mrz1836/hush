@@ -80,12 +80,11 @@ func loadSupervisorClientKey(ctx context.Context, kc keychain.Keychain, machineI
 		uErr error
 	)
 	if useErr := sb.Use(func(b []byte) {
-		if len(b) != 32 {
+		scalar, decErr := keychain.DecodeFixedBinary(b, 32)
+		if decErr != nil {
 			uErr = fmt.Errorf("%w: %d, want 32", errSuperviseClientKeyLength, len(b))
 			return
 		}
-		scalar := make([]byte, 32)
-		copy(scalar, b)
 		k := secp256k1.PrivKeyFromBytes(scalar)
 		priv = k.ToECDSA()
 		for i := range scalar {

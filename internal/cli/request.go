@@ -480,12 +480,11 @@ func retrieveClientKey(ctx context.Context, deps requestDeps, machineIndex uint3
 		useEr error
 	)
 	if uerr := sb.Use(func(b []byte) {
-		if len(b) != 32 {
+		scalar, decErr := keychain.DecodeFixedBinary(b, 32)
+		if decErr != nil {
 			useEr = fmt.Errorf("%w: %d, want 32", errClientKeyLength, len(b))
 			return
 		}
-		scalar := make([]byte, 32)
-		copy(scalar, b)
 		k := secp256k1.PrivKeyFromBytes(scalar)
 		priv = k.ToECDSA()
 		// Zero the local scratch buffer; the *ecdsa.PrivateKey holds

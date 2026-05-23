@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -199,6 +200,35 @@ func TestLifecycle_ClaimDiscordUnavailableEmitsAlert(t *testing.T) {
 
 	cancel()
 	<-done
+}
+
+// TestLifecycle_ClaimApprovalTransientRetriesInProcess ensures launchd does not
+// turn transient approval-path failures into a fast process-restart spam loop.
+func TestLifecycle_ClaimApprovalTransientRetriesInProcess(t *testing.T) {
+	for name, outcome := range map[string]claimOutcome{
+		"approval_timeout": {status: http.StatusRequestTimeout, body: `{"error":"approval_timeout","request_id":"test"}`},
+		"rate_limited":     {status: http.StatusTooManyRequests, body: `{"error":"rate_limited","request_id":"test"}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			tl := newTestLifecycle(t, longChildCmd())
+			tl.cfg.BootRetryTimeout = 5 * time.Second
+			tl.vault.QueueClaim(outcome)
+			tl.vault.QueueOK()
+
+			cancel, done := runWithCancel(tl)
+			defer cancel()
+
+			eventually(t, "reach StateRunning after transient approval-path retry", 10*time.Second, func() bool {
+				return snapshotState(tl) == StateRunning
+			})
+			if tl.vault.ClaimCount() < 2 {
+				t.Errorf("ClaimCount: got %d want >= 2", tl.vault.ClaimCount())
+			}
+
+			cancel()
+			<-done
+		})
+	}
 }
 
 // TestLifecycle_ValidatorFailureBlocksChildStart (T014) — validator returns

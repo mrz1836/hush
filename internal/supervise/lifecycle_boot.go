@@ -166,8 +166,13 @@ func (l *Lifecycle) bootPreconditionsLoop(ctx context.Context) error {
 
 // submitClaim sends a signed /claim payload to <ServerURL>/claim, persists
 // the JWT into Store via setToken, and emits ActionSupervisorSessionClaimed.
-// On 503+discord_unavailable, retries in the same boot loop until exhaustion.
-// On 401 / 4xx, returns a wrapped ErrClaimDenied terminal error.
+// On transient approval-path responses (Discord unavailable, approval timeout,
+// rate limit, or 5xx), retries in-process with exponential backoff until the
+// boot budget is exhausted. Keeping these retries inside one process is
+// important under launchd: if we exit on 429, KeepAlive + ThrottleInterval turns
+// the server-side rate limiter into a 10-second Discord audit spam loop.
+// On 401 / 403 and other non-transient 4xx, returns a wrapped ErrClaimDenied
+// terminal error.
 //
 //nolint:gocognit,gocyclo,cyclop // sequential build → sign → post → branch on response
 func (l *Lifecycle) submitClaim(ctx context.Context) error {
@@ -191,6 +196,12 @@ func (l *Lifecycle) submitClaim(ctx context.Context) error {
 		case status == http.StatusForbidden:
 			// Denied / bad_signature / etc are terminal.
 			return fmt.Errorf("supervise: /claim 403 %q: %w", errBody.Error, ErrClaimDenied)
+		case status == http.StatusRequestTimeout && errBody.Error == "approval_timeout":
+			l.deps.Logger.Warn("supervise: /claim approval timed out; retrying within boot budget",
+				slog.Int("status", status), slog.String("code", errBody.Error))
+		case status == http.StatusTooManyRequests && errBody.Error == "rate_limited":
+			l.deps.Logger.Warn("supervise: /claim rate limited; retrying within boot budget",
+				slog.Int("status", status), slog.String("code", errBody.Error))
 		case status == http.StatusServiceUnavailable && errBody.Error == "discord_unavailable":
 			l.deps.Alerts.Emit(ctx, AlertClassDiscordUnavailableOnClaim, AlertPayload{
 				ErrorClass: errorClassDiscordUnavailable,
