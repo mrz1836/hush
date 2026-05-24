@@ -98,14 +98,21 @@ const (
 	SessionSupervisor
 )
 
+// Wire-format strings for SessionType. Centralized so the request-shape
+// validator and the String() projection cannot drift.
+const (
+	sessionTypeInteractiveStr = "interactive"
+	sessionTypeSupervisorStr  = "supervisor"
+)
+
 // String returns a human-readable form of the session type. Returns
 // "unknown" for the zero value or any value outside the documented set.
 func (s SessionType) String() string {
 	switch s {
 	case SessionInteractive:
-		return "interactive"
+		return sessionTypeInteractiveStr
 	case SessionSupervisor:
-		return "supervisor"
+		return sessionTypeSupervisorStr
 	default:
 		return "unknown"
 	}

@@ -30,6 +30,15 @@ type Store interface {
 	//                     `revoke_idempotent_already_revoked` (HTTP body
 	//                     is identical).
 	RevokeIdempotent(jti string) (existed, alreadyRevoked bool)
+
+	// FindActiveSession returns the most recently issued non-expired,
+	// non-revoked token whose (SessionType, ClientIP, Scope) match the
+	// supplied tuple, if any. Used by the /claim handler to short-circuit
+	// approval for supervisor restarts that should reclaim an existing
+	// session rather than waste a fresh DM. Scope match is order-sensitive
+	// — callers MUST canonicalise (alphabetical) before invoking. Returns
+	// (nil, false) when no live match exists.
+	FindActiveSession(sessionType SessionType, clientIP string, scope []string) (*Token, bool)
 }
 
 const defaultTick = 30 * time.Second
@@ -159,6 +168,60 @@ func (s *memStore) RevokeIdempotent(jti string) (existed, alreadyRevoked bool) {
 		return true, false
 	}
 	return false, false
+}
+
+// FindActiveSession scans live tokens for a match against the supplied
+// tuple. The current memStore implementation is O(N) over live tokens;
+// production workloads (≤ a few hundred sessions per host) make this
+// acceptable without a secondary index. Returns the token with the
+// latest ExpiresAt when more than one matches.
+func (s *memStore) FindActiveSession(sessionType SessionType, clientIP string, scope []string) (*Token, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	now := s.nowFn()
+	var best *Token
+	for _, t := range s.live {
+		if !sessionMatches(t, sessionType, clientIP, scope, now) {
+			continue
+		}
+		if best == nil || t.ExpiresAt.After(best.ExpiresAt) {
+			best = t
+		}
+	}
+	if best == nil {
+		return nil, false
+	}
+	return best, true
+}
+
+// sessionMatches reports whether t is an active session matching the
+// (sessionType, clientIP, scope) tuple at time now.
+func sessionMatches(t *Token, sessionType SessionType, clientIP string, scope []string, now time.Time) bool {
+	if t.SessionType != sessionType {
+		return false
+	}
+	if t.ClientIP != clientIP {
+		return false
+	}
+	if !t.ExpiresAt.After(now) {
+		return false
+	}
+	return scopeSliceEqual(t.Scope, scope)
+}
+
+// scopeSliceEqual reports whether two pre-sorted scope slices contain
+// the same elements in the same order. Order-sensitive by design —
+// callers MUST canonicalise both inputs alphabetically before calling.
+func scopeSliceEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *memStore) sweepExpired() {

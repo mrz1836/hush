@@ -475,7 +475,8 @@ func TestClaim_RegisterHandlers_MountsClaimRoute(t *testing.T) {
 //nolint:gocognit,gocyclo // exhaustive happy-path assertions: status, three-key body, ten redacted-key checks, six audit-detail keys — Constitution VIII demands this granularity
 func TestClaim_Approved_IssuesJWT(t *testing.T) {
 	t.Parallel()
-	h := newClaimHarness(t,
+	h := newClaimHarness(
+		t,
 		withApproverScript(
 			[]Decision{{Approved: true, GrantedTTL: 2 * time.Hour, ApproverID: "test"}},
 			[]error{nil},
@@ -549,7 +550,8 @@ func TestClaim_Approved_IssuesJWT(t *testing.T) {
 
 func TestClaim_TTLCappedAtConfigMax(t *testing.T) {
 	t.Parallel()
-	h := newClaimHarness(t,
+	h := newClaimHarness(
+		t,
 		withCrypto(func(cs *config.CryptoSection) {
 			cs.MaxInteractiveTTL = 1 * time.Hour
 		}),
@@ -591,7 +593,8 @@ func TestClaim_TTLCappedAtConfigMax(t *testing.T) {
 
 func TestClaim_SupervisorRequest_DaemonLabel(t *testing.T) {
 	t.Parallel()
-	h := newClaimHarness(t,
+	h := newClaimHarness(
+		t,
 		withApproverScript(
 			[]Decision{{Approved: true, GrantedTTL: 4 * time.Hour, ApproverID: "test"}},
 			[]error{nil},
@@ -783,7 +786,8 @@ func TestClaim_BadRequest_400(t *testing.T) {
 
 func TestClaim_DiscordUnavailable_503(t *testing.T) {
 	t.Parallel()
-	h := newClaimHarness(t,
+	h := newClaimHarness(
+		t,
 		withApproverScript(
 			[]Decision{{}},
 			[]error{ErrApproverUnavailable},
@@ -894,7 +898,8 @@ func TestClaim_UnknownOutcome_503(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			h := newClaimHarness(t,
+			h := newClaimHarness(
+				t,
 				withApproverScript([]Decision{tc.dec}, []error{tc.err}),
 			)
 			rr, _ := h.do(t, signedClaimBody(t, h, defaultClaimBodyOpts(h)))
@@ -960,7 +965,8 @@ func TestClaim_BadSignature_403(t *testing.T) {
 
 func TestClaim_NonceReplay_403(t *testing.T) {
 	t.Parallel()
-	h := newClaimHarness(t,
+	h := newClaimHarness(
+		t,
 		withApproverScript(
 			[]Decision{{Approved: true, GrantedTTL: time.Hour, ApproverID: "test"}},
 			[]error{nil},
@@ -1008,7 +1014,8 @@ func TestClaim_StaleTimestamp_403(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			h := newClaimHarness(t,
+			h := newClaimHarness(
+				t,
 				withCrypto(func(cs *config.CryptoSection) { cs.ClockSkew = 30 * time.Second }),
 			)
 			o := defaultClaimBodyOpts(h)
@@ -1028,7 +1035,8 @@ func TestClaim_StaleTimestamp_403(t *testing.T) {
 
 func TestClaim_IPNotAllowed_403(t *testing.T) {
 	t.Parallel()
-	h := newClaimHarness(t,
+	h := newClaimHarness(
+		t,
 		// CIDR list disallows the request RemoteAddr we will inject.
 		withAllowedCIDRs([]string{"100.64.0.0/24"}),
 		withClientIP("100.65.5.5:1234"), // outside 100.64.0.0/24
@@ -1083,7 +1091,8 @@ func TestClaim_ErrorBodyNoSentinel(t *testing.T) {
 func TestClaim_HappyPath_NoSentinelInResponse(t *testing.T) {
 	t.Parallel()
 	const sentinel = "SECRET_SHOULD_NEVER_APPEAR_HAPPY_PATH"
-	h := newClaimHarness(t,
+	h := newClaimHarness(
+		t,
 		withApproverScript(
 			[]Decision{{Approved: true, GrantedTTL: time.Hour, ApproverID: "test"}},
 			[]error{nil},
@@ -1128,7 +1137,8 @@ func TestClaim_ShortCircuitOrdering(t *testing.T) {
 	t.Run("nonce_replay_beats_ip_not_allowed", func(t *testing.T) {
 		t.Parallel()
 		// First request to claim the nonce.
-		h := newClaimHarness(t,
+		h := newClaimHarness(
+			t,
 			withAllowedCIDRs([]string{"100.64.0.0/10"}),
 			withClientIP("100.64.1.5:1234"),
 			withApproverScript(
@@ -1152,7 +1162,8 @@ func TestClaim_ShortCircuitOrdering(t *testing.T) {
 
 func TestClaim_Denied_403(t *testing.T) {
 	t.Parallel()
-	h := newClaimHarness(t,
+	h := newClaimHarness(
+		t,
 		withApproverScript([]Decision{{}}, []error{ErrApproverDenied}),
 	)
 	rr, _ := h.do(t, signedClaimBody(t, h, defaultClaimBodyOpts(h)))
@@ -1168,7 +1179,8 @@ func TestClaim_Denied_403(t *testing.T) {
 
 func TestClaim_RateLimited_429(t *testing.T) {
 	t.Parallel()
-	h := newClaimHarness(t,
+	h := newClaimHarness(
+		t,
 		withApproverScript([]Decision{{}}, []error{ErrApproverRateLimited}),
 	)
 	rr, _ := h.do(t, signedClaimBody(t, h, defaultClaimBodyOpts(h)))
@@ -1191,7 +1203,8 @@ func TestClaim_DiscordTimeout_408(t *testing.T) {
 		return Decision{}, ErrApproverTimeout
 	}
 
-	h := newClaimHarness(t,
+	h := newClaimHarness(
+		t,
 		withCrypto(func(cs *config.CryptoSection) { cs.ClaimApprovalTimeout = 50 * time.Millisecond }),
 		withDepsMutator(func(d *Deps) {
 			d.Approver = approverFunc(bAppr)
@@ -1252,7 +1265,8 @@ func TestClaim_AuditEventEmittedForEveryOutcome(t *testing.T) {
 		{
 			name: "approved",
 			fn: func(t *testing.T) ([]AuditEvent, expectation) {
-				h := newClaimHarness(t,
+				h := newClaimHarness(
+					t,
 					withApproverScript(
 						[]Decision{{Approved: true, GrantedTTL: time.Hour, ApproverID: "test"}},
 						[]error{nil},
@@ -1291,7 +1305,8 @@ func TestClaim_AuditEventEmittedForEveryOutcome(t *testing.T) {
 		{
 			name: "nonce-replay",
 			fn: func(t *testing.T) ([]AuditEvent, expectation) {
-				h := newClaimHarness(t,
+				h := newClaimHarness(
+					t,
 					withApproverScript(
 						[]Decision{{Approved: true, GrantedTTL: time.Hour}},
 						[]error{nil},
@@ -1328,7 +1343,8 @@ func TestClaim_AuditEventEmittedForEveryOutcome(t *testing.T) {
 		{
 			name: "ip-not-allowed",
 			fn: func(t *testing.T) ([]AuditEvent, expectation) {
-				h := newClaimHarness(t,
+				h := newClaimHarness(
+					t,
 					withAllowedCIDRs([]string{"100.64.0.0/24"}),
 					withClientIP("100.65.5.5:1234"),
 				)
@@ -1341,7 +1357,8 @@ func TestClaim_AuditEventEmittedForEveryOutcome(t *testing.T) {
 		{
 			name: "denied",
 			fn: func(t *testing.T) ([]AuditEvent, expectation) {
-				h := newClaimHarness(t,
+				h := newClaimHarness(
+					t,
 					withApproverScript([]Decision{{}}, []error{ErrApproverDenied}),
 				)
 				_, _ = h.do(t, signedClaimBody(t, h, defaultClaimBodyOpts(h)))
@@ -1353,7 +1370,8 @@ func TestClaim_AuditEventEmittedForEveryOutcome(t *testing.T) {
 		{
 			name: "approval-timeout",
 			fn: func(t *testing.T) ([]AuditEvent, expectation) {
-				h := newClaimHarness(t,
+				h := newClaimHarness(
+					t,
 					withCrypto(func(cs *config.CryptoSection) { cs.ClaimApprovalTimeout = 30 * time.Millisecond }),
 					withDepsMutator(func(d *Deps) {
 						d.Approver = approverFunc(func(ctx context.Context, _ ApprovalRequest) (Decision, error) {
@@ -1371,7 +1389,8 @@ func TestClaim_AuditEventEmittedForEveryOutcome(t *testing.T) {
 		{
 			name: "rate-limited",
 			fn: func(t *testing.T) ([]AuditEvent, expectation) {
-				h := newClaimHarness(t,
+				h := newClaimHarness(
+					t,
 					withApproverScript([]Decision{{}}, []error{ErrApproverRateLimited}),
 				)
 				_, _ = h.do(t, signedClaimBody(t, h, defaultClaimBodyOpts(h)))
@@ -1383,7 +1402,8 @@ func TestClaim_AuditEventEmittedForEveryOutcome(t *testing.T) {
 		{
 			name: "discord-unavailable",
 			fn: func(t *testing.T) ([]AuditEvent, expectation) {
-				h := newClaimHarness(t,
+				h := newClaimHarness(
+					t,
 					withApproverScript([]Decision{{}}, []error{ErrApproverUnavailable}),
 				)
 				_, _ = h.do(t, signedClaimBody(t, h, defaultClaimBodyOpts(h)))
@@ -1395,7 +1415,8 @@ func TestClaim_AuditEventEmittedForEveryOutcome(t *testing.T) {
 		{
 			name: "unknown-outcome",
 			fn: func(t *testing.T) ([]AuditEvent, expectation) {
-				h := newClaimHarness(t,
+				h := newClaimHarness(
+					t,
 					withApproverScript([]Decision{{Approved: false}}, []error{nil}),
 				)
 				_, _ = h.do(t, signedClaimBody(t, h, defaultClaimBodyOpts(h)))
@@ -1738,7 +1759,8 @@ func TestClaim_BadRequest_AllShapeBranches(t *testing.T) {
 // an otherwise approved claim collapses to unknown_outcome, never to 200.
 func TestClaim_TokenIssuerError_503(t *testing.T) {
 	t.Parallel()
-	h := newClaimHarness(t,
+	h := newClaimHarness(
+		t,
 		withApproverScript(
 			[]Decision{{Approved: true, GrantedTTL: time.Hour, ApproverID: "test"}},
 			[]error{nil},
@@ -1759,7 +1781,8 @@ func TestClaim_TokenIssuerError_503(t *testing.T) {
 // token Store rejects the new token (e.g. revoked-set hit).
 func TestClaim_TokenStoreError_503(t *testing.T) {
 	t.Parallel()
-	h := newClaimHarness(t,
+	h := newClaimHarness(
+		t,
 		withApproverScript(
 			[]Decision{{Approved: true, GrantedTTL: time.Hour, ApproverID: "test"}},
 			[]error{nil},
@@ -1788,11 +1811,16 @@ func (failingTokenStore) RevokeIdempotent(_ string) (bool, bool) {
 	return false, false
 }
 
+func (failingTokenStore) FindActiveSession(_ token.SessionType, _ string, _ []string) (*token.Token, bool) {
+	return nil, false
+}
+
 // TestClaim_AuditWriteFailure_DoesNotBlockResponse — when the audit writer
 // returns an error, the handler still writes the documented HTTP response.
 func TestClaim_AuditWriteFailure_DoesNotBlockResponse(t *testing.T) {
 	t.Parallel()
-	h := newClaimHarness(t,
+	h := newClaimHarness(
+		t,
 		withApproverScript(
 			[]Decision{{Approved: true, GrantedTTL: time.Hour, ApproverID: "test"}},
 			[]error{nil},
@@ -1872,7 +1900,8 @@ func TestClaim_CapTTL_BothCeilings(t *testing.T) {
 // falls back to the documented 60s default.
 func TestClaim_ZeroApprovalTimeout_FallbackApplied(t *testing.T) {
 	t.Parallel()
-	h := newClaimHarness(t,
+	h := newClaimHarness(
+		t,
 		withCrypto(func(cs *config.CryptoSection) { cs.ClaimApprovalTimeout = 0 }),
 		withApproverScript(
 			[]Decision{{Approved: true, GrantedTTL: time.Hour, ApproverID: "test"}},
@@ -1987,4 +2016,143 @@ func TestClaim_VerifyClaimSignature_BadBase64(t *testing.T) {
 		t.Fatalf("status=%d want 403", rr.Code)
 	}
 	assertErrorBodyShape(t, rr, "bad_signature")
+}
+
+// TestClaim_SupervisorSessionResumption — when a supervisor that already
+// holds an active session re-claims for the same (ClientIP, Scope), the
+// chassis short-circuits the approver and mints a fresh JWT inheriting
+// the existing session's remaining TTL. Eliminates per-restart Discord
+// rate-limit waits for long-lived supervisor processes (T-304).
+func TestClaim_SupervisorSessionResumption(t *testing.T) {
+	t.Parallel()
+	h := newClaimHarness(
+		t,
+		withApproverScript(
+			[]Decision{{Approved: true, GrantedTTL: 4 * time.Hour, ApproverID: "human"}},
+			[]error{nil},
+		),
+	)
+
+	// First claim — goes through the approver as a normal cold claim.
+	o1 := defaultClaimBodyOpts(h)
+	o1.SessionType = "supervisor"
+	o1.TTL = 4 * time.Hour
+	o1.Scope = []string{"ANTHROPIC_API_KEY", "GEMINI_API_KEY"}
+	rr1, _ := h.do(t, signedClaimBody(t, h, o1))
+	if rr1.Code != http.StatusOK {
+		t.Fatalf("first claim status=%d want 200; body=%s", rr1.Code, rr1.Body.String())
+	}
+	var resp1 claimResponse
+	_ = json.Unmarshal(rr1.Body.Bytes(), &resp1)
+	if got := len(h.approver.calls); got != 1 {
+		t.Fatalf("after first claim: approver calls=%d want 1", got)
+	}
+
+	// Second claim — same supervisor, same client IP, same scope; only the
+	// nonce + ephemeral key change as they would after a process restart.
+	o2 := defaultClaimBodyOpts(h)
+	o2.SessionType = "supervisor"
+	o2.TTL = 4 * time.Hour
+	o2.Scope = []string{"ANTHROPIC_API_KEY", "GEMINI_API_KEY"}
+	o2.Nonce = freshNonce()
+	rr2, _ := h.do(t, signedClaimBody(t, h, o2))
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("resumption status=%d want 200; body=%s", rr2.Code, rr2.Body.String())
+	}
+	var resp2 claimResponse
+	_ = json.Unmarshal(rr2.Body.Bytes(), &resp2)
+
+	// The whole point: approver was NOT invoked a second time.
+	if got := len(h.approver.calls); got != 1 {
+		t.Fatalf("after resumption: approver calls=%d want 1 (resumption must skip approver); got=%d", got, got)
+	}
+
+	// Fresh JTI on the resumed token.
+	if resp1.JTI == resp2.JTI {
+		t.Fatalf("resumed JTI %q equals original — expected fresh JTI", resp2.JTI)
+	}
+
+	// Resumed JWT carries the NEW ephemeral pub key (its own claim
+	// payload), so an old listener can no longer decrypt deliveries.
+	claims2 := jwtClaims(t, resp2.JWT)
+	if got := claims2["ephemeral_pubkey"]; got != o2.EphemeralPubKey {
+		t.Fatalf("resumed JWT ephemeral_pubkey=%v want %v", got, o2.EphemeralPubKey)
+	}
+}
+
+// TestClaim_SupervisorSessionResumption_DifferentScopeStillPromptsApprover —
+// resumption ONLY fires when the scope tuple matches exactly. A supervisor
+// re-claiming with a broader / different scope must go through the approver.
+func TestClaim_SupervisorSessionResumption_DifferentScopeStillPromptsApprover(t *testing.T) {
+	t.Parallel()
+	h := newClaimHarness(
+		t,
+		withApproverScript(
+			[]Decision{
+				{Approved: true, GrantedTTL: 4 * time.Hour, ApproverID: "human"},
+				{Approved: true, GrantedTTL: 4 * time.Hour, ApproverID: "human"},
+			},
+			[]error{nil, nil},
+		),
+	)
+
+	o1 := defaultClaimBodyOpts(h)
+	o1.SessionType = "supervisor"
+	o1.TTL = 4 * time.Hour
+	o1.Scope = []string{"ANTHROPIC_API_KEY"}
+	rr1, _ := h.do(t, signedClaimBody(t, h, o1))
+	if rr1.Code != http.StatusOK {
+		t.Fatalf("first claim status=%d", rr1.Code)
+	}
+
+	// Second claim with a wider scope — must go through approver again.
+	o2 := defaultClaimBodyOpts(h)
+	o2.SessionType = "supervisor"
+	o2.TTL = 4 * time.Hour
+	o2.Scope = []string{"ANTHROPIC_API_KEY", "GEMINI_API_KEY"}
+	o2.Nonce = freshNonce()
+	rr2, _ := h.do(t, signedClaimBody(t, h, o2))
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("scope-widened claim status=%d want 200", rr2.Code)
+	}
+	if got := len(h.approver.calls); got != 2 {
+		t.Fatalf("approver calls=%d want 2 (scope mismatch must NOT resume)", got)
+	}
+}
+
+// TestClaim_InteractiveSessionDoesNotResume — only supervisor sessions
+// resume; interactive sessions are short-lived and each one goes through
+// the approver. (No "remember my last shell" surprise.)
+func TestClaim_InteractiveSessionDoesNotResume(t *testing.T) {
+	t.Parallel()
+	h := newClaimHarness(
+		t,
+		withApproverScript(
+			[]Decision{
+				{Approved: true, GrantedTTL: 5 * time.Minute, ApproverID: "human"},
+				{Approved: true, GrantedTTL: 5 * time.Minute, ApproverID: "human"},
+			},
+			[]error{nil, nil},
+		),
+	)
+
+	o1 := defaultClaimBodyOpts(h)
+	o1.SessionType = "interactive"
+	o1.TTL = 5 * time.Minute
+	rr1, _ := h.do(t, signedClaimBody(t, h, o1))
+	if rr1.Code != http.StatusOK {
+		t.Fatalf("first claim status=%d", rr1.Code)
+	}
+
+	o2 := defaultClaimBodyOpts(h)
+	o2.SessionType = "interactive"
+	o2.TTL = 5 * time.Minute
+	o2.Nonce = freshNonce()
+	rr2, _ := h.do(t, signedClaimBody(t, h, o2))
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("second claim status=%d", rr2.Code)
+	}
+	if got := len(h.approver.calls); got != 2 {
+		t.Fatalf("approver calls=%d want 2 (interactive must NOT resume)", got)
+	}
 }

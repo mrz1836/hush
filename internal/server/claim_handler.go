@@ -275,6 +275,23 @@ func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
 	sessionType := parseSessionType(req.SessionType)
 	cappedTTL := capTTL(sessionType, requestedTTL, s.cfg.Crypto)
 
+	// Stage 6.5: Session resumption. For a supervisor that already holds a
+	// live, non-revoked session for this exact (ClientIP, Scope) tuple,
+	// issue a fresh JWT carrying the caller's NEW EphemeralPubKey while
+	// inheriting the remaining TTL from the old session, then revoke the
+	// old JTI. Bypasses the approver entirely — no DM, no rate-limit, no
+	// keychain prompt. The TTL cap means we never silently extend an
+	// existing approval window; if the operator wants longer, they must
+	// wait for the old session to expire and re-approve.
+	//
+	// Eliminates the per-restart user-visible "wait 5 minutes for Discord
+	// rate-limit window" cycle that plagued supervisors like ai.openclaw.gateway
+	// in T-304 — the supervisor process restarts cheap, the human's
+	// approval cadence stays intact.
+	if s.tryResumeSupervisorSession(w, r, ctx, req, sessionType, peer, cappedTTL) {
+		return
+	}
+
 	// Stage 7: dispatch to approver under a config-driven deadline.
 	deadline := s.cfg.Crypto.ClaimApprovalTimeout
 	if deadline <= 0 {
@@ -319,6 +336,58 @@ func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
 		s.respondApproverError(w, ctx, http.StatusServiceUnavailable, errCodeUnknownOutcome,
 			outcomeUnknown, requestID, sessionType, req)
 	}
+}
+
+// tryResumeSupervisorSession implements Stage 6.5 session resumption: when a
+// SessionSupervisor caller already holds a live, non-revoked token for this
+// exact (ClientIP, Scope) tuple, issue a fresh JWT carrying the caller's NEW
+// EphemeralPubKey while inheriting the remaining TTL from the old session,
+// then revoke the old JTI. Returns true when resumption fired (caller MUST
+// return). Returns false when the request should flow through the normal
+// approver path.
+//
+// Bypasses the approver entirely — no DM, no rate-limit, no keychain prompt.
+// The TTL cap means we never silently extend an existing approval window; if
+// the operator wants longer, they must wait for the old session to expire
+// and re-approve.
+func (s *Server) tryResumeSupervisorSession(
+	w http.ResponseWriter,
+	r *http.Request,
+	ctx context.Context,
+	req *claimRequest,
+	sessionType SessionType,
+	peer netip.Addr,
+	cappedTTL time.Duration,
+) bool {
+	if sessionType != SessionSupervisor {
+		return false
+	}
+	existing, found := s.tokenStore.FindActiveSession(token.SessionSupervisor, peer.String(), sortedScope(req.Scope))
+	if !found {
+		return false
+	}
+	remaining := existing.ExpiresAt.Sub(s.clock())
+	if remaining <= 0 {
+		return false
+	}
+	resumedTTL := cappedTTL
+	if resumedTTL > remaining {
+		resumedTTL = remaining
+	}
+	s.issueAndRespond(w, r, ctx, req, sessionType, peer, resumedTTL, Decision{Approved: true, GrantedTTL: resumedTTL, ApproverID: "resumed:" + existing.JTI})
+	// Best-effort revoke of the old token so subsequent /request calls
+	// bearing the prior JWT fail closed. Failure is non-fatal: the new token
+	// was already issued and the old one will expire naturally within
+	// `remaining`. Return values intentionally discarded.
+	_, _ = s.tokenStore.RevokeIdempotent(existing.JTI)
+	s.logOpsEvent(
+		ctx, "claim resumed",
+		"request_id", RequestID(ctx),
+		"client_ip", peer.String(),
+		"old_jti", existing.JTI,
+		"inherited_ttl", resumedTTL.String(),
+	)
+	return true
 }
 
 // issueAndRespond is the SOLE path through which a JWT is minted and a 200
@@ -371,7 +440,8 @@ func (s *Server) issueAndRespond(
 
 	detail := buildAuditDetail(outcomeApproved, sortedScope(req.Scope), sessionType, cappedTTL, tok.JTI)
 	s.emitClaimAudit(ctx, RequestID(ctx), peer, detail)
-	s.logOpsEvent(ctx, "claim approved",
+	s.logOpsEvent(
+		ctx, "claim approved",
 		"request_id", RequestID(ctx),
 		"client_ip", peer.String(),
 		"outcome", string(outcomeApproved),
@@ -420,7 +490,7 @@ func (s *Server) parseClaimRequest(r *http.Request) (*claimRequest, error) {
 	if parseErr != nil || dur <= 0 {
 		return nil, errShapeTTLInvalid
 	}
-	if req.SessionType != "interactive" && req.SessionType != "supervisor" {
+	if req.SessionType != sessionTypeInteractiveStr && req.SessionType != sessionTypeSupervisorStr {
 		return nil, errShapeSessionTypeUnknown
 	}
 	if !getEphemeralPubKeyRe().MatchString(req.EphemeralPubKey) {
@@ -487,7 +557,8 @@ func (s *Server) verifyClaimSignature(ctx context.Context, req *claimRequest) er
 func (s *Server) respondBadRequest(w http.ResponseWriter, ctx context.Context, requestID string) {
 	detail := map[string]string{"outcome": string(outcomeBadRequest)}
 	s.emitClaimAudit(ctx, requestID, netip.Addr{}, detail)
-	s.logOpsEvent(ctx, "claim rejected",
+	s.logOpsEvent(
+		ctx, "claim rejected",
 		"request_id", requestID,
 		"outcome", string(outcomeBadRequest),
 	)
@@ -513,7 +584,8 @@ func (s *Server) respondError(
 	detail := buildAuditDetail(outcome, scope, sessionType, 0, "")
 	peer, _ := parseRemoteAddr("") // ClientIP optional in audit; not load-bearing here
 	s.emitClaimAudit(ctx, requestID, peer, detail)
-	s.logOpsEvent(ctx, "claim rejected",
+	s.logOpsEvent(
+		ctx, "claim rejected",
 		"request_id", requestID,
 		"outcome", string(outcome),
 		"session_type", sessionType.String(),
@@ -542,7 +614,8 @@ func (s *Server) respondApproverError(
 	detail := buildAuditDetail(outcome, scope, sessionType, 0, "")
 	peer, _ := parseRemoteAddr("")
 	s.emitClaimAudit(ctx, requestID, peer, detail)
-	s.logOpsEvent(ctx, "claim rejected",
+	s.logOpsEvent(
+		ctx, "claim rejected",
 		"request_id", requestID,
 		"outcome", string(outcome),
 		"session_type", sessionType.String(),
@@ -621,9 +694,9 @@ func capTTL(sessionType SessionType, requested time.Duration, cs config.CryptoSe
 // past the shape-validation stage.
 func parseSessionType(raw string) SessionType {
 	switch raw {
-	case "interactive":
+	case sessionTypeInteractiveStr:
 		return SessionInteractive
-	case "supervisor":
+	case sessionTypeSupervisorStr:
 		return SessionSupervisor
 	default:
 		return SessionType(0)

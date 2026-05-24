@@ -34,12 +34,21 @@ type IssueParams struct {
 // Token is the in-store record returned by Issue. Encoded is the wire
 // form returned to the client; the same record is held by the Store
 // after Add for future Validate calls to find.
+//
+// ClientIP and Scope are kept on the in-store record so Store
+// implementations can offer a secondary lookup keyed on
+// (SessionType, ClientIP, Scope) — needed for supervisor session
+// resumption, where a freshly-spawned supervisor process should be
+// able to reclaim an existing live session for the same tuple instead
+// of requesting a fresh approval.
 type Token struct {
 	JTI         string
 	Encoded     string
 	ExpiresAt   time.Time
 	SessionType SessionType
 	MaxUses     int
+	ClientIP    string
+	Scope       []string
 }
 
 //nolint:gochecknoglobals // sentinel-class test seam; set-once at package load, replaced only by tests for deterministic JTI
@@ -130,5 +139,7 @@ func Issue(ctx context.Context, signKey *ecdsa.PrivateKey, params IssueParams) (
 		ExpiresAt:   expiresAt,
 		SessionType: params.SessionType,
 		MaxUses:     maxUses,
+		ClientIP:    params.ClientIP,
+		Scope:       append([]string(nil), params.Scope...),
 	}, nil
 }
