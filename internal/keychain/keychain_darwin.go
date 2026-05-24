@@ -143,7 +143,8 @@ func (k *darwinKeychain) RepairACL(ctx context.Context, service, account string)
 	if keychainPath == "" {
 		keychainPath = loginKeychainPath()
 	}
-	cmd := exec.CommandContext(ctx, k.binary, //nolint:gosec // fixed argv
+	cmd := exec.CommandContext( //nolint:gosec // fixed argv
+		ctx, k.binary,
 		"set-generic-password-partition-list",
 		"-S", "apple-tool:,apple:",
 		"-s", service,
