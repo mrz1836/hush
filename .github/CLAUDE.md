@@ -16,7 +16,6 @@ delivery; Discord DM approval; nothing on disk on agent machines.
 - **Module:** `github.com/mrz1836/hush` — Go 1.26.1, CGO=0, no `/vendor`.
 - **Layout:** [../cmd/hush/](../cmd/hush/) entrypoint; [../internal/](../internal/)
   packages — see [../docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md).
-- **State:** working toward the v0.1.0 release tag.
 
 ## Build, lint, test — always via `magex`
 

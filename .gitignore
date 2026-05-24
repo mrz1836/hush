@@ -39,6 +39,14 @@ dist/
 coverage.txt
 coverage.out
 coverage.html
+coverage_*.txt
+coverage_*.out
+
+# Benchmark / pprof artifacts (output by `magex bench:*`)
+*.prof
+*.pprof
+trace.out
+bench.txt
 
 # Environment and secrets
 .env

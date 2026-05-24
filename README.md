@@ -579,6 +579,45 @@ magex test:coverage
 Coverage reports are automatically uploaded to [Codecov](https://codecov.io/gh/mrz1836/hush)
 on every commit.
 
+### Benchmarks
+
+Baseline performance numbers for the hot crypto paths. Re-measure after any
+refactor that touches the request path, vault loader, or transport encryption —
+regressions land here before they land in production.
+
+Run the suite:
+
+```bash
+magex bench:default time=2s
+```
+
+Capture a baseline file for diffs across branches:
+
+```bash
+magex bench:save time=2s out=bench.txt
+```
+
+Compare two runs:
+
+```bash
+magex bench:compare old=before.txt new=after.txt
+```
+
+**Latest baseline** — Apple M1 Max · darwin/arm64 · Go 1.26 · `benchtime=2s`:
+
+| Benchmark                                        | ns/op   | B/op   | allocs/op | Path covered                                          |
+| ------------------------------------------------ | ------: | -----: | --------: | ----------------------------------------------------- |
+| `BenchmarkValidate` (`internal/token`)           | 192,871 |  5,739 |       105 | JWT parse + ES256K verify + store lookup (supervisor) |
+| `BenchmarkEncrypt` (`internal/transport/ecies`)  | 173,705 |  3,345 |        40 | Ephemeral keygen + ECDH + AES-CBC + HMAC envelope     |
+| `BenchmarkDecrypt` (`internal/transport/ecies`)  | 151,457 |  2,528 |        29 | Pubkey parse + ECDH + KDF + HMAC verify + AES-CBC     |
+| `BenchmarkLoad` (`internal/vault`)               |  51,813 | 16,528 |       113 | Encrypted-vault read (16 secrets, ~64 B each)         |
+
+> Numbers are local-machine baselines, not SLOs. Use them to spot
+> ≥10% regressions on the same hardware after a code change. The CI
+> machine numbers will differ; track relative deltas, not absolutes.
+>
+> Last measured: 2026-05-24 at HEAD of [the optimization plan](./README.md#benchmarks).
+
 <br/>
 
 ## 🛠️ Code Standards
