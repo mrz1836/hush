@@ -51,7 +51,13 @@ func productionSuperviseDeps() (superviseRuntimeDeps, error) {
 	return superviseRuntimeDeps{
 		keychain: kc,
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			// 15 minutes covers a fully humane operator reaction window
+			// (server-side claim_approval_timeout caps at 10m) plus
+			// headroom for slow Discord round-trips. Per-request ctx
+			// further bounds individual calls; this is just the
+			// absolute ceiling so a wedged remote doesn't pin a goroutine
+			// indefinitely.
+			Timeout: 15 * time.Minute,
 			Transport: &http.Transport{
 				DisableKeepAlives:   true,
 				MaxIdleConnsPerHost: 1,
@@ -196,7 +202,8 @@ type loggingAlerts struct {
 
 // Emit records one alert at WARN level.
 func (a loggingAlerts) Emit(ctx context.Context, class supervise.AlertClass, p supervise.AlertPayload) {
-	a.logger.LogAttrs(ctx, slog.LevelWarn, "supervisor alert",
+	a.logger.LogAttrs(
+		ctx, slog.LevelWarn, "supervisor alert",
 		slog.String("class", class.String()),
 		slog.String("scope", p.Scope),
 		slog.String("error_class", p.ErrorClass),

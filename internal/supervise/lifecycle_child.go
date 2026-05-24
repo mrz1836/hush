@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"sync"
 	"syscall"
 	"time"
@@ -141,6 +142,69 @@ func (l *Lifecycle) lookupValidator(scope string) Validator {
 	return noopValidator{}
 }
 
+// buildChildEnv assembles the child env []string from three layered sources,
+// lowest priority first:
+//  1. EnvPassthrough: named vars copied from the supervisor's own os.Environ()
+//     — only keys present in the supervisor env land here.
+//  2. Env: explicit KEY=VALUE pairs declared in the supervisor config.
+//  3. Scope: per-scope secrets fetched from the vault.
+//
+// Later layers overwrite earlier layers on key collision. This is the ONE
+// permitted `string(*SecureBytes)` site — the OS fork boundary. The caller
+// owns zeroing the returned slice once the child has been started (or the
+// start path errors out).
+func (l *Lifecycle) buildChildEnv(secrets secretSet) ([]string, error) {
+	capHint := len(l.config.Child.EnvPassthrough) + len(l.config.Child.Env) + len(l.config.Scope)
+	env := make([]string, 0, capHint)
+	seen := make(map[string]int, capHint)
+	upsertEnv := func(key, value string) {
+		entry := key + "=" + value
+		if idx, ok := seen[key]; ok {
+			env[idx] = entry
+			return
+		}
+		seen[key] = len(env)
+		env = append(env, entry)
+	}
+	for _, key := range l.config.Child.EnvPassthrough {
+		if value, ok := os.LookupEnv(key); ok {
+			upsertEnv(key, value)
+		}
+	}
+	for key, value := range l.config.Child.Env {
+		upsertEnv(key, value)
+	}
+	for _, scope := range l.config.Scope {
+		if err := appendScopeEnv(secrets, scope, upsertEnv); err != nil {
+			return env, err
+		}
+	}
+	return env, nil
+}
+
+// appendScopeEnv resolves one scope's plaintext from secrets and feeds it to
+// upsert. Scope wins over EnvPassthrough/Env on key collision — the vault is
+// the source of truth for any name in scope.
+func appendScopeEnv(secrets secretSet, scope string, upsert func(key, value string)) error {
+	sb := secrets[scope]
+	if sb == nil {
+		return fmt.Errorf("%w: scope %q", errEnvBuildScope, scope)
+	}
+	var added bool
+	if useErr := sb.Use(func(b []byte) {
+		// Single permitted string(*SecureBytes) site at the
+		// OS-execve fork boundary. Mirrors Child's Env []string.
+		upsert(scope, string(b))
+		added = true
+	}); useErr != nil {
+		return fmt.Errorf("supervise: env build: %w", useErr)
+	}
+	if !added {
+		return fmt.Errorf("%w: scope %q", errEnvBuildScope, scope)
+	}
+	return nil
+}
+
 // startChild builds ChildConfig.Env from the supplied per-scope plaintext,
 // instantiates the Child, calls Start(ctx), spawns childWaitLoop, and updates
 // inputs. The secrets are borrowed — startChild neither retains nor destroys
@@ -149,7 +213,7 @@ func (l *Lifecycle) lookupValidator(scope string) Validator {
 // This is the ONE permitted `string(*SecureBytes)` site — the OS fork
 // boundary. The env slice is zeroed after Start returns.
 func (l *Lifecycle) startChild(ctx context.Context, secrets secretSet) error {
-	env := append([]string(nil), l.config.Child.EnvPassthrough...)
+	env, err := l.buildChildEnv(secrets)
 	// Zero the env slice on every exit path — success, every
 	// error return below, and any panic that unwinds through this frame.
 	// Child.Start makes its own defensive copy of the slice into cmd.Env,
@@ -159,27 +223,25 @@ func (l *Lifecycle) startChild(ctx context.Context, secrets secretSet) error {
 			env[i] = ""
 		}
 	}()
-	for _, scope := range l.config.Scope {
-		sb := secrets[scope]
-		if sb == nil {
-			return fmt.Errorf("%w: scope %q", errEnvBuildScope, scope)
-		}
-		var added bool
-		if useErr := sb.Use(func(b []byte) {
-			// Single permitted string(*SecureBytes) site at the
-			// OS-execve fork boundary. Mirrors Child's Env []string.
-			env = append(env, scope+"="+string(b))
-			added = true
-		}); useErr != nil {
-			return fmt.Errorf("supervise: env build: %w", useErr)
-		}
-		if !added {
-			return fmt.Errorf("%w: scope %q", errEnvBuildScope, scope)
-		}
+	if err != nil {
+		return err
 	}
 
-	stderrSink := io.Discard
-	stdoutSink := io.Discard
+	stdoutSink, stdoutCloser, stderrSink, stderrCloser, err := l.openChildSinks()
+	if err != nil {
+		return err
+	}
+	// On any error return below, close the file handles we just opened.
+	// On the successful path, the file handles outlive startChild — the
+	// childWaitLoop closes them after Wait returns.
+	successfulStart := false
+	defer func() {
+		if successfulStart {
+			return
+		}
+		closeIfNotNil(stdoutCloser)
+		closeIfNotNil(stderrCloser)
+	}()
 	lsw := newLineSplittingWriter(ctx, stderrSink, l.deps.Watchdog, l.deps.Logger)
 
 	childCfg := ChildConfig{
@@ -194,6 +256,7 @@ func (l *Lifecycle) startChild(ctx context.Context, secrets secretSet) error {
 	if err := child.Start(ctx); err != nil {
 		return fmt.Errorf("supervise: child start: %w", err)
 	}
+	successfulStart = true
 
 	now := l.deps.NowFn()
 	l.childMu.Lock()
@@ -204,14 +267,77 @@ func (l *Lifecycle) startChild(ctx context.Context, secrets secretSet) error {
 	l.childRunning.Store(true)
 
 	l.wg.Add(1)
-	go l.childWaitLoop(ctx, child)
+	go l.childWaitLoop(ctx, child, stdoutCloser, stderrCloser)
 	return nil
+}
+
+// openChildSinks opens both the stdout and stderr sinks for the child. On a
+// stderr-sink error the already-opened stdout closer is closed before
+// returning so the caller does not leak the descriptor.
+//
+// Routing rules per sink:
+//   - StdoutPath / StderrPath set → open file (append mode, 0600). Operators
+//     get a stable on-disk view of child output independent of the
+//     supervisor's own stdout, which is useful when the supervisor itself is
+//     logged elsewhere (e.g. launchd StandardOutPath).
+//   - Empty → inherit the supervisor process's stdout/stderr. This is the
+//     "do something useful by default" choice: under launchd that surfaces
+//     in the supervisor's StandardOutPath / StandardErrorPath rather than
+//     vanishing into io.Discard.
+//
+// Either way the stderr stream still feeds the watchdog line splitter so
+// pattern-based alerts continue to fire.
+func (l *Lifecycle) openChildSinks() (io.Writer, io.Closer, io.Writer, io.Closer, error) {
+	stdoutSink, stdoutCloser, err := openChildSink(l.config.Child.StdoutPath, os.Stdout)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("supervise: child stdout sink: %w", err)
+	}
+	stderrSink, stderrCloser, err := openChildSink(l.config.Child.StderrPath, os.Stderr)
+	if err != nil {
+		closeIfNotNil(stdoutCloser)
+		return nil, nil, nil, nil, fmt.Errorf("supervise: child stderr sink: %w", err)
+	}
+	return stdoutSink, stdoutCloser, stderrSink, stderrCloser, nil
+}
+
+// closeIfNotNil closes c when it is non-nil and discards the error. Used in
+// the child-sink cleanup paths where the file descriptor must be released but
+// any close error is non-actionable.
+func closeIfNotNil(c io.Closer) {
+	if c == nil {
+		return
+	}
+	_ = c.Close()
+}
+
+// openChildSink returns the io.Writer to use as a child stdout/stderr sink
+// plus an optional io.Closer the caller must close once the child exits.
+// When path is non-empty the file is opened in append mode with mode 0600;
+// the closer is the *os.File. When path is empty the supplied fallback
+// (typically os.Stdout / os.Stderr) is used as-is with no closer — the
+// process owns those handles.
+func openChildSink(path string, fallback *os.File) (io.Writer, io.Closer, error) {
+	if path == "" {
+		return fallback, nil, nil
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600) //nolint:gosec // path is operator-configured and validated upstream
+	if err != nil {
+		return nil, nil, err
+	}
+	return f, f, nil
 }
 
 // childWaitLoop is owned by Lifecycle.wg; invokes Child.Wait once and sends
 // the result on childExitCh. Top-frame recover per Constitution IX.
-func (l *Lifecycle) childWaitLoop(ctx context.Context, child *Child) {
+// The stdoutCloser / stderrCloser handles (when non-nil) own dedicated
+// child-sink files and MUST be closed once Wait returns so the file
+// descriptors are released on every restart.
+func (l *Lifecycle) childWaitLoop(ctx context.Context, child *Child, stdoutCloser, stderrCloser io.Closer) {
 	defer l.wg.Done()
+	defer func() {
+		closeIfNotNil(stdoutCloser)
+		closeIfNotNil(stderrCloser)
+	}()
 	defer func() {
 		if r := recover(); r != nil {
 			l.deps.Logger.Error("supervise: childWaitLoop panic", slog.Any("recover", r))

@@ -122,7 +122,8 @@ func TestSuperviseConfig_AcceptsAllAllowListedValidators(t *testing.T) {
 func TestErrUnknownValidator_DoesNotIncludeSecretMaterial(t *testing.T) {
 	t.Parallel()
 	const lhs = "HIGH_ENTROPY_LHS_xyz789ABC"
-	body := withMinimalReplaced(t,
+	body := withMinimalReplaced(
+		t,
 		`ANTHROPIC_API_KEY = "anthropic"`,
 		lhs+` = "slack"`,
 	)
@@ -253,7 +254,8 @@ func TestSuperviseConfig_CommandFirstElementMustBeAbsolute(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c[0], func(t *testing.T) {
 			t.Parallel()
-			body := withMinimalReplaced(t,
+			body := withMinimalReplaced(
+				t,
 				`command = ["/usr/local/bin/your-daemon-binary", "start"]`,
 				`command = ["`+c[0]+`"]`,
 			)
@@ -268,7 +270,8 @@ func TestSuperviseConfig_CommandEmpty_Rejected(t *testing.T) {
 	t.Parallel()
 	t.Run("explicit_empty", func(t *testing.T) {
 		t.Parallel()
-		body := withMinimalReplaced(t,
+		body := withMinimalReplaced(
+			t,
 			`command = ["/usr/local/bin/your-daemon-binary", "start"]`,
 			`command = []`,
 		)
@@ -287,7 +290,8 @@ func TestSuperviseConfig_CommandEmpty_Rejected(t *testing.T) {
 
 func TestSuperviseConfig_CommandAcceptsAbsoluteWithArgs(t *testing.T) {
 	t.Parallel()
-	body := withMinimalReplaced(t,
+	body := withMinimalReplaced(
+		t,
 		`command = ["/usr/local/bin/your-daemon-binary", "start"]`,
 		`command = ["/usr/local/bin/your-daemon", "start", "--flag", ""]`,
 	)
@@ -300,7 +304,8 @@ func TestSuperviseConfig_CommandAcceptsAbsoluteWithArgs(t *testing.T) {
 
 func TestSuperviseConfig_ScopeEmpty_Rejected(t *testing.T) {
 	t.Parallel()
-	body := withMinimalReplaced(t,
+	body := withMinimalReplaced(
+		t,
 		`scope = [
   "ANTHROPIC_API_KEY",
 ]`,
@@ -395,7 +400,8 @@ func TestSuperviseConfig_ServerURLInvalid_Rejected(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c, func(t *testing.T) {
 			t.Parallel()
-			body := withMinimalReplaced(t,
+			body := withMinimalReplaced(
+				t,
 				`server_url = "http://100.96.10.4:7743/h/a8k2f9"`,
 				`server_url = "`+c+`"`,
 			)
@@ -406,7 +412,8 @@ func TestSuperviseConfig_ServerURLInvalid_Rejected(t *testing.T) {
 	}
 	t.Run("empty", func(t *testing.T) {
 		t.Parallel()
-		body := withMinimalReplaced(t,
+		body := withMinimalReplaced(
+			t,
 			`server_url = "http://100.96.10.4:7743/h/a8k2f9"`,
 			`server_url = ""`,
 		)
@@ -636,6 +643,57 @@ func TestLoad_ChildWorkingDirExpandError(t *testing.T) {
 	body = strings.Replace(body, `working_dir = "/tmp"`, `working_dir = "~/work"`, 1)
 	_, err := loadBody(t, body)
 	require.Error(t, err)
+}
+
+func TestLoad_ChildEnvDecodes(t *testing.T) {
+	t.Parallel()
+	body := strings.Replace(minimalBody(t),
+		`env_passthrough = ["PATH"]`+"\n",
+		`env_passthrough = ["PATH"]`+"\n\n[child.env]\nOPENCLAW_LAUNCHD_LABEL = \"ai.openclaw.gateway\"\nNODE_USE_SYSTEM_CA = \"1\"\n", 1)
+	s, err := loadBody(t, body)
+	require.NoError(t, err)
+	require.NotNil(t, s.Child.Env)
+	assert.Equal(t, "ai.openclaw.gateway", s.Child.Env["OPENCLAW_LAUNCHD_LABEL"])
+	assert.Equal(t, "1", s.Child.Env["NODE_USE_SYSTEM_CA"])
+}
+
+func TestLoad_ChildEnvAbsentLeavesNil(t *testing.T) {
+	t.Parallel()
+	s, err := loadBody(t, minimalBody(t))
+	require.NoError(t, err)
+	assert.Nil(t, s.Child.Env, "absent [child.env] should leave Env nil so callers can detect 'not configured'")
+}
+
+func TestLoad_ChildStdoutStderrPathDecodes(t *testing.T) {
+	t.Parallel()
+	body := strings.Replace(minimalBody(t),
+		`env_passthrough = ["PATH"]`,
+		`env_passthrough = ["PATH"]`+"\n"+`stdout_path = "/tmp/child.out.log"`+"\n"+`stderr_path = "/tmp/child.err.log"`, 1)
+	s, err := loadBody(t, body)
+	require.NoError(t, err)
+	assert.Equal(t, "/tmp/child.out.log", s.Child.StdoutPath)
+	assert.Equal(t, "/tmp/child.err.log", s.Child.StderrPath)
+}
+
+func TestLoad_ChildStdoutStderrPathDefaultsToEmpty(t *testing.T) {
+	t.Parallel()
+	s, err := loadBody(t, minimalBody(t))
+	require.NoError(t, err)
+	assert.Empty(t, s.Child.StdoutPath)
+	assert.Empty(t, s.Child.StderrPath)
+}
+
+func TestLoad_ChildStdoutPathExpandsHome(t *testing.T) {
+	// Not Parallel: overrides package-level userHomeDir.
+	prev := userHomeDir
+	t.Cleanup(func() { userHomeDir = prev })
+	userHomeDir = func() (string, error) { return "/Users/example", nil }
+	body := strings.Replace(minimalBody(t),
+		`env_passthrough = ["PATH"]`,
+		`env_passthrough = ["PATH"]`+"\n"+`stdout_path = "~/logs/child.out.log"`, 1)
+	s, err := loadBody(t, body)
+	require.NoError(t, err)
+	assert.Equal(t, "/Users/example/logs/child.out.log", s.Child.StdoutPath)
 }
 
 func TestLoad_EnvPassthroughDefaultsToEmpty(t *testing.T) {

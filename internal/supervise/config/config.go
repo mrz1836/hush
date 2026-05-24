@@ -44,10 +44,25 @@ type Supervisor struct {
 }
 
 // Child is the [child] section of the supervisor config.
+//
+// Env carries explicit KEY=VALUE pairs the operator wants the child to
+// receive (typically things like OPENCLAW_LAUNCHD_LABEL, NODE_EXTRA_CA_CERTS,
+// or any other adapter-shaped knob the child binary expects). Env values
+// take precedence over EnvPassthrough when a key appears in both. Scoped
+// secrets injected from the vault take precedence over both.
+//
+// StdoutPath / StderrPath, when set, route the child's stdout / stderr to
+// those filesystem paths (append mode, 0600). When empty, the child
+// inherits the supervisor process's stdout / stderr — under launchd this
+// surfaces in StandardOutPath / StandardErrorPath. Watchdog patterns are
+// still evaluated regardless of which sink is in use.
 type Child struct {
 	Command            []string
 	WorkingDir         string
 	EnvPassthrough     []string
+	Env                map[string]string
+	StdoutPath         string
+	StderrPath         string
 	RestartOnCleanExit bool
 	RestartOnExit78    bool
 }
@@ -106,11 +121,14 @@ type supervisorDecoded struct {
 }
 
 type childDecoded struct {
-	Command            []string `toml:"command"`
-	WorkingDir         string   `toml:"working_dir"`
-	EnvPassthrough     []string `toml:"env_passthrough"`
-	RestartOnCleanExit *bool    `toml:"restart_on_clean_exit"`
-	RestartOnExit78    *bool    `toml:"restart_on_exit_78"`
+	Command            []string          `toml:"command"`
+	WorkingDir         string            `toml:"working_dir"`
+	EnvPassthrough     []string          `toml:"env_passthrough"`
+	Env                map[string]string `toml:"env"`
+	StdoutPath         string            `toml:"stdout_path"`
+	StderrPath         string            `toml:"stderr_path"`
+	RestartOnCleanExit *bool             `toml:"restart_on_clean_exit"`
+	RestartOnExit78    *bool             `toml:"restart_on_exit_78"`
 }
 
 type discordDecoded struct {
@@ -330,6 +348,26 @@ func materialize(d supervisorDecoded) (*Supervisor, error) {
 		s.Child.EnvPassthrough = append([]string{}, d.Child.EnvPassthrough...)
 	} else {
 		s.Child.EnvPassthrough = []string{}
+	}
+	if len(d.Child.Env) > 0 {
+		s.Child.Env = make(map[string]string, len(d.Child.Env))
+		for k, v := range d.Child.Env {
+			s.Child.Env[k] = v
+		}
+	}
+	if d.Child.StdoutPath != "" {
+		path, err := expandHome(d.Child.StdoutPath)
+		if err != nil {
+			return nil, fmt.Errorf("hush/supervise/config: child.stdout_path expand: %w", err)
+		}
+		s.Child.StdoutPath = path
+	}
+	if d.Child.StderrPath != "" {
+		path, err := expandHome(d.Child.StderrPath)
+		if err != nil {
+			return nil, fmt.Errorf("hush/supervise/config: child.stderr_path expand: %w", err)
+		}
+		s.Child.StderrPath = path
 	}
 	if d.Child.RestartOnCleanExit != nil {
 		s.Child.RestartOnCleanExit = *d.Child.RestartOnCleanExit
