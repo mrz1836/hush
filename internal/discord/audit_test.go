@@ -41,7 +41,7 @@ func TestAuditChannel_AllFiveLifecycleEventsMirrored(t *testing.T) {
 	denyReq.ClientIP = "100.96.0.42"
 	prevDM := shim.DMCount()
 	go func() {
-		uuid := waitForNewDM(t, shim, prevDM, time.Second)
+		uuid := waitForNewDM(t, shim, prevDM)
 		shim.TriggerInteractionCreate(uuid + ":deny")
 	}()
 	if _, err := a.RequestApproval(ctx, denyReq); !errors.Is(err, ErrApprovalDenied) {
@@ -66,7 +66,7 @@ func TestAuditChannel_AllFiveLifecycleEventsMirrored(t *testing.T) {
 	shim.TriggerReady()
 	primerPrev := shim.DMCount()
 	go func() {
-		uuid := waitForNewDM(t, shim, primerPrev, time.Second)
+		uuid := waitForNewDM(t, shim, primerPrev)
 		shim.TriggerInteractionCreate(uuid + ":approve")
 	}()
 	if _, err := a2.RequestApproval(ctx, rlReq); err != nil {

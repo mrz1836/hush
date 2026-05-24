@@ -56,6 +56,12 @@ type sessionShim struct {
 	sendErr   map[string]error // keyed by channelID; missing key == nil
 	sendCallN map[string]int   // count of calls per channelID
 	sendOnce  map[string]error // returns this once then clears (for delivery-failure-then-success tests)
+	// sendBlock, when non-nil, makes ChannelMessageSendComplex block on a
+	// receive from this channel before returning. Tests use it to simulate
+	// a hung Discord REST call (e.g. discordgo sleeping through a
+	// rate-limit Retry-After) so the ctx-bounded send wrapper in
+	// BotApprover.RequestApproval can be exercised.
+	sendBlock chan struct{}
 
 	// Registered handlers.
 	interactionHandlers []func(*discordgo.Session, *discordgo.InteractionCreate)
@@ -114,6 +120,7 @@ func (s *sessionShim) UserChannelCreate(recipientID string, _ ...discordgo.Reque
 
 func (s *sessionShim) ChannelMessageSendComplex(channelID string, data *discordgo.MessageSend, _ ...discordgo.RequestOption) (*discordgo.Message, error) {
 	s.mu.Lock()
+	block := s.sendBlock
 	if once, ok := s.sendOnce[channelID]; ok {
 		delete(s.sendOnce, channelID)
 		s.sendCallN[channelID]++
@@ -132,6 +139,12 @@ func (s *sessionShim) ChannelMessageSendComplex(channelID string, data *discordg
 		s.dms = append(s.dms, dmRecord{ChannelID: channelID, Send: data})
 	}
 	s.mu.Unlock()
+	// Hang point — release only when the test signals via the channel
+	// (or it's closed). Models the discordgo "sleep through Retry-After"
+	// hang that necessitates ctx-bounded send in BotApprover.
+	if block != nil {
+		<-block
+	}
 	return &discordgo.Message{ID: "msg:" + channelID}, nil
 }
 
@@ -315,6 +328,14 @@ func (s *sessionShim) SetCreateErr(err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.createErr = err
+}
+
+// SetSendBlock atomically programs the channel that makes the next
+// ChannelMessageSendComplex call block. Passing nil disarms.
+func (s *sessionShim) SetSendBlock(ch chan struct{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sendBlock = ch
 }
 
 // newTestApprover wires a BotApprover against the shim with a

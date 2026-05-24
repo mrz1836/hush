@@ -19,12 +19,14 @@ type bucketKey struct {
 	ClientIP       string
 }
 
-// bucketState tracks the most recent successful delivery and any
-// in-flight pending acquire for a given key. Both fields carry Go
-// monotonic timestamps and survive wall-clock changes.
+// bucketState tracks the most recent successful delivery, any in-flight
+// pending acquire, and the most recent rate-limit audit emission for a
+// given key. All timestamps carry Go monotonic readings and survive
+// wall-clock changes.
 type bucketState struct {
-	delivered time.Time
-	pending   time.Time
+	delivered          time.Time
+	pending            time.Time
+	lastRateLimitAudit time.Time
 }
 
 // acquireResult captures the outcome of a rateBucket.Acquire call.
@@ -55,11 +57,17 @@ func newRateBucket(window time.Duration) *rateBucket {
 // since the last delivery and no concurrent acquire is in flight.
 // Callers MUST follow every acquireGranted with exactly one Commit or
 // Refund (no leaks).
+//
+// Stale pending slots (older than the rate-limit window) are treated
+// as orphaned and reclaimed. This guards against a buggy or hung
+// upstream (e.g. a discordgo REST call that never returns and whose
+// deferred Refund therefore never runs) from permanently locking the
+// bucket and 429-ing every subsequent caller.
 func (b *rateBucket) Acquire(key bucketKey, now time.Time) acquireResult {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	state := b.entries[key]
-	if !state.pending.IsZero() {
+	if !state.pending.IsZero() && now.Sub(state.pending) < b.window {
 		return acquireDenied
 	}
 	if !state.delivered.IsZero() && now.Sub(state.delivered) < b.window {
@@ -91,6 +99,24 @@ func (b *rateBucket) Refund(key bucketKey) {
 	state := b.entries[key]
 	state.pending = time.Time{}
 	b.entries[key] = state
+}
+
+// ShouldEmitRateLimitAudit reports whether a rate_limited audit event
+// should be mirrored to Discord for the given key at the given time.
+// The first denial in a rate-limit window emits; subsequent denials
+// within the same window are suppressed so that an in-process supervisor
+// retry loop cannot turn the protective rate limiter into a Discord
+// audit-channel spam loop. Records the emission time on a true result.
+func (b *rateBucket) ShouldEmitRateLimitAudit(key bucketKey, now time.Time) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	state := b.entries[key]
+	if !state.lastRateLimitAudit.IsZero() && now.Sub(state.lastRateLimitAudit) < b.window {
+		return false
+	}
+	state.lastRateLimitAudit = now
+	b.entries[key] = state
+	return true
 }
 
 // makeKey derives the bucketKey for a given ApprovalRequest per the

@@ -223,7 +223,9 @@ func (a *BotApprover) RequestApproval(ctx context.Context, req ApprovalRequest) 
 	if a.bucket.Acquire(key, a.now()) != acquireGranted {
 		a.logger.Warn("hush/discord: rate limit denied",
 			slog.String("session_type", string(req.SessionType)))
-		a.mirrorAudit(ctx, auditRateLimited, req)
+		if a.bucket.ShouldEmitRateLimitAudit(key, a.now()) {
+			a.mirrorAudit(ctx, auditRateLimited, req)
+		}
 		return Decision{}, ErrRateLimited
 	}
 
@@ -249,12 +251,36 @@ func (a *BotApprover) RequestApproval(ctx context.Context, req ApprovalRequest) 
 		a.pending.Delete(customID)
 		return Decision{}, err
 	}
-	if _, err := a.session.ChannelMessageSendComplex(dest, msg); err != nil {
+	// ChannelMessageSendComplex is a blocking REST call inside discordgo
+	// that does NOT honor ctx. When Discord is silently rate-limiting our
+	// bot (returning a long Retry-After) the call sleeps until the window
+	// expires — visible to us as a multi-minute hang that would otherwise
+	// hold the rate-limit bucket's pending slot the whole time and
+	// 429-loop every concurrent caller. Wrap it in a ctx-bounded send so
+	// the caller's deadline aborts the wait cleanly; the orphaned
+	// goroutine is bounded by the underlying Discord backoff and exits
+	// once the REST call returns.
+	sendErr := make(chan error, 1)
+	go func() {
+		_, sendCallErr := a.session.ChannelMessageSendComplex(dest, msg)
+		sendErr <- sendCallErr
+	}()
+	select {
+	case sErr := <-sendErr:
+		if sErr != nil {
+			a.pending.Delete(customID)
+			a.logger.Warn("hush/discord: ChannelMessageSendComplex failed",
+				slog.String("delivery", a.approvalDeliveryMode()),
+				slog.String("err_class", "discord_unavailable"))
+			return Decision{}, fmt.Errorf("%w: %w", ErrDiscordUnavailable, sErr)
+		}
+	case <-ctx.Done():
 		a.pending.Delete(customID)
-		a.logger.Warn("hush/discord: ChannelMessageSendComplex failed",
+		a.logger.Warn("hush/discord: ChannelMessageSendComplex timed out",
 			slog.String("delivery", a.approvalDeliveryMode()),
-			slog.String("err_class", "discord_unavailable"))
-		return Decision{}, fmt.Errorf("%w: %w", ErrDiscordUnavailable, err)
+			slog.String("err_class", "discord_unavailable"),
+			slog.String("ctx_err", ctx.Err().Error()))
+		return Decision{}, fmt.Errorf("%w: %w", ErrDiscordUnavailable, ctx.Err())
 	}
 
 	a.bucket.Commit(key)

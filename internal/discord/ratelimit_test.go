@@ -203,6 +203,59 @@ func TestRateLimit_ZeroDMRateLimitUsesDefault(t *testing.T) {
 	}
 }
 
+// TestRateLimit_ShouldEmitRateLimitAuditCoalescesWithinWindow asserts
+// that the first denial in a window returns true (emit) and that
+// subsequent denials within the same window return false. This is the
+// guard that prevents an in-process supervisor retry loop from turning
+// the protective rate limiter into a Discord audit-channel spam loop.
+func TestRateLimit_ShouldEmitRateLimitAuditCoalescesWithinWindow(t *testing.T) {
+	t.Parallel()
+	b := newRateBucket(5 * time.Minute)
+	key := bucketKey{SupervisorName: "openclaw", ClientIP: "100.90.223.110"}
+	t0 := time.Now()
+	if !b.ShouldEmitRateLimitAudit(key, t0) {
+		t.Fatal("first call within an empty window should emit")
+	}
+	for i, dt := range []time.Duration{time.Second, 30 * time.Second, 2 * time.Minute, 4*time.Minute + 59*time.Second} {
+		if b.ShouldEmitRateLimitAudit(key, t0.Add(dt)) {
+			t.Errorf("call %d at +%s within window should be suppressed", i+1, dt)
+		}
+	}
+}
+
+func TestRateLimit_ShouldEmitRateLimitAuditAllowsAfterWindow(t *testing.T) {
+	t.Parallel()
+	b := newRateBucket(5 * time.Minute)
+	key := bucketKey{SupervisorName: "openclaw", ClientIP: "100.90.223.110"}
+	t0 := time.Now()
+	if !b.ShouldEmitRateLimitAudit(key, t0) {
+		t.Fatal("first call should emit")
+	}
+	if b.ShouldEmitRateLimitAudit(key, t0.Add(4*time.Minute)) {
+		t.Fatal("mid-window call should be suppressed")
+	}
+	if !b.ShouldEmitRateLimitAudit(key, t0.Add(5*time.Minute+time.Nanosecond)) {
+		t.Fatal("post-window call should emit again")
+	}
+}
+
+func TestRateLimit_ShouldEmitRateLimitAuditPerKeyIsolation(t *testing.T) {
+	t.Parallel()
+	b := newRateBucket(5 * time.Minute)
+	now := time.Now()
+	keyA := bucketKey{SupervisorName: "openclaw", ClientIP: "1.1.1.1"}
+	keyB := bucketKey{SupervisorName: "hermes", ClientIP: "1.1.1.1"}
+	if !b.ShouldEmitRateLimitAudit(keyA, now) {
+		t.Fatal("A first call should emit")
+	}
+	if !b.ShouldEmitRateLimitAudit(keyB, now) {
+		t.Fatal("B first call should emit (different key)")
+	}
+	if b.ShouldEmitRateLimitAudit(keyA, now.Add(time.Second)) {
+		t.Fatal("A second call should be suppressed (same key)")
+	}
+}
+
 // TestRateLimit_UsesMonotonicClock asserts the bucket stores
 // time.Time values (which carry the monotonic component) and uses
 // Sub() — never a UnixNano cast that would strip monotonic.
@@ -240,9 +293,9 @@ func waitForCustomID(t *testing.T, shim *sessionShim) string {
 
 // waitForNewDM blocks until DMCount() exceeds prev, then returns the
 // UUID prefix of the most-recently-recorded DM.
-func waitForNewDM(t *testing.T, shim *sessionShim, prev int, timeout time.Duration) string {
+func waitForNewDM(t *testing.T, shim *sessionShim, prev int) string {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
+	deadline := time.Now().Add(shimWaitTimeout)
 	for time.Now().Before(deadline) {
 		if shim.DMCount() > prev {
 			rec, ok := shim.LastDM()

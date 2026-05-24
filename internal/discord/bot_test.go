@@ -581,7 +581,7 @@ func TestBotApprover_TokenAbsentFromAllArtifacts(t *testing.T) {
 	req.ClientIP = "100.96.0.99"
 	prevDMs := shim.DMCount()
 	go func() {
-		uuid := waitForNewDM(t, shim, prevDMs, time.Second)
+		uuid := waitForNewDM(t, shim, prevDMs)
 		shim.TriggerInteractionCreate(uuid + ":deny")
 	}()
 	if _, err := a.RequestApproval(ctx, req); !errors.Is(err, ErrApprovalDenied) {
@@ -779,4 +779,100 @@ func waitForSentCustomID(t *testing.T, shim *sessionShim, channelID string) stri
 	}
 	t.Fatalf("timeout waiting for message in %s", channelID)
 	return ""
+}
+
+// TestBotApprover_CtxBoundedSend_AbortsOnDeadline asserts that a hung
+// ChannelMessageSendComplex no longer permanently locks the rate-limit
+// bucket. When the per-request ctx fires (server-side
+// claim_approval_timeout or supervisor HTTP-client timeout), the
+// approver returns ErrDiscordUnavailable, the deferred Refund clears
+// the bucket's pending slot, and the very next caller's Acquire is
+// granted — proving the bucket is free again.
+//
+// Pre-fix: discordgo would block forever sleeping through a long
+// Discord Retry-After header, the ctx timeout fired but never
+// cancelled the in-flight HTTP call, so the deferred Refund never
+// ran, pending stayed set, all subsequent /claim requests were 429'd
+// indefinitely.
+func TestBotApprover_CtxBoundedSend_AbortsOnDeadline(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	shim := newSessionShim()
+	cfg := BotConfig{
+		Token:   mustSecureBytes(t, []byte("tok")),
+		OwnerID: "owner",
+		AppID:   "app",
+	}
+	a := newTestApprover(ctx, shim, cfg, testutil.NewSilentLogger())
+	shim.TriggerReady()
+
+	// Arm: the next send will block until we close this channel.
+	block := make(chan struct{})
+	shim.SetSendBlock(block)
+
+	reqCtx, reqCancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer reqCancel()
+	dec, err := a.RequestApproval(reqCtx, interactiveSampleRequest())
+
+	if dec.Approved {
+		t.Fatal("Approved=true on ctx-bounded send abort — Constitution II VIOLATION")
+	}
+	if !errors.Is(err, ErrDiscordUnavailable) {
+		t.Fatalf("err=%v; want ErrDiscordUnavailable wrap", err)
+	}
+
+	// Release the hung goroutine so it can exit cleanly (avoid goroutine leak).
+	close(block)
+	shim.SetSendBlock(nil)
+
+	// Snapshot DM count BEFORE the second send: the first (hung) send
+	// already recorded its DM payload into shim.dms before blocking on
+	// the channel, so waitForCustomID would otherwise return that stale
+	// UUID and the interaction trigger would be dropped (no pending
+	// entry → test hangs).
+	prevDMs := shim.DMCount()
+
+	// Proof the bucket pending slot was released: a fresh send (with no
+	// hang) for the same key must succeed instead of being 429'd.
+	go func() {
+		uuid := waitForNewDM(t, shim, prevDMs)
+		shim.TriggerInteractionCreate(uuid + ":approve")
+	}()
+	dec2, err2 := a.RequestApproval(context.Background(), interactiveSampleRequest())
+	if err2 != nil {
+		t.Fatalf("subsequent request err=%v; bucket likely still locked", err2)
+	}
+	if !dec2.Approved {
+		t.Fatal("subsequent request not approved; bucket recovery failed")
+	}
+}
+
+// TestRateBucket_StalePendingReclaimsAfterWindow asserts that a pending
+// slot older than the rate-limit window is treated as orphaned by the
+// next Acquire — defense-in-depth so a buggy upstream that fails to
+// Commit/Refund can't permanently lock the bucket.
+func TestRateBucket_StalePendingReclaimsAfterWindow(t *testing.T) {
+	t.Parallel()
+	b := newRateBucket(5 * time.Minute)
+	key := bucketKey{SupervisorName: "openclaw", ClientIP: "100.90.223.110"}
+	t0 := time.Now()
+
+	// Stuck-pending scenario: Acquire granted, but the caller died/forgot
+	// to Commit/Refund. Pending stays set indefinitely (pre-fix).
+	if r := b.Acquire(key, t0); r != acquireGranted {
+		t.Fatal("first acquire failed")
+	}
+
+	// Within the window, the orphaned pending slot still blocks new
+	// callers — same key has only one in-flight request at a time.
+	if r := b.Acquire(key, t0.Add(time.Minute)); r != acquireDenied {
+		t.Fatalf("mid-window second acquire = %v; want denied while pending<window", r)
+	}
+
+	// After the window elapses, the orphaned pending slot is reclaimed
+	// and a fresh acquire is granted. This is the safety net.
+	if r := b.Acquire(key, t0.Add(5*time.Minute+time.Nanosecond)); r != acquireGranted {
+		t.Fatalf("post-window acquire after stale pending = %v; want granted (orphan reclaim)", r)
+	}
 }
