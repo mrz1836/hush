@@ -361,7 +361,7 @@ func (s *Server) tryResumeSupervisorSession(
 	if sessionType != SessionSupervisor {
 		return false
 	}
-	existing, found := s.tokenStore.FindActiveSession(token.SessionSupervisor, peer.String(), sortedScope(req.Scope))
+	existing, found := s.tokenStore.FindActiveSession(token.SessionSupervisor, token.NewClientIP(peer), token.NewScope(req.Scope))
 	if !found {
 		return false
 	}

@@ -1811,7 +1811,7 @@ func (failingTokenStore) RevokeIdempotent(_ string) (bool, bool) {
 	return false, false
 }
 
-func (failingTokenStore) FindActiveSession(_ token.SessionType, _ string, _ []string) (*token.Token, bool) {
+func (failingTokenStore) FindActiveSession(_ token.SessionType, _ token.ClientIP, _ token.Scope) (*token.Token, bool) {
 	return nil, false
 }
 

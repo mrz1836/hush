@@ -35,10 +35,12 @@ type Store interface {
 	// non-revoked token whose (SessionType, ClientIP, Scope) match the
 	// supplied tuple, if any. Used by the /claim handler to short-circuit
 	// approval for supervisor restarts that should reclaim an existing
-	// session rather than waste a fresh DM. Scope match is order-sensitive
-	// — callers MUST canonicalise (alphabetical) before invoking. Returns
+	// session rather than waste a fresh DM. The named ClientIP and Scope
+	// parameter types enforce canonical form at the call boundary —
+	// callers construct via [NewClientIP] and [NewScope] so non-canonical
+	// strings or unsorted slices cannot silently miss a match. Returns
 	// (nil, false) when no live match exists.
-	FindActiveSession(sessionType SessionType, clientIP string, scope []string) (*Token, bool)
+	FindActiveSession(sessionType SessionType, clientIP ClientIP, scope Scope) (*Token, bool)
 }
 
 const defaultTick = 30 * time.Second
@@ -175,7 +177,7 @@ func (s *memStore) RevokeIdempotent(jti string) (existed, alreadyRevoked bool) {
 // production workloads (≤ a few hundred sessions per host) make this
 // acceptable without a secondary index. Returns the token with the
 // latest ExpiresAt when more than one matches.
-func (s *memStore) FindActiveSession(sessionType SessionType, clientIP string, scope []string) (*Token, bool) {
+func (s *memStore) FindActiveSession(sessionType SessionType, clientIP ClientIP, scope Scope) (*Token, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	now := s.nowFn()
@@ -195,18 +197,21 @@ func (s *memStore) FindActiveSession(sessionType SessionType, clientIP string, s
 }
 
 // sessionMatches reports whether t is an active session matching the
-// (sessionType, clientIP, scope) tuple at time now.
-func sessionMatches(t *Token, sessionType SessionType, clientIP string, scope []string, now time.Time) bool {
+// (sessionType, clientIP, scope) tuple at time now. t.ClientIP is the
+// canonical string the issuer recorded (via netip.ParseAddr in Issue),
+// so the ClientIP cast on the left is a no-op modulo type identity. The
+// Scope cast lets us compare against the typed-and-canonical caller input.
+func sessionMatches(t *Token, sessionType SessionType, clientIP ClientIP, scope Scope, now time.Time) bool {
 	if t.SessionType != sessionType {
 		return false
 	}
-	if t.ClientIP != clientIP {
+	if ClientIP(t.ClientIP) != clientIP {
 		return false
 	}
 	if !t.ExpiresAt.After(now) {
 		return false
 	}
-	return scopeSliceEqual(t.Scope, scope)
+	return scopeSliceEqual(t.Scope, []string(scope))
 }
 
 // scopeSliceEqual reports whether two pre-sorted scope slices contain
