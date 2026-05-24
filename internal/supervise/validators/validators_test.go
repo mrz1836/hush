@@ -518,14 +518,19 @@ func TestPackage_NoRequestObjectInLogOrError(t *testing.T) {
 // must be a for-range zero-loop over the same local buffer.
 func TestPackage_AllBuildersZeroLocalBuffer(t *testing.T) {
 	t.Parallel()
-	builders := map[string]string{
-		"setAnthropicAuth":      "anthropic.go",
-		"setAnthropicOAuthAuth": "anthropic_oauth.go",
-		"setOpenAIAuth":         "openai.go",
-		"setGoogleAIAuth":       "google_ai.go",
-		"setGitHubAuth":         "github.go",
+	// All five auth-header builders live in the single consolidated
+	// provider.go after the 5→1 struct dedup. The zero-loop discipline
+	// is enforced per-function: extracting a shared helper would break
+	// Constitution VIII independent auditability.
+	const file = "provider.go"
+	builders := []string{
+		"setAnthropicAuth",
+		"setAnthropicOAuthAuth",
+		"setOpenAIAuth",
+		"setGoogleAIAuth",
+		"setGitHubAuth",
 	}
-	for fnName, file := range builders {
+	for _, fnName := range builders {
 		assertBuilderZeroLoop(t, fnName, file)
 	}
 }
