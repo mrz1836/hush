@@ -855,7 +855,7 @@ func TestBotApprover_CtxBoundedSend_AbortsOnDeadline(t *testing.T) {
 func TestRateBucket_StalePendingReclaimsAfterWindow(t *testing.T) {
 	t.Parallel()
 	b := newRateBucket(5 * time.Minute)
-	key := bucketKey{SupervisorName: "openclaw", ClientIP: "100.90.223.110"}
+	key := bucketKey{SupervisorName: "claude", ClientIP: "100.64.0.1"}
 	t0 := time.Now()
 
 	// Stuck-pending scenario: Acquire granted, but the caller died/forgot

@@ -2022,7 +2022,7 @@ func TestClaim_VerifyClaimSignature_BadBase64(t *testing.T) {
 // holds an active session re-claims for the same (ClientIP, Scope), the
 // chassis short-circuits the approver and mints a fresh JWT inheriting
 // the existing session's remaining TTL. Eliminates per-restart Discord
-// rate-limit waits for long-lived supervisor processes (T-304).
+// rate-limit waits for long-lived supervisor processes.
 func TestClaim_SupervisorSessionResumption(t *testing.T) {
 	t.Parallel()
 	h := newClaimHarness(

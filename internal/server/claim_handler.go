@@ -285,9 +285,8 @@ func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
 	// wait for the old session to expire and re-approve.
 	//
 	// Eliminates the per-restart user-visible "wait 5 minutes for Discord
-	// rate-limit window" cycle that plagued supervisors like ai.openclaw.gateway
-	// in T-304 — the supervisor process restarts cheap, the human's
-	// approval cadence stays intact.
+	// rate-limit window" cycle for long-lived supervisors — the supervisor
+	// process restarts cheap, the human's approval cadence stays intact.
 	if s.tryResumeSupervisorSession(w, r, ctx, req, sessionType, peer, cappedTTL) {
 		return
 	}

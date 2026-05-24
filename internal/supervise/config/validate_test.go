@@ -649,11 +649,11 @@ func TestLoad_ChildEnvDecodes(t *testing.T) {
 	t.Parallel()
 	body := strings.Replace(minimalBody(t),
 		`env_passthrough = ["PATH"]`+"\n",
-		`env_passthrough = ["PATH"]`+"\n\n[child.env]\nOPENCLAW_LAUNCHD_LABEL = \"ai.openclaw.gateway\"\nNODE_USE_SYSTEM_CA = \"1\"\n", 1)
+		`env_passthrough = ["PATH"]`+"\n\n[child.env]\nDAEMON_LAUNCHD_LABEL = \"ai.example.daemon\"\nNODE_USE_SYSTEM_CA = \"1\"\n", 1)
 	s, err := loadBody(t, body)
 	require.NoError(t, err)
 	require.NotNil(t, s.Child.Env)
-	assert.Equal(t, "ai.openclaw.gateway", s.Child.Env["OPENCLAW_LAUNCHD_LABEL"])
+	assert.Equal(t, "ai.example.daemon", s.Child.Env["DAEMON_LAUNCHD_LABEL"])
 	assert.Equal(t, "1", s.Child.Env["NODE_USE_SYSTEM_CA"])
 }
 

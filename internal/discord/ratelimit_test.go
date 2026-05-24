@@ -211,7 +211,7 @@ func TestRateLimit_ZeroDMRateLimitUsesDefault(t *testing.T) {
 func TestRateLimit_ShouldEmitRateLimitAuditCoalescesWithinWindow(t *testing.T) {
 	t.Parallel()
 	b := newRateBucket(5 * time.Minute)
-	key := bucketKey{SupervisorName: "openclaw", ClientIP: "100.90.223.110"}
+	key := bucketKey{SupervisorName: "claude", ClientIP: "100.64.0.1"}
 	t0 := time.Now()
 	if !b.ShouldEmitRateLimitAudit(key, t0) {
 		t.Fatal("first call within an empty window should emit")
@@ -226,7 +226,7 @@ func TestRateLimit_ShouldEmitRateLimitAuditCoalescesWithinWindow(t *testing.T) {
 func TestRateLimit_ShouldEmitRateLimitAuditAllowsAfterWindow(t *testing.T) {
 	t.Parallel()
 	b := newRateBucket(5 * time.Minute)
-	key := bucketKey{SupervisorName: "openclaw", ClientIP: "100.90.223.110"}
+	key := bucketKey{SupervisorName: "claude", ClientIP: "100.64.0.1"}
 	t0 := time.Now()
 	if !b.ShouldEmitRateLimitAudit(key, t0) {
 		t.Fatal("first call should emit")
@@ -243,8 +243,8 @@ func TestRateLimit_ShouldEmitRateLimitAuditPerKeyIsolation(t *testing.T) {
 	t.Parallel()
 	b := newRateBucket(5 * time.Minute)
 	now := time.Now()
-	keyA := bucketKey{SupervisorName: "openclaw", ClientIP: "1.1.1.1"}
-	keyB := bucketKey{SupervisorName: "hermes", ClientIP: "1.1.1.1"}
+	keyA := bucketKey{SupervisorName: "claude", ClientIP: "1.1.1.1"}
+	keyB := bucketKey{SupervisorName: "claude-worker", ClientIP: "1.1.1.1"}
 	if !b.ShouldEmitRateLimitAudit(keyA, now) {
 		t.Fatal("A first call should emit")
 	}
