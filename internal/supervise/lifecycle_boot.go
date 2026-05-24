@@ -126,7 +126,8 @@ func (l *Lifecycle) bootPreconditionsLoop(ctx context.Context) error {
 		case vaultErr != nil:
 			lastErrClass = "vault_unreachable"
 		}
-		l.deps.Logger.Info("supervise: boot precondition not ready",
+		l.deps.Logger.Info(
+			"supervise: boot precondition not ready",
 			slog.Int("attempt", attempt),
 			slog.String("class", lastErrClass),
 			slog.Any("tailscale_err", tsErr),

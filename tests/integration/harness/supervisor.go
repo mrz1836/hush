@@ -598,7 +598,8 @@ func buildSupervisorConfig(t *testing.T, opts SupervisorOpts) *superviseconfig.S
 		cacheToml = "cache_secrets_for_restart = true\ncache_grace_ttl = \"1h\""
 	}
 
-	body := fmt.Sprintf(`name = %q
+	body := fmt.Sprintf(
+		`name = %q
 reason = "harness integration test"
 server_url = %q
 client_machine_index = %d

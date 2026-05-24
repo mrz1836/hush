@@ -1003,6 +1003,7 @@ func (s *recordingStateDouble) RequestRestart() {
 	s.requestRestart.Add(1)
 	panic("watchdog called RequestRestart")
 }
+
 func (s *recordingStateDouble) Transition() { s.transition.Add(1); panic("watchdog called Transition") }
 
 func TestWatchdog_NeverTransitionsState(t *testing.T) {

@@ -330,9 +330,12 @@ func TestLogger_LogValuerInNestedGroup(t *testing.T) {
 	var buf bytes.Buffer
 	logger := logging.New(logging.Options{Format: logging.FormatJSON, Out: &buf})
 	// Two levels of nesting to cover recursion at every depth.
-	logger.Info("nested groups",
-		slog.Group("outer",
-			slog.Group("inner",
+	logger.Info(
+		"nested groups",
+		slog.Group(
+			"outer",
+			slog.Group(
+				"inner",
 				slog.Any("value", alwaysRedacted{}),
 			),
 		),

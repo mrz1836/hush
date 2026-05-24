@@ -198,7 +198,8 @@ func (r *Refresher) tick(ctx context.Context) {
 func (r *Refresher) fire(ctx context.Context) {
 	err := r.refill(ctx)
 	if err != nil {
-		r.logger.Warn("refresh: fire failed; counted as issued",
+		r.logger.Warn(
+			"refresh: fire failed; counted as issued",
 			slog.String("class", classifyOutcome(err)),
 			slog.Any("err", err),
 		)

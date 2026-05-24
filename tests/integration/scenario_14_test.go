@@ -80,7 +80,8 @@ func scenario14DuplicateStart(t *testing.T) {
 	// second acquire. The audit + status + discord streams are nil for
 	// this minimal-composition scenario per AssertSentinelAbsent's
 	// nil-tolerance.
-	harness.AssertSentinelAbsent(t, sentinel,
+	harness.AssertSentinelAbsent(
+		t, sentinel,
 		logs.Bytes(),
 		nil,      // RawAudit() — no server
 		nil,      // StatusRaw() — second supervisor never opened socket

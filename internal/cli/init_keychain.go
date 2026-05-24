@@ -110,7 +110,8 @@ func resolveKeychainACL(
 // content — tests assert on substrings. The panel embeds zsh-safe
 // snippets only; no `read -p` / `read -s`.
 func renderKeychainACLPanel(stderr *Stream, service, account, keychainPath string) {
-	_ = stderr.WriteText(initMsgKeychainACLPanelFmt,
+	_ = stderr.WriteText(
+		initMsgKeychainACLPanelFmt,
 		service,
 		service, account, keychainPath,
 		service, account, keychainPath,

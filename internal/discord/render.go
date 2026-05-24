@@ -121,7 +121,8 @@ func renderResolvedApproval(req ApprovalRequest, approved bool) *discordgo.Inter
 	if req.SessionType == token.SessionSupervisor {
 		lines = append(lines, fmt.Sprintf("Supervisor: %s", req.SupervisorName))
 	}
-	lines = append(lines,
+	lines = append(
+		lines,
 		fmt.Sprintf("Mesh IP: %s", req.ClientIP),
 		fmt.Sprintf("Scope:   %s", strings.Join(req.Scope, ", ")),
 		fmt.Sprintf("Reason:  %s", req.Reason),
@@ -154,7 +155,8 @@ func renderAudit(eventType auditEventType, req ApprovalRequest) *discordgo.Messa
 	if req.SessionType == token.SessionSupervisor {
 		lines = append(lines, fmt.Sprintf("Supervisor: %s", req.SupervisorName))
 	}
-	lines = append(lines,
+	lines = append(
+		lines,
 		fmt.Sprintf("Mesh IP: %s", req.ClientIP),
 		fmt.Sprintf("Scope: %s", strings.Join(req.Scope, ", ")),
 		fmt.Sprintf("Reason: %s", req.Reason),

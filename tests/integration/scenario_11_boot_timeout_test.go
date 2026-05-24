@@ -66,7 +66,8 @@ func Test_Scenario_11_BootTimeout(t *testing.T) {
 	sup.WaitState(t, supervise.StateStopped, 1500*time.Millisecond)
 
 	// Contract B — audit contains supervisor_boot_timeout.
-	harness.AssertAuditSubsequence(t,
+	harness.AssertAuditSubsequence(
+		t,
 		sup.ReadAudit(),
 		[]string{"supervisor_boot_timeout"},
 	)
@@ -78,7 +79,8 @@ func Test_Scenario_11_BootTimeout(t *testing.T) {
 	statusBytes := sup.StatusRaw()
 
 	// Contract D — 6-stream sentinel sweep.
-	harness.AssertSentinelAbsent(t,
+	harness.AssertSentinelAbsent(
+		t,
 		testutil.SentinelSecret(13),
 		logger.Bytes(),
 		srv.RawAudit(),

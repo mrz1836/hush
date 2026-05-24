@@ -34,7 +34,8 @@ func TestLogger_RedactionSentinel(t *testing.T) {
 	logger.Info("sentinel-test-2", slog.Any("key2", sb))
 	logger.Info("sentinel-test-3", slog.Any("key3", sb))
 	// Log inside a nested group.
-	logger.Info("sentinel-test-group",
+	logger.Info(
+		"sentinel-test-group",
 		slog.Group("creds", slog.Any("value", sb)),
 	)
 

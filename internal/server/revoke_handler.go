@@ -222,7 +222,8 @@ func (s *Server) emitRevokeAudit(
 		ClientIP:  peer,
 		Detail:    detail,
 	}); err != nil {
-		s.logger.WarnContext(ctx, "audit write failed",
+		s.logger.WarnContext(
+			ctx, "audit write failed",
 			"action", action,
 			"err", err.Error(),
 		)

@@ -82,7 +82,8 @@ func Test_Scenario_15_LogPatternMatch(t *testing.T) {
 	}
 
 	// Contract C — sentinel sweep + audit-chain continuity.
-	harness.AssertSentinelAbsent(t,
+	harness.AssertSentinelAbsent(
+		t,
 		testutil.SentinelSecret(17),
 		logger.Bytes(),
 		srv.RawAudit(),

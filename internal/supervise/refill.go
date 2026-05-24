@@ -123,7 +123,8 @@ func (r *Refiller) Refill(ctx context.Context, scopes []string) (map[string]*sec
 	for _, name := range scopes {
 		sb, err := r.fetchOne(ctx, name, snap.Token)
 		if err != nil {
-			r.logger.Info("refill: scope failed",
+			r.logger.Info(
+				"refill: scope failed",
 				slog.String("scope", name),
 				slog.String("outcome", classifyOutcome(err)),
 				slog.Any("err", err),
@@ -131,7 +132,8 @@ func (r *Refiller) Refill(ctx context.Context, scopes []string) (map[string]*sec
 			return nil, err
 		}
 		out[name] = sb
-		r.logger.Info("refill: scope ok",
+		r.logger.Info(
+			"refill: scope ok",
 			slog.String("scope", name),
 			slog.String("outcome", "ok"),
 		)

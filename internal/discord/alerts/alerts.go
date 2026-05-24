@@ -226,7 +226,8 @@ func NewRouter(sender Sender, auditChannelID string,
 func (r *Router) Route(ctx context.Context, alert Alert) error {
 	tier, ok := classToTier[alert.Class]
 	if !ok {
-		r.logger.LogAttrs(ctx, slog.LevelWarn, msgRouted,
+		r.logger.LogAttrs(
+			ctx, slog.LevelWarn, msgRouted,
 			slog.String(attrClass, string(alert.Class)),
 			slog.String(attrSupervisor, alert.SupervisorName),
 			slog.String(attrOutcome, outcomeUnknownClass),
@@ -282,7 +283,8 @@ func (r *Router) Route(ctx context.Context, alert Alert) error {
 // / underlying errors are NEVER attached as attributes (per
 // Constitution X observability allow-list discipline).
 func (r *Router) emitOutcome(ctx context.Context, level slog.Level, alert Alert, tier Tier, patternKey, outcome string) {
-	r.logger.LogAttrs(ctx, level, msgRouted,
+	r.logger.LogAttrs(
+		ctx, level, msgRouted,
 		slog.String(attrClass, string(alert.Class)),
 		slog.Int(attrTier, int(tier)),
 		slog.String(attrSupervisor, alert.SupervisorName),

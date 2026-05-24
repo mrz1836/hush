@@ -60,7 +60,8 @@ func Test_Scenario_12_AgentStatusCheck(t *testing.T) {
 	sup.WaitState(t, supervise.StateRunning, 3*time.Second)
 
 	// Contract B — audit contains supervisor_session_claimed.
-	harness.AssertAuditSubsequence(t,
+	harness.AssertAuditSubsequence(
+		t,
 		sup.ReadAudit(),
 		[]string{"supervisor_session_claimed"},
 	)
@@ -82,7 +83,8 @@ func Test_Scenario_12_AgentStatusCheck(t *testing.T) {
 	}
 
 	// Contract D — 6-stream sentinel sweep.
-	harness.AssertSentinelAbsent(t,
+	harness.AssertSentinelAbsent(
+		t,
 		testutil.SentinelSecret(14),
 		logger.Bytes(),
 		srv.RawAudit(),

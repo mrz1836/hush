@@ -46,7 +46,8 @@ func TestServerSmoke_HealthEndpointResponds(t *testing.T) {
 
 	// Sentinel sweep: the smoke test secret value (sentinel 0) must not
 	// appear in any captured stream.
-	harness.AssertSentinelAbsent(t,
+	harness.AssertSentinelAbsent(
+		t,
 		testutil.SentinelSecret(0),
 		logger.Bytes(),
 		srv.RawAudit(),

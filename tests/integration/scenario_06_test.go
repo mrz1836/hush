@@ -62,7 +62,8 @@ func Test_Scenario_06_ValidatorFailure(t *testing.T) {
 	sup.WaitState(t, supervise.StateAwaitingApproval, 5*time.Second)
 
 	// Contract B — audit records the validator stale path.
-	harness.AssertAuditSubsequence(t,
+	harness.AssertAuditSubsequence(
+		t,
 		sup.ReadAudit(),
 		[]string{
 			"supervisor_session_claimed",
@@ -89,7 +90,8 @@ func Test_Scenario_06_ValidatorFailure(t *testing.T) {
 	}
 
 	// Contract D — sentinel sweep + audit-chain continuity.
-	harness.AssertSentinelAbsent(t,
+	harness.AssertSentinelAbsent(
+		t,
 		testutil.SentinelSecret(6),
 		logger.Bytes(),
 		srv.RawAudit(),

@@ -112,7 +112,8 @@ func scanFileForZshUnsafeSnippet(t *testing.T, root, path string) {
 			"zsh-safety guard violation in %s:%d: line contains bash-only `read -p`/`read -s`\n"+
 				"  line: %s\n"+
 				"  fix:  use `printf '%%s ' 'prompt:'; read REPLY` (zsh-safe) or rewrite the snippet to avoid interactive read",
-			rel, lineNo+1, line)
+			rel, lineNo+1, line,
+		)
 	}
 }
 

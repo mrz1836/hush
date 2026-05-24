@@ -150,7 +150,8 @@ func (s *Server) recoverFromHandlerPanic(w http.ResponseWriter, r *http.Request,
 
 	id := RequestID(r.Context())
 	stack := string(debug.Stack())
-	s.logger.ErrorContext(r.Context(), "handler panic",
+	s.logger.ErrorContext(
+		r.Context(), "handler panic",
 		"panic", fmt.Sprintf("%v", panicVal),
 		"stack", stack,
 		"request_id", id,

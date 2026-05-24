@@ -60,7 +60,8 @@ func Test_Scenario_08_DaytimeRefresh(t *testing.T) {
 
 	// Contract A — the session JWT was refreshed.
 	sup.WaitAudit(t, "supervisor_session_refreshed", 3*time.Second)
-	harness.AssertAuditSubsequence(t,
+	harness.AssertAuditSubsequence(
+		t,
 		sup.ReadAudit(),
 		[]string{"supervisor_session_claimed", "supervisor_session_refreshed"},
 	)
@@ -69,7 +70,8 @@ func Test_Scenario_08_DaytimeRefresh(t *testing.T) {
 	harness.AssertSupervisorState(t, sup.State(), supervise.StateRunning)
 
 	// Contract C — sentinel sweep + audit-chain continuity.
-	harness.AssertSentinelAbsent(t,
+	harness.AssertSentinelAbsent(
+		t,
 		testutil.SentinelSecret(8),
 		logger.Bytes(),
 		srv.RawAudit(),

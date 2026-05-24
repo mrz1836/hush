@@ -169,13 +169,15 @@ func (s *Server) handleSecret(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(envelope)))
 	w.WriteHeader(http.StatusOK)
 	if _, writeErr := w.Write(envelope); writeErr != nil { //nolint:gosec // G705: envelope is opaque ECIES bytes; Content-Type is octet-stream
-		s.logger.WarnContext(ctx, "secret response write failed",
+		s.logger.WarnContext(
+			ctx, "secret response write failed",
 			"request_id", requestID,
 			"err_class", "response_write_failed",
 		)
 	}
 
-	s.logger.InfoContext(ctx, "secret retrieved",
+	s.logger.InfoContext(
+		ctx, "secret retrieved",
 		"request_id", requestID,
 		"client_ip", peer.String(),
 		"secret_name", name,
@@ -280,7 +282,8 @@ func (s *Server) emitSecretAudit(
 		ClientIP:  peer,
 		Detail:    detail,
 	}); err != nil {
-		s.logger.WarnContext(ctx, "audit write failed",
+		s.logger.WarnContext(
+			ctx, "audit write failed",
 			"action", action,
 			"err", err.Error(),
 		)

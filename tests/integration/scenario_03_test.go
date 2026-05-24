@@ -64,7 +64,8 @@ func Test_Scenario_03_CleanChildExitRefill(t *testing.T) {
 
 	// Contract A — the silent refill completed after a clean exit.
 	sup.WaitAudit(t, "supervisor_silent_refill", 5*time.Second)
-	harness.AssertAuditSubsequence(t,
+	harness.AssertAuditSubsequence(
+		t,
 		sup.ReadAudit(),
 		[]string{"supervisor_session_claimed", "supervisor_child_clean_exit", "supervisor_silent_refill"},
 	)
@@ -75,7 +76,8 @@ func Test_Scenario_03_CleanChildExitRefill(t *testing.T) {
 	}
 
 	// Contract C — sentinel sweep + audit-chain continuity.
-	harness.AssertSentinelAbsent(t,
+	harness.AssertSentinelAbsent(
+		t,
 		testutil.SentinelSecret(3),
 		logger.Bytes(),
 		srv.RawAudit(),

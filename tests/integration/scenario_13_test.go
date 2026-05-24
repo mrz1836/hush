@@ -75,13 +75,15 @@ func Test_Scenario_13_MidSessionRotation(t *testing.T) {
 
 	// Contract B — the refetch + restart was recorded as a silent refill.
 	sup.WaitAudit(t, "supervisor_silent_refill", 3*time.Second)
-	harness.AssertAuditSubsequence(t,
+	harness.AssertAuditSubsequence(
+		t,
 		sup.ReadAudit(),
 		[]string{"supervisor_session_claimed", "supervisor_silent_refill"},
 	)
 
 	// Contract C — the pre-rotation sentinel never leaked.
-	harness.AssertSentinelAbsent(t,
+	harness.AssertSentinelAbsent(
+		t,
 		testutil.SentinelSecret(15),
 		logger.Bytes(),
 		srv.RawAudit(),

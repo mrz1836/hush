@@ -489,7 +489,8 @@ func (s *Server) Run(ctx context.Context) error {
 
 	if err := s.runStartupChecks(ctx); err != nil {
 		s.emitStartupAudit(ctx, "refused", failedCheckName(err))
-		s.logger.ErrorContext(ctx, "startup check failed",
+		s.logger.ErrorContext(
+			ctx, "startup check failed",
 			"check", failedCheckName(err),
 			"err", err.Error(),
 		)

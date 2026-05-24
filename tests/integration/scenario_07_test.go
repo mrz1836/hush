@@ -71,7 +71,8 @@ func Test_Scenario_07_VaultRestartInvalidatesSession(t *testing.T) {
 	sup.WaitState(t, supervise.StateAwaitingApproval, 3*time.Second)
 
 	// Contract B — audit records the stale path.
-	harness.AssertAuditSubsequence(t,
+	harness.AssertAuditSubsequence(
+		t,
 		sup.ReadAudit(),
 		[]string{
 			"supervisor_session_claimed",
@@ -85,7 +86,8 @@ func Test_Scenario_07_VaultRestartInvalidatesSession(t *testing.T) {
 	harness.AssertSupervisorState(t, sup.State(), supervise.StateAwaitingApproval)
 
 	// Contract D — sentinel sweep + audit-chain continuity.
-	harness.AssertSentinelAbsent(t,
+	harness.AssertSentinelAbsent(
+		t,
 		testutil.SentinelSecret(7),
 		logger.Bytes(),
 		srv.RawAudit(),

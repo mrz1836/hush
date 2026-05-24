@@ -69,12 +69,14 @@ func Test_Scenario_09_OvernightExpiry_Strict(t *testing.T) {
 	if sup.HasAudit("supervisor_grace_entered") {
 		t.Errorf("scenario_09a: strict mode must NOT enter grace restart")
 	}
-	harness.AssertAuditSubsequence(t,
+	harness.AssertAuditSubsequence(
+		t,
 		sup.ReadAudit(),
 		[]string{"supervisor_session_claimed", "supervisor_awaiting_approval"},
 	)
 
-	harness.AssertSentinelAbsent(t,
+	harness.AssertSentinelAbsent(
+		t,
 		testutil.SentinelSecret(9),
 		logger.Bytes(),
 		srv.RawAudit(),
@@ -125,7 +127,8 @@ func Test_Scenario_09_OvernightExpiry_Grace(t *testing.T) {
 
 	// Grace mode — the child restarts from cached plaintext, no 3am page.
 	sup.WaitState(t, supervise.StateRunning, 3*time.Second)
-	harness.AssertAuditSubsequence(t,
+	harness.AssertAuditSubsequence(
+		t,
 		sup.ReadAudit(),
 		[]string{
 			"supervisor_session_claimed",
@@ -137,7 +140,8 @@ func Test_Scenario_09_OvernightExpiry_Grace(t *testing.T) {
 		t.Errorf("scenario_09b: grace mode must NOT page the operator")
 	}
 
-	harness.AssertSentinelAbsent(t,
+	harness.AssertSentinelAbsent(
+		t,
 		testutil.SentinelSecret(10),
 		logger.Bytes(),
 		srv.RawAudit(),

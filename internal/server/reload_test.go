@@ -367,7 +367,8 @@ func TestReloadVault_NonceCacheCoherency(t *testing.T) {
 	t.Parallel()
 
 	storeB := newFakeStore("B", []byte("b"))
-	h := newClaimHarness(t,
+	h := newClaimHarness(
+		t,
 		withApproverScript(
 			[]Decision{{Approved: true, GrantedTTL: time.Hour, ApproverID: "test"}},
 			[]error{nil},

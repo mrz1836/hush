@@ -508,7 +508,8 @@ func TestRequest_ParseAndValidateFlags_RejectsShellMetaInScope(t *testing.T) {
 	// directly in TestValidateScopeNames below.
 	cases := []string{"X; echo y", "1FOO", "FOO BAR", "X$Y"}
 	for _, name := range cases {
-		_, err := runValidator(t,
+		_, err := runValidator(
+			t,
 			"--scope="+name,
 			"--max-uses=8",
 			"--exec=/bin/true",
@@ -526,7 +527,8 @@ func TestRequest_ParseAndValidateFlags_AcceptsValidScope(t *testing.T) {
 	t.Parallel()
 	cases := []string{"FOO", "_FOO", "Foo123", "foo_bar", "X"}
 	for _, name := range cases {
-		_, err := runValidator(t,
+		_, err := runValidator(
+			t,
 			"--scope="+name,
 			"--max-uses=8",
 			"--exec=/bin/true",

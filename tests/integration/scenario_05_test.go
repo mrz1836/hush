@@ -67,7 +67,8 @@ func Test_Scenario_05_ChildExit78Stale(t *testing.T) {
 	sup.WaitState(t, supervise.StateAwaitingApproval, 5*time.Second)
 
 	// Contract B — audit records the exit-78 stale path.
-	harness.AssertAuditSubsequence(t,
+	harness.AssertAuditSubsequence(
+		t,
 		sup.ReadAudit(),
 		[]string{
 			"supervisor_session_claimed",
@@ -86,7 +87,8 @@ func Test_Scenario_05_ChildExit78Stale(t *testing.T) {
 	}
 
 	// Contract D — sentinel sweep + audit-chain continuity.
-	harness.AssertSentinelAbsent(t,
+	harness.AssertSentinelAbsent(
+		t,
 		testutil.SentinelSecret(5),
 		logger.Bytes(),
 		srv.RawAudit(),

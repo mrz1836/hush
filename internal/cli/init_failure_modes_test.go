@@ -40,7 +40,8 @@ func TestT273_Fixture1_KeychainDeniedSurfacesACLPanel(t *testing.T) {
 	// the low-level keychain sentinel to the setup-level token
 	// sentinel. Pin both directions here so a future refactor cannot
 	// silently break the panel-trigger condition.
-	require.ErrorIs(t,
+	require.ErrorIs(
+		t,
 		setup.TokenErrorFromKeychain(keychain.ErrKeychainPermissionDenied),
 		setup.ErrTokenDenied,
 		"keychain permission-denied must map to setup.ErrTokenDenied",

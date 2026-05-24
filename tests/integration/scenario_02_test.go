@@ -59,7 +59,8 @@ func Test_Scenario_02_FirstDaemonBootstrap(t *testing.T) {
 	sup.WaitState(t, supervise.StateRunning, 3*time.Second)
 
 	// Contract B — audit contains supervisor_session_claimed.
-	harness.AssertAuditSubsequence(t,
+	harness.AssertAuditSubsequence(
+		t,
 		sup.ReadAudit(),
 		[]string{"supervisor_session_claimed"},
 	)
@@ -78,7 +79,8 @@ func Test_Scenario_02_FirstDaemonBootstrap(t *testing.T) {
 	}
 
 	// Contract D — sentinel sweep + audit-chain continuity.
-	harness.AssertSentinelAbsent(t,
+	harness.AssertSentinelAbsent(
+		t,
 		testutil.SentinelSecret(2),
 		logger.Bytes(),
 		srv.RawAudit(),

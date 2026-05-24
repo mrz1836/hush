@@ -107,7 +107,8 @@ func (s *Server) handleClockFailure(ctx context.Context, reason string, err erro
 	}); writeErr != nil {
 		s.logger.WarnContext(ctx, "audit write clock_skew_override failed", "err", writeErr.Error())
 	}
-	s.logger.WarnContext(ctx, "clock-sync override active",
+	s.logger.WarnContext(
+		ctx, "clock-sync override active",
 		"reason", reason,
 		"err", err.Error(),
 	)

@@ -77,7 +77,8 @@ func Test_Scenario_01_InteractiveShellRequest(t *testing.T) {
 	// Contract D — the secret never leaks into the operational streams.
 	// The legitimately decrypted SecureBytes above is NOT a stream — only
 	// logs, audit, status, and alerts are swept.
-	harness.AssertSentinelAbsent(t,
+	harness.AssertSentinelAbsent(
+		t,
 		testutil.SentinelSecret(1),
 		logger.Bytes(),
 		srv.RawAudit(),

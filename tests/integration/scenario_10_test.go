@@ -72,7 +72,8 @@ func Test_Scenario_10_DiscordUnavailable(t *testing.T) {
 	}
 
 	// Contract D — sentinel sweep + audit-chain continuity.
-	harness.AssertSentinelAbsent(t,
+	harness.AssertSentinelAbsent(
+		t,
 		testutil.SentinelSecret(11),
 		logger.Bytes(),
 		srv.RawAudit(),
