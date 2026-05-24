@@ -116,34 +116,42 @@ func TestValidate_WrongIP(t *testing.T) {
 	}
 }
 
-func TestValidate_IPSemanticallyEqual(t *testing.T) {
+//nolint:gocognit // table-driven test with happy + rejection branches; complexity is structural
+func TestValidate_IPCheck(t *testing.T) {
 	cases := []struct {
 		name      string
-		issued    string
+		issued    string // empty → use default issue params
 		requested string
+		wantErr   error // nil → expect Validate to succeed
 	}{
-		{"ipv4 same form", "100.64.0.1", "100.64.0.1"},
-		{"ipv6 short vs long", "::1", "0000:0000:0000:0000:0000:0000:0000:0001"},
-		{"ipv6 mixed", "2001:db8::1", "2001:0db8:0000:0000:0000:0000:0000:0001"},
+		// Semantic-equality matches: forms differ, addresses are equal.
+		{"ipv4 same form", "100.64.0.1", "100.64.0.1", nil},
+		{"ipv6 short vs long", "::1", "0000:0000:0000:0000:0000:0000:0000:0001", nil},
+		{"ipv6 mixed", "2001:db8::1", "2001:0db8:0000:0000:0000:0000:0000:0001", nil},
+		// Rejection: caller supplied a syntactically invalid IP.
+		{"malformed request ip", "", "not-an-ip", ErrIPMismatch},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			store := NewStore()
-			tok, priv := issueAndAdd(t, store, func(p *IssueParams) { p.ClientIP = tc.issued })
-			if _, err := Validate(t.Context(), tok.Encoded, &priv.PublicKey, store, tc.requested, "FAKE_SECRET"); err != nil {
-				t.Fatalf("Validate: %v", err)
+			var tok *Token
+			var priv *ecdsa.PrivateKey
+			if tc.issued == "" {
+				tok, priv = issueAndAdd(t, store, nil)
+			} else {
+				tok, priv = issueAndAdd(t, store, func(p *IssueParams) { p.ClientIP = tc.issued })
+			}
+			_, err := Validate(t.Context(), tok.Encoded, &priv.PublicKey, store, tc.requested, "FAKE_SECRET")
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Fatalf("Validate: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("got %v, want %v", err, tc.wantErr)
 			}
 		})
-	}
-}
-
-func TestValidate_MalformedRequestIP_Refused(t *testing.T) {
-	store := NewStore()
-	tok, priv := issueAndAdd(t, store, nil)
-
-	_, err := Validate(t.Context(), tok.Encoded, &priv.PublicKey, store, "not-an-ip", "FAKE_SECRET")
-	if !errors.Is(err, ErrIPMismatch) {
-		t.Fatalf("got %v, want ErrIPMismatch", err)
 	}
 }
 
@@ -273,93 +281,94 @@ func TestValidate_ExpiredJWT(t *testing.T) {
 // (The store enforces its own strict expiry on consume — by design, as
 // defense-in-depth. End-to-end "tokens are honored beyond their TTL"
 // is intentionally NOT a property of the in-memory store.)
-func TestValidate_ClockSkew_JWTLayerAcceptsWithinWindow(t *testing.T) {
-	priv := freshKey(t)
-	// Issue at T-90s with TTL=60s ⇒ exp is T-30s (expired 30s ago).
-	params := defaultIssueParams(time.Now().Add(-90 * time.Second))
-	params.TTL = 60 * time.Second
-	tok, err := Issue(t.Context(), priv, params)
-	if err != nil {
-		t.Fatalf("Issue: %v", err)
+// TestValidate_ClockSkew exercises every WithClockSkew code path against
+// the JWT-layer leeway boundary. Each row issues a token at a controlled
+// offset from now, then validates with a controlled skew; the assertion is
+// over the typed sentinel (or success).
+//
+// The four rows replace four prior individual tests; consolidation keeps
+// the boundary semantics legible in a single place.
+//
+//nolint:gocognit // table-driven test with 5 distinct rows and conditional setup; complexity is structural
+func TestValidate_ClockSkew(t *testing.T) {
+	cases := []struct {
+		name        string
+		issueOffset time.Duration // how far back to issue the token (negative = in the past)
+		ttl         time.Duration
+		skew        time.Duration
+		addToStore  bool
+		wantErr     error // nil → expect success
+	}{
+		{
+			name:        "no skew rejects 30s-expired at JWT layer",
+			issueOffset: -90 * time.Second,
+			ttl:         60 * time.Second,
+			skew:        0,
+			addToStore:  false,
+			wantErr:     ErrTokenExpired,
+		},
+		{
+			name:        "60s skew accepts 30s-expired at JWT layer; store check fires",
+			issueOffset: -90 * time.Second,
+			ttl:         60 * time.Second,
+			skew:        60 * time.Second,
+			addToStore:  false,
+			wantErr:     ErrTokenRevoked, // JWT leeway lets parse pass; store rejects missing JTI
+		},
+		{
+			name:        "60s skew still rejects 10min-expired",
+			issueOffset: -10 * time.Minute,
+			ttl:         60 * time.Second,
+			skew:        60 * time.Second,
+			addToStore:  false,
+			wantErr:     ErrTokenExpired,
+		},
+		{
+			name:        "zero skew rejects 5s-expired (no implicit leeway)",
+			issueOffset: -65 * time.Second,
+			ttl:         60 * time.Second,
+			skew:        0,
+			addToStore:  false,
+			wantErr:     ErrTokenExpired,
+		},
+		{
+			name:        "negative skew ignored (treated as zero) on fresh token",
+			issueOffset: 0,
+			ttl:         0, // use default TTL from defaultIssueParams
+			skew:        -30 * time.Second,
+			addToStore:  true,
+			wantErr:     nil,
+		},
 	}
-
-	// Empty store: JTI is not present anywhere.
-	emptyStore := NewStore()
-
-	// Without skew: JWT parse rejects with ErrTokenExpired, store never consulted.
-	_, errNoSkew := Validate(t.Context(), tok.Encoded, &priv.PublicKey, emptyStore, "100.64.0.1", "FAKE_SECRET")
-	if !errors.Is(errNoSkew, ErrTokenExpired) {
-		t.Fatalf("without skew: got %v, want ErrTokenExpired", errNoSkew)
-	}
-
-	// With 60s skew: JWT parse succeeds (T-30s is within T+30s = exp+skew),
-	// flow reaches store.Get which returns ErrTokenRevoked because the
-	// JTI is not in the live map.
-	_, errWithSkew := Validate(t.Context(), tok.Encoded, &priv.PublicKey, emptyStore, "100.64.0.1", "FAKE_SECRET",
-		WithClockSkew(60*time.Second))
-	if !errors.Is(errWithSkew, ErrTokenRevoked) {
-		t.Fatalf("with skew: got %v, want ErrTokenRevoked (JWT layer accepts via leeway, store has no entry)", errWithSkew)
-	}
-}
-
-// TestValidate_ClockSkew_RejectsOutsideWindow asserts that even with a
-// generous skew, a token expired far beyond the skew window is rejected
-// at the JWT parse layer.
-func TestValidate_ClockSkew_RejectsOutsideWindow(t *testing.T) {
-	priv := freshKey(t)
-	// 10 minutes past exp — far outside any sane skew.
-	params := defaultIssueParams(time.Now().Add(-10 * time.Minute))
-	params.TTL = 60 * time.Second
-	tok, err := Issue(t.Context(), priv, params)
-	if err != nil {
-		t.Fatalf("Issue: %v", err)
-	}
-
-	_, err = Validate(t.Context(), tok.Encoded, &priv.PublicKey, NewStore(), "100.64.0.1", "FAKE_SECRET",
-		WithClockSkew(60*time.Second))
-	if !errors.Is(err, ErrTokenExpired) {
-		t.Fatalf("got %v, want ErrTokenExpired", err)
-	}
-}
-
-// TestValidate_ClockSkew_ZeroBehavesLikeNoOption asserts that
-// WithClockSkew(0) does not enable any tolerance (preserves the historical
-// no-leeway behavior). A token expired by 5s is still rejected.
-func TestValidate_ClockSkew_ZeroBehavesLikeNoOption(t *testing.T) {
-	priv := freshKey(t)
-	// Already expired by 5s — no skew should mean rejection at the JWT layer.
-	params := defaultIssueParams(time.Now().Add(-65 * time.Second))
-	params.TTL = 60 * time.Second
-	tok, err := Issue(t.Context(), priv, params)
-	if err != nil {
-		t.Fatalf("Issue: %v", err)
-	}
-
-	_, err = Validate(t.Context(), tok.Encoded, &priv.PublicKey, NewStore(), "100.64.0.1", "FAKE_SECRET",
-		WithClockSkew(0))
-	if !errors.Is(err, ErrTokenExpired) {
-		t.Fatalf("got %v, want ErrTokenExpired (zero skew should not tolerate anything)", err)
-	}
-}
-
-// TestValidate_ClockSkew_NegativeSkewIsIgnored asserts that a caller-supplied
-// negative skew is treated as zero (rather than passed through as a negative
-// leeway, which would tighten — not loosen — the window).
-func TestValidate_ClockSkew_NegativeSkewIsIgnored(t *testing.T) {
-	priv := freshKey(t)
-	tok, err := Issue(t.Context(), priv, defaultIssueParams(time.Now()))
-	if err != nil {
-		t.Fatalf("Issue: %v", err)
-	}
-	store := NewStore()
-	if err := store.Add(tok); err != nil {
-		t.Fatalf("Add: %v", err)
-	}
-
-	// Fresh token, no skew configured (negative ignored): should validate.
-	if _, err := Validate(t.Context(), tok.Encoded, &priv.PublicKey, store, "100.64.0.1", "FAKE_SECRET",
-		WithClockSkew(-30*time.Second)); err != nil {
-		t.Fatalf("Validate with negative (ignored) skew: %v", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			priv := freshKey(t)
+			params := defaultIssueParams(time.Now().Add(tc.issueOffset))
+			if tc.ttl != 0 {
+				params.TTL = tc.ttl
+			}
+			tok, err := Issue(t.Context(), priv, params)
+			if err != nil {
+				t.Fatalf("Issue: %v", err)
+			}
+			store := NewStore()
+			if tc.addToStore {
+				if addErr := store.Add(tok); addErr != nil {
+					t.Fatalf("Add: %v", addErr)
+				}
+			}
+			_, err = Validate(t.Context(), tok.Encoded, &priv.PublicKey, store, "100.64.0.1", "FAKE_SECRET",
+				WithClockSkew(tc.skew))
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Fatalf("Validate: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("got %v, want %v", err, tc.wantErr)
+			}
+		})
 	}
 }
 
