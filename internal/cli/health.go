@@ -141,23 +141,49 @@ func healthIsAllGreen(s healthSnapshot) bool {
 		s.ClockInSync
 }
 
-// renderHealthText returns the TTY-mode two-column summary in stable
-// JSON-key order. Healthy rows render with a green checkmark; failing
-// rows with a red cross — both suppressed when noColor is true.
+// renderHealthText returns the TTY-mode two-column summary, grouped into
+// three visual sections so an operator can tell at a glance "what's the
+// server doing" vs "what's it holding" vs "what's connected".
+//
+// Wire JSON keys (active_tokens, secrets_count, …) stay unchanged for
+// backward compatibility; only the human-readable labels are clarified
+// here. Previously "active_tokens" was easily misread as "active servers"
+// or "active vaults"; renaming the display label removes that ambiguity
+// without breaking pipe consumers.
+//
+// Healthy rows render with a green checkmark; failing rows with a red
+// cross — both suppressed when noColor is true.
 func renderHealthText(s healthSnapshot, noColor bool) string {
 	var b strings.Builder
 	row := func(name string, ok bool, value string) {
 		mark := mark(ok, noColor)
-		fmt.Fprintf(&b, "%s %-20s %s\n", mark, name, value)
+		fmt.Fprintf(&b, "%s %-22s %s\n", mark, name, value)
 	}
+	info := func(name, value string) {
+		fmt.Fprintf(&b, "  %-22s %s\n", name, value)
+	}
+	header := func(label string) {
+		if !noColor {
+			fmt.Fprintf(&b, "\n\x1b[1m%s\x1b[0m\n", label)
+			return
+		}
+		fmt.Fprintf(&b, "\n%s\n", label)
+	}
+
+	header("Server")
 	row("status", s.Status == "ok", s.Status)
-	row("uptime", true, s.Uptime)
-	fmt.Fprintf(&b, "  %-20s %d\n", "secrets_count", s.SecretsCount)
-	fmt.Fprintf(&b, "  %-20s %d\n", "active_tokens", s.ActiveTokens)
-	row("discord_connected", s.DiscordConnected, fmt.Sprintf("%t", s.DiscordConnected))
-	row("config_valid", s.ConfigValid, fmt.Sprintf("%t", s.ConfigValid))
-	row("vault_loaded", s.VaultLoaded, fmt.Sprintf("%t", s.VaultLoaded))
-	row("clock_in_sync", s.ClockInSync, fmt.Sprintf("%t", s.ClockInSync))
+	row("config valid", s.ConfigValid, fmt.Sprintf("%t", s.ConfigValid))
+	row("clock in sync", s.ClockInSync, fmt.Sprintf("%t", s.ClockInSync))
+	info("uptime", s.Uptime)
+
+	header("Vault")
+	row("loaded", s.VaultLoaded, fmt.Sprintf("%t", s.VaultLoaded))
+	info("secrets stored", fmt.Sprintf("%d", s.SecretsCount))
+
+	header("Sessions & Discord")
+	info("active sessions", fmt.Sprintf("%d", s.ActiveTokens))
+	row("discord connected", s.DiscordConnected, fmt.Sprintf("%t", s.DiscordConnected))
+
 	return strings.TrimRight(b.String(), "\n")
 }
 

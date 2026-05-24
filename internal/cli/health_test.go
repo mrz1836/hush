@@ -43,7 +43,10 @@ func TestHealth_HappyPath(t *testing.T) {
 			t.Fatalf("runHealth: %v", err)
 		}
 		got := stdout.String()
-		for _, want := range []string{"status", "uptime", "discord_connected"} {
+		// TTY labels are the human-readable form ("discord connected" not
+		// "discord_connected"); wire JSON keys are unchanged. The new
+		// grouped layout also adds section headers (Server/Vault/Sessions).
+		for _, want := range []string{"Server", "Vault", "Sessions", "status", "uptime", "discord connected"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("missing %q in TTY output: %q", want, got)
 			}
