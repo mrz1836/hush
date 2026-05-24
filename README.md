@@ -155,8 +155,7 @@ files not exist.
 **hush** requires a [supported release of Go](https://golang.org/doc/devel/release.html#policy)
 (Go 1.26+) and is built `CGO_ENABLED=0` — a single static binary.
 
-> **Status:** v0.1.0 is a private MVP. Treat the steps below as the
-> documented happy path, not a guarantee.
+> **Status:** this is still `ALPHA` and PR's are welcome to improve the project.
 
 Prerequisites: a vault host and an agent host on the same Tailscale
 tailnet, plus a Discord bot you control
@@ -409,30 +408,6 @@ View the comprehensive documentation for hush:
 
 <br/>
 
-### Goals
-
-The v0.1.0 goal is a working private MVP that proves the threat model in
-practice: an agent machine with a clean disk, a vault host on a phone-gated
-Tailscale mesh, and a daily dev workflow that no longer requires
-plaintext credentials anywhere on the agent.
-
-**Post-v0.1.0 / future scope** (any of these may become a future release;
-none is on the v0.1.0 critical path):
-
-- Multi-owner approvals
-- Slack / Telegram / PagerDuty Approver backends (the interface is
-  already pluggable)
-- Shamir passphrase splitting (sigil's SSS) for vault recovery
-- Web dashboard
-- Proxy mode (vault proxying provider API calls instead of injecting
-  tokens)
-- Agent-side credential proxy (per-provider HTTP proxy on the agent host)
-- TLS within Tailscale (defence-in-depth on top of WireGuard)
-- TOTP second factor on Discord approval
-- Custom validator authoring SDK
-
-<br/>
-
 ## 🔐 Security
 
 ### Important Disclaimer
@@ -442,8 +417,7 @@ none is on the v0.1.0 critical path):
 > hush is experimental, open-source software provided "AS-IS" without
 > warranty. By running it, you acknowledge:
 >
-> - **Private MVP:** v0.1.0 is an unproven private MVP — not production-grade,
->   and the end-to-end round-trip has not been independently verified.
+> - **Status:** ALPHA quality; expect bugs, edge cases, and breaking changes.
 > - **No formal audit:** hush has not been professionally audited or
 >   penetration-tested.
 > - **You own the host:** the trusted vault host, your Tailscale config, and
