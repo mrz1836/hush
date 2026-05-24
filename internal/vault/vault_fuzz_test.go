@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -148,4 +149,133 @@ func FuzzVaultDecode(f *testing.F) {
 			}
 		}
 	})
+}
+
+// FuzzVaultSaveLoadRoundTrip exercises the encoder side: arbitrary
+// (name, description, value) tuples are pushed through Save → Load and the
+// recovered bytes must equal the originals. Catches encoder/validator
+// divergence — i.e. any input that Save accepts but Load can't decode, or
+// any input that Save rejects with an untyped error.
+//
+//nolint:gocognit,gocyclo // fuzz harness with branched validation; complexity is structural
+func FuzzVaultSaveLoadRoundTrip(f *testing.F) {
+	ctx := context.Background()
+
+	// Seed corpus: representative valid + boundary + invalid inputs.
+	f.Add("KEY", "description", []byte("value"))
+	f.Add("A", "", []byte{})
+	f.Add("", "x", []byte("v"))                                        // invalid: empty name
+	f.Add("name with space", "desc", []byte("v"))                      // valid: name allows 0x20
+	f.Add("name\x00null", "desc", []byte("v"))                         // invalid: name has 0x00
+	f.Add("name", "desc\x00null", []byte("v"))                         // invalid: desc has 0x00
+	f.Add("name", "desc", make([]byte, 1024))                          // medium value
+	f.Add(string(make([]byte, 256)), "desc", []byte("v"))              // invalid: zero-byte name
+	f.Add("ok", string(bytes.Repeat([]byte{0x20}, 4097)), []byte("v")) // invalid: desc too long
+
+	// Permissible Save/Load error sentinels.
+	saveSentinels := []error{
+		ErrInvalidName, ErrDuplicateName,
+		ErrFileTooLarge, ErrFilePermsLoose,
+	}
+	loadSentinels := []error{
+		ErrBadMagic, ErrBadVersion, ErrShortHeader, ErrAuthFailed,
+		ErrFilePermsLoose, ErrFileTooLarge,
+	}
+
+	f.Fuzz(func(t *testing.T, name, description string, value []byte) {
+		// Cap value size to keep fuzz inputs bounded.
+		const maxValueBytes = 64 * 1024
+		if len(value) > maxValueBytes {
+			return
+		}
+
+		dir := t.TempDir()
+		if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // 0700 correct for dirs
+			t.Skip("chmod dir: " + err.Error())
+		}
+		path := filepath.Join(dir, "rt.hush")
+
+		// Snapshot BEFORE securebytes.New — New zeros its source buffer as a
+		// security feature, so `value` is unusable for assertions afterward.
+		expected := append([]byte(nil), value...)
+
+		sb, sbErr := securebytes.New(value)
+		if sbErr != nil {
+			// Allocator failure (mlock pressure) — skip, not a Save bug.
+			return
+		}
+		defer func() { _ = sb.Destroy() }()
+
+		secrets := []Secret{{Name: name, Description: description, Value: sb}}
+		saveErr := Save(ctx, path, fuzzVaultKey, secrets)
+
+		if saveErr != nil {
+			// Save rejected: error MUST wrap a typed sentinel or a context error.
+			if !errorMatchesSentinelOrCtx(saveErr, saveSentinels) {
+				t.Fatalf("Save returned untyped error: %v (name=%q desc=%q valueLen=%d)",
+					saveErr, name, description, len(value))
+			}
+			return
+		}
+
+		// Save accepted: Load MUST succeed AND recover byte-equal value.
+		store, loadErr := Load(ctx, path, fuzzVaultKey)
+		if loadErr != nil {
+			// Untyped Load error after successful Save is a critical bug.
+			matched := false
+			for _, s := range loadSentinels {
+				if errors.Is(loadErr, s) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				t.Fatalf("Save accepted but Load failed: %v (name=%q)", loadErr, name)
+			}
+			t.Fatalf("Save accepted but Load returned typed error: %v (name=%q) — encoder/validator divergence",
+				loadErr, name)
+		}
+		defer func() { _ = store.Destroy() }()
+
+		got, getErr := store.Get(name)
+		if getErr != nil {
+			t.Fatalf("Save accepted but Get(%q) failed: %v", name, getErr)
+		}
+		defer func() { _ = got.Destroy() }()
+
+		gotBytes, useErr := useSecureBytes(got)
+		if useErr != nil {
+			t.Skip("read SecureBytes: " + useErr.Error())
+		}
+		if !bytes.Equal(gotBytes, expected) {
+			t.Fatalf("round-trip value mismatch: name=%q got %d bytes want %d bytes",
+				name, len(gotBytes), len(expected))
+		}
+	})
+}
+
+// errorMatchesSentinelOrCtx returns true if err wraps any of the given
+// sentinels, or is one of the standard context errors. Used by fuzz harnesses
+// to assert that every error is typed (no naked dynamic errors leaking out).
+func errorMatchesSentinelOrCtx(err error, sentinels []error) bool {
+	for _, s := range sentinels {
+		if errors.Is(err, s) {
+			return true
+		}
+	}
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+// useSecureBytes copies the plaintext out of a SecureBytes for assertion.
+// Caller assumes responsibility for not leaking the copy.
+func useSecureBytes(sb *securebytes.SecureBytes) ([]byte, error) {
+	var out []byte
+	err := sb.Use(func(b []byte) {
+		out = make([]byte, len(b))
+		copy(out, b)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
