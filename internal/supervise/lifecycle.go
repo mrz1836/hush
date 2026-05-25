@@ -469,17 +469,21 @@ func (l *Lifecycle) mainLoop(ctx context.Context) {
 }
 
 // runShutdown executes the SIGTERM → grace → SIGKILL → wg.Wait sequence,
-// then explicitly destroys the Grace cache so any retained per-scope
-// plaintext is zeroed on the supervisor's way out (Principle VI: explicit
-// zeroing on lifecycle transitions; finalizers do not run on process exit).
-// Pidfile release is owned by the cli shim's defer.
+// then explicitly destroys both the Grace cache AND the Store's current
+// JWT so any retained plaintext is zeroed on the supervisor's way out
+// (Principle VI: explicit zeroing on lifecycle transitions; finalizers
+// do not run on process exit). Pidfile release is owned by the cli
+// shim's defer.
 func (l *Lifecycle) runShutdown(parentCtx context.Context) {
 	_ = parentCtx
-	// Destroy the grace cache on every shutdown path — even if SIGKILL
-	// escalation timed out and goroutines may leak below, zeroing the
-	// cached plaintext before this frame returns reduces the window any
-	// stray reference holds a usable secret.
+	// Destroy the grace cache AND the Store's JWT on every shutdown path —
+	// even if SIGKILL escalation timed out and goroutines may leak below,
+	// zeroing the cached plaintext + the current bearer token before this
+	// frame returns reduces the window any stray reference holds usable
+	// material. Defers run LIFO so the token is destroyed first, then the
+	// grace cache; both are independent and either order is safe.
 	defer l.grace.Destroy()
+	defer l.store.destroyToken()
 
 	hardDeadline := time.Now().Add(shutdownHardCeiling)
 

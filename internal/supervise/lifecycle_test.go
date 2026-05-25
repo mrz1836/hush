@@ -16,6 +16,7 @@ import (
 
 	"github.com/mrz1836/hush/internal/audit"
 	"github.com/mrz1836/hush/internal/supervise/config"
+	"github.com/mrz1836/hush/internal/vault/securebytes"
 )
 
 // shortChildCmd returns a long-enough-running child command so the
@@ -404,6 +405,88 @@ func TestLifecycle_RefillJTIUnknownTransitionsToAwaitingApproval(t *testing.T) {
 	<-done
 }
 
+// TestLifecycle_RefillJTIUnknownWithGraceEvictsAndPages verifies that
+// an authoritative revoke (vault returns 401 unknown_jti) is NOT
+// silently absorbed by the grace cache — even when
+// cache_secrets_for_restart=true and every scope is still cached. The
+// cached plaintext was materialized under the now-revoked session, so
+// reusing it would bypass the operator's revoke decision.
+//
+// Expected on unknown_jti, grace-cache mode:
+//   - State transitions to StateAwaitingApproval (NOT StateRunning).
+//   - Grace cache is empty after the rejection (every entry evicted).
+//   - AlertClassVaultRejectedJWT fires (the specific revoke-related
+//     alert, not the generic AlertClassGraceEntered).
+//   - NO ActionSupervisorGraceEntered audit event — the grace-cache
+//     fallback path is NOT taken.
+func TestLifecycle_RefillJTIUnknownWithGraceEvictsAndPages(t *testing.T) {
+	// Grace cache enabled — the very mode the original V3 finding
+	// exposed as silently bypassing operator revoke.
+	tl := newTestLifecycle(t, shortChildCmd(t, 0), func(c *config.Supervisor) {
+		c.CacheSecretsForRestart = true
+		c.CacheGraceTTL = 4 * time.Hour
+	})
+	tl.vault.QueueOK()
+
+	// Flip the scope to unknown_jti after the first child exits — the
+	// silent-refill path is the surface that V3 fixed. Before the fix,
+	// silentRefillAndRestart fell through to tryGraceRestart for
+	// ErrJTIUnknown and the cached plaintext restarted the child.
+	go func() {
+		for {
+			if tl.auditLog.Has(audit.ActionSupervisorChildCleanExit) {
+				tl.vault.FailScopeUnauthorizedJTI("ANTHROPIC_API_KEY")
+				return
+			}
+			runtime.Gosched()
+			time.Sleep(5 * time.Millisecond)
+		}
+	}()
+
+	cancel, done := runWithCancel(tl)
+	defer cancel()
+
+	// First, the supervisor must reach StateRunning so retainSecrets
+	// has populated the grace cache.
+	eventually(t, "reach StateRunning before revoke", 5*time.Second, func() bool {
+		return snapshotState(tl) == StateRunning
+	})
+	tl.lc.grace.mu.RLock()
+	preEntries := len(tl.lc.grace.entries)
+	tl.lc.grace.mu.RUnlock()
+	if preEntries == 0 {
+		t.Fatalf("grace.entries empty at StateRunning; test precondition broken (V3 fix requires a populated cache to evict)")
+	}
+
+	// After the revoke, the supervisor must page the operator.
+	eventually(t, "StateAwaitingApproval + VaultRejectedJWT after revoke", 10*time.Second, func() bool {
+		return snapshotState(tl) == StateAwaitingApproval &&
+			tl.alerts.CountClass(AlertClassVaultRejectedJWT) >= 1
+	})
+
+	// V3 invariant: the grace cache MUST be fully evicted on
+	// authoritative revoke — every plaintext from the now-revoked
+	// session is zeroed.
+	tl.lc.grace.mu.RLock()
+	postEntries := len(tl.lc.grace.entries)
+	tl.lc.grace.mu.RUnlock()
+	if postEntries != 0 {
+		t.Errorf("grace.entries=%d after unknown_jti; want 0 (grace must be evicted on authoritative revoke)", postEntries)
+	}
+
+	// V3 invariant: the grace-cache fallback path was NOT taken — no
+	// AlertClassGraceEntered should fire under unknown_jti.
+	if c := tl.alerts.CountClass(AlertClassGraceEntered); c != 0 {
+		t.Errorf("AlertClassGraceEntered count=%d on unknown_jti; want 0 (grace fallback is forbidden on authoritative revoke)", c)
+	}
+	if tl.auditLog.Has(audit.ActionSupervisorGraceEntered) {
+		t.Errorf("audit chain contains %s on unknown_jti; the grace-cache restart path must NOT execute", audit.ActionSupervisorGraceEntered)
+	}
+
+	cancel()
+	<-done
+}
+
 // TestLifecycle_RefillTransientErrorPostRunningEmitsRefillFailed (T022) —
 // child exits 0; mockVault returns 500 on second Refill; expect
 // StateAwaitingApproval + AlertClassRefillFailed.
@@ -434,6 +517,55 @@ func TestLifecycle_RefillTransientErrorPostRunningEmitsRefillFailed(t *testing.T
 		return snapshotState(tl) == StateAwaitingApproval &&
 			tl.alerts.CountClass(AlertClassRefillFailed) >= 1
 	})
+
+	cancel()
+	<-done
+}
+
+// TestLifecycle_RefillTransientErrorPostRunningFallsBackToGraceCache
+// is the positive companion to TestLifecycle_RefillJTIUnknownWithGraceEvictsAndPages:
+// a TRANSIENT refill failure (vault 500, not unknown_jti) with grace
+// enabled MUST restart the child from the cached plaintext (docs §9)
+// — the operator's prior approval still stands, so silent recovery is
+// the correct response. This anchors the V3 fix: only authoritative
+// revoke (unknown_jti) skips the grace fallback; transient failures
+// continue to use it.
+func TestLifecycle_RefillTransientErrorPostRunningFallsBackToGraceCache(t *testing.T) {
+	tl := newTestLifecycle(t, shortChildCmd(t, 0), func(c *config.Supervisor) {
+		c.CacheSecretsForRestart = true
+		c.CacheGraceTTL = 4 * time.Hour
+	})
+	tl.vault.QueueOK()
+
+	go func() {
+		for {
+			if tl.auditLog.Has(audit.ActionSupervisorChildCleanExit) {
+				// 500 is transient (network blip / vault temp outage),
+				// NOT an authoritative revoke.
+				tl.vault.FailScopeStatus("ANTHROPIC_API_KEY", 500)
+				return
+			}
+			runtime.Gosched()
+			time.Sleep(5 * time.Millisecond)
+		}
+	}()
+
+	cancel, done := runWithCancel(tl)
+	defer cancel()
+
+	// Reach Running so retainSecrets populates the grace cache.
+	eventually(t, "reach StateRunning before transient failure", 5*time.Second, func() bool {
+		return snapshotState(tl) == StateRunning
+	})
+
+	// Grace-cache restart is the expected response — operator must NOT
+	// be paged.
+	eventually(t, "grace-entered audit after transient failure", 10*time.Second, func() bool {
+		return tl.auditLog.Has(audit.ActionSupervisorGraceEntered)
+	})
+	if c := tl.alerts.CountClass(AlertClassVaultRejectedJWT); c != 0 {
+		t.Errorf("AlertClassVaultRejectedJWT count=%d on transient 500; want 0 (this is not a revoke)", c)
+	}
 
 	cancel()
 	<-done
@@ -551,6 +683,103 @@ func TestLifecycle_ShutdownDestroysGraceCache(t *testing.T) {
 	if tl.lc.grace.Enabled() {
 		t.Fatalf("grace.Enabled() = true after shutdown; want false (Destroy not called)")
 	}
+}
+
+// TestLifecycle_ShutdownDestroysStoreToken verifies the V4 fix: the
+// supervisor's runShutdown explicitly destroys the Store's current
+// JWT *SecureBytes (in addition to the grace cache) so the bearer
+// token plaintext is zeroed on the SIGTERM path rather than relying
+// on the runtime finalizer (which does NOT run on process exit per
+// Principle VI). Pre-V4, the final JWT lingered in mlocked memory
+// until the OS reclaimed the page.
+func TestLifecycle_ShutdownDestroysStoreToken(t *testing.T) {
+	tl := newTestLifecycle(t, longChildCmd())
+	tl.vault.QueueOK()
+
+	cancel, done := runWithCancel(tl)
+	defer cancel()
+
+	eventually(t, "reach StateRunning", 5*time.Second, func() bool {
+		return snapshotState(tl) == StateRunning
+	})
+
+	// Capture the live token pointer BEFORE shutdown so we can probe it
+	// post-shutdown via Use() — the orchestrator's runShutdown is the
+	// only safe place that calls store.destroyToken().
+	snapBefore := tl.lc.store.Snapshot()
+	if snapBefore.Token == nil {
+		t.Fatalf("Snapshot.Token nil at StateRunning; test precondition broken")
+	}
+	if useErr := snapBefore.Token.Use(func(_ []byte) {}); useErr != nil {
+		t.Fatalf("pre-shutdown Token.Use err=%v; want nil (token must be live before shutdown)", useErr)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Run returned: %v", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatalf("Run did not exit within 15s")
+	}
+
+	// Post-shutdown: the captured pointer MUST report destroyed.
+	if useErr := snapBefore.Token.Use(func(_ []byte) {}); !errors.Is(useErr, securebytes.ErrDestroyed) {
+		t.Errorf("post-shutdown Token.Use err=%v; want ErrDestroyed (V4: runShutdown must destroyToken)", useErr)
+	}
+	if post := tl.lc.store.Snapshot(); post.Token != nil {
+		t.Errorf("Snapshot.Token=%v after shutdown; want nil", post.Token)
+	}
+}
+
+// TestLifecycle_RefreshRotationDestroysPriorToken verifies that the
+// V4 fix is also wired through the refresh path: when the Refresher
+// performs a /claim swap mid-session, the OLD JWT *SecureBytes is
+// explicitly destroyed by store.setToken (no accumulation of stale
+// bearer tokens in mlocked memory across rotations).
+func TestLifecycle_RefreshRotationDestroysPriorToken(t *testing.T) {
+	tl := newTestLifecycle(t, longChildCmd())
+	tl.vault.QueueOK() // boot claim
+	tl.vault.QueueOK() // refresh claim
+
+	cancel, done := runWithCancel(tl)
+	defer cancel()
+
+	eventually(t, "reach StateRunning before refresh", 5*time.Second, func() bool {
+		return snapshotState(tl) == StateRunning
+	})
+
+	priorSnap := tl.lc.store.Snapshot()
+	if priorSnap.Token == nil {
+		t.Fatalf("Snapshot.Token nil at StateRunning; test precondition broken")
+	}
+	priorPtr := priorSnap.Token
+
+	// Drive a refresh swap by nudging the refresh tick channel — same
+	// path the Refresher window-fire goroutine uses.
+	select {
+	case tl.lc.refreshTickCh <- struct{}{}:
+	default:
+		t.Fatalf("refreshTickCh full; cannot nudge refresh")
+	}
+
+	// Wait for the new claim to be issued by the mock vault.
+	eventually(t, "vault sees second claim", 5*time.Second, func() bool {
+		return tl.vault.ClaimCount() >= 2
+	})
+	// Wait for the orchestrator to swap the token in the store.
+	eventually(t, "store token pointer rotated", 5*time.Second, func() bool {
+		return tl.lc.store.Snapshot().Token != priorPtr
+	})
+
+	// V4 invariant: the prior token MUST be destroyed after the swap.
+	if useErr := priorPtr.Use(func(_ []byte) {}); !errors.Is(useErr, securebytes.ErrDestroyed) {
+		t.Errorf("prior Token.Use after refresh swap: %v want ErrDestroyed (V4: setToken must destroy prior)", useErr)
+	}
+
+	cancel()
+	<-done
 }
 
 // TestLifecycle_BootRetryShutdownNeverContactsDiscord (T040) — boot-retry

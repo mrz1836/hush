@@ -411,21 +411,27 @@ func (l *Lifecycle) dispatchChildExit(ctx context.Context, exit childExit) {
 // spawns a fresh childWaitLoop.
 //
 // It MUST be called with the state machine in StateFetching (callers
-// transition first) and with no live child. On a refill failure it first
-// attempts a grace-cache restart (tryGraceRestart); only when that is
-// unavailable does it page the operator:
-//   - errors.Is(err, ErrJTIUnknown) → AlertClassVaultRejectedJWT + awaiting-approval
-//   - any other error              → AlertClassRefillFailed + awaiting-approval
+// transition first) and with no live child. On a refill failure the
+// response depends on the error class:
+//   - errors.Is(err, ErrJTIUnknown) → AUTHORITATIVE revoke. The grace
+//     cache is fully evicted (its plaintext was materialized under the
+//     now-revoked session and reusing it would silently bypass the
+//     operator's revoke). Emit AlertClassVaultRejectedJWT + transition
+//     to StateAwaitingApproval. NO grace-cache restart.
+//   - any other error               → TRANSIENT (network / vault 5xx /
+//     decrypt). The operator's prior approval still stands; if grace
+//     is enabled and every scope is still cached, restart the child
+//     from cache (docs §9). Otherwise emit AlertClassRefillFailed +
+//     transition to StateAwaitingApproval.
 func (l *Lifecycle) silentRefillAndRestart(ctx context.Context) error {
 	secrets, err := l.refiller.Refill(ctx, l.config.Scope)
 	if err != nil {
-		// Grace-cache restart: docs §9 — when the operator opted into
-		// cache_secrets_for_restart, a refill failure restarts the child
-		// from the last-known-good plaintext instead of paging.
-		if l.tryGraceRestart(ctx) {
-			return nil
-		}
 		if errors.Is(err, ErrJTIUnknown) {
+			// Authoritative revoke: invalidate every cached plaintext
+			// from the now-revoked session before paging. Layer 6 +
+			// Principle VI — the operator's revoke MUST NOT be silently
+			// bypassed by grace-cache fallback.
+			l.grace.EvictAll()
 			l.deps.Alerts.Emit(ctx, AlertClassVaultRejectedJWT, AlertPayload{
 				ErrorClass: errorClassUnknownJTI,
 				Reason:     alertReasonFor(AlertClassVaultRejectedJWT),
@@ -435,6 +441,13 @@ func (l *Lifecycle) silentRefillAndRestart(ctx context.Context) error {
 			l.markAllScopesStale()
 			l.transition(ctx, EventFetchAuthRequired)
 			return fmt.Errorf("supervise: silent refill: %w", err)
+		}
+		// Transient failure: grace-cache restart is permitted (docs §9 —
+		// when the operator opted into cache_secrets_for_restart, a
+		// refill failure restarts the child from the last-known-good
+		// plaintext instead of paging).
+		if l.tryGraceRestart(ctx) {
+			return nil
 		}
 		l.deps.Alerts.Emit(ctx, AlertClassRefillFailed, AlertPayload{
 			ErrorClass: errorClassTransient,

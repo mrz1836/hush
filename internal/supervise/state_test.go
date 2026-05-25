@@ -679,3 +679,118 @@ func TestStore_TransitionUnknownEvent(t *testing.T) {
 		t.Errorf("err %q does not contain event %q", msg, "garbage-not-in-set")
 	}
 }
+
+// TestStore_SetTokenDestroysPrior verifies that replacing the stored
+// JWT explicitly zeroes the prior *SecureBytes (Principle VI / Layer 5
+// — explicit zeroing on lifecycle transitions, not waiting for the GC
+// finalizer). Without this discipline, rotating JWTs across refresh
+// cycles accumulates plaintext bearer-token bytes in mlocked memory
+// that remain reachable via same-user /proc/$$/mem until GC sweeps.
+func TestStore_SetTokenDestroysPrior(t *testing.T) {
+	t.Parallel()
+	clk := testutil.NewFakeClock(time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC))
+	s := NewStore(context.Background(), clk)
+
+	first, err := securebytes.New([]byte("jwt-generation-1"))
+	if err != nil {
+		t.Fatalf("first securebytes.New: %v", err)
+	}
+	second, err := securebytes.New([]byte("jwt-generation-2"))
+	if err != nil {
+		t.Fatalf("second securebytes.New: %v", err)
+	}
+	t.Cleanup(func() { _ = second.Destroy() })
+
+	s.setToken(first)
+	if useErr := first.Use(func(_ []byte) {}); useErr != nil {
+		t.Fatalf("first.Use after setToken: %v want nil", useErr)
+	}
+
+	s.setToken(second)
+	if useErr := first.Use(func(_ []byte) {}); !errors.Is(useErr, securebytes.ErrDestroyed) {
+		t.Errorf("first.Use after replacement: %v want ErrDestroyed", useErr)
+	}
+	if useErr := second.Use(func(_ []byte) {}); useErr != nil {
+		t.Errorf("second.Use after setToken: %v want nil", useErr)
+	}
+	if snap := s.Snapshot(); snap.Token != second {
+		t.Errorf("Snapshot.Token after replacement is not the new pointer")
+	}
+}
+
+// TestStore_SetTokenIdempotentOnSamePointer verifies that passing the
+// SAME pointer twice does NOT destroy it. Defensive guard against a
+// caller that re-injects the live token (e.g. a no-op refresh path or
+// a test fixture).
+func TestStore_SetTokenIdempotentOnSamePointer(t *testing.T) {
+	t.Parallel()
+	clk := testutil.NewFakeClock(time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC))
+	s := NewStore(context.Background(), clk)
+
+	tok, err := securebytes.New([]byte("idempotent-jwt"))
+	if err != nil {
+		t.Fatalf("securebytes.New: %v", err)
+	}
+	t.Cleanup(func() { _ = tok.Destroy() })
+
+	s.setToken(tok)
+	s.setToken(tok)
+	if useErr := tok.Use(func(_ []byte) {}); useErr != nil {
+		t.Errorf("tok.Use after self-replacement: %v want nil (same-pointer setToken must be a no-op)", useErr)
+	}
+}
+
+// TestStore_SetTokenNilClearsAndDestroys verifies that passing nil
+// clears the slot AND destroys the prior token — the orchestrator can
+// use this idiom (or destroyToken) to explicitly retire a session.
+func TestStore_SetTokenNilClearsAndDestroys(t *testing.T) {
+	t.Parallel()
+	clk := testutil.NewFakeClock(time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC))
+	s := NewStore(context.Background(), clk)
+
+	tok, err := securebytes.New([]byte("about-to-be-cleared"))
+	if err != nil {
+		t.Fatalf("securebytes.New: %v", err)
+	}
+	s.setToken(tok)
+	s.setToken(nil)
+
+	if useErr := tok.Use(func(_ []byte) {}); !errors.Is(useErr, securebytes.ErrDestroyed) {
+		t.Errorf("tok.Use after setToken(nil): %v want ErrDestroyed", useErr)
+	}
+	if snap := s.Snapshot(); snap.Token != nil {
+		t.Errorf("Snapshot.Token after setToken(nil) = %v want nil", snap.Token)
+	}
+}
+
+// TestStore_DestroyTokenZeroesAndClears verifies that destroyToken
+// explicitly zeroes the current JWT plaintext and nils the slot. Used
+// by Lifecycle.runShutdown so the supervisor's SIGTERM path retires
+// the bearer token rather than leaving it to the (process-exit-skipped)
+// runtime finalizer.
+func TestStore_DestroyTokenZeroesAndClears(t *testing.T) {
+	t.Parallel()
+	clk := testutil.NewFakeClock(time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC))
+	s := NewStore(context.Background(), clk)
+
+	tok, err := securebytes.New([]byte("shutdown-token"))
+	if err != nil {
+		t.Fatalf("securebytes.New: %v", err)
+	}
+	s.setToken(tok)
+
+	s.destroyToken()
+
+	if useErr := tok.Use(func(_ []byte) {}); !errors.Is(useErr, securebytes.ErrDestroyed) {
+		t.Errorf("tok.Use after destroyToken: %v want ErrDestroyed", useErr)
+	}
+	if snap := s.Snapshot(); snap.Token != nil {
+		t.Errorf("Snapshot.Token after destroyToken = %v want nil", snap.Token)
+	}
+
+	// Idempotent — second call is a silent no-op.
+	s.destroyToken()
+	if snap := s.Snapshot(); snap.Token != nil {
+		t.Errorf("Snapshot.Token after second destroyToken = %v want nil", snap.Token)
+	}
+}

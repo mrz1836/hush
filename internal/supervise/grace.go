@@ -113,6 +113,26 @@ func (g *Grace) Evict(name string) {
 	}
 }
 
+// EvictAll destroys every cached SecureBytes and clears the map,
+// preserving the enabled/window configuration so subsequent Set calls
+// continue to cache. Used by the orchestrator when an authoritative
+// rejection (e.g. vault returns unknown_jti) invalidates every cached
+// plaintext from the now-revoked session — falling back to that
+// plaintext would silently bypass the operator's revoke decision.
+//
+// Distinct from Destroy, which both zeroes the entries AND permanently
+// disables further caching (process-exit semantics).
+//
+// Safe to call concurrently with Get/Set/Evict — all take g.mu.
+func (g *Grace) EvictAll() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for name, entry := range g.entries {
+		_ = entry.sb.Destroy()
+		delete(g.entries, name)
+	}
+}
+
 // Destroy zeroes every cached SecureBytes and clears the map. Invoked by
 // Lifecycle.runShutdown so the supervisor's SIGTERM path explicitly retires
 // plaintext that would otherwise outlive the orchestrator (the runtime

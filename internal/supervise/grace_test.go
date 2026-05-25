@@ -149,6 +149,65 @@ func TestGrace_EvictOnAbsentNameIsNoop(t *testing.T) {
 	}
 }
 
+// TestGrace_EvictAllZeroesEveryEntryPreservesEnabled: EvictAll walks
+// every cached entry, calls sb.Destroy on each, clears the map, AND
+// keeps the cache enabled so subsequent Set calls continue to cache.
+// This is the path the orchestrator uses when an authoritative revoke
+// (vault returns unknown_jti) invalidates every cached plaintext from
+// the now-revoked session — distinct from Destroy, which is permanent.
+func TestGrace_EvictAllZeroesEveryEntryPreservesEnabled(t *testing.T) {
+	g := NewGrace(time.Hour, true)
+	sb1 := newSecureBytes(t, []byte("A"))
+	sb2 := newSecureBytes(t, []byte("B"))
+	sb3 := newSecureBytes(t, []byte("C"))
+	g.Set("scope1", sb1)
+	g.Set("scope2", sb2)
+	g.Set("scope3", sb3)
+
+	g.EvictAll()
+
+	for label, sb := range map[string]*securebytes.SecureBytes{"sb1": sb1, "sb2": sb2, "sb3": sb3} {
+		if err := sb.Use(func(_ []byte) {}); !errors.Is(err, securebytes.ErrDestroyed) {
+			t.Fatalf("%s.Use err=%v want ErrDestroyed after Grace.EvictAll", label, err)
+		}
+	}
+	g.mu.RLock()
+	size := len(g.entries)
+	g.mu.RUnlock()
+	if size != 0 {
+		t.Fatalf("entries=%d after EvictAll, want 0", size)
+	}
+
+	if !g.Enabled() {
+		t.Fatalf("Grace.Enabled() = false after EvictAll; want true (EvictAll preserves caching config, unlike Destroy)")
+	}
+
+	// Subsequent Set must continue to cache — EvictAll is not permanent.
+	revived := newSecureBytes(t, []byte("post-evictall"))
+	g.Set("scope1", revived)
+	got, ok := g.Get("scope1")
+	if !ok || got != revived {
+		t.Fatalf("post-EvictAll Set/Get failed; ok=%v got=%v want %v", ok, got, revived)
+	}
+}
+
+// TestGrace_EvictAllOnEmpty: EvictAll on a never-populated cache is a
+// silent no-op and leaves the cache enabled.
+func TestGrace_EvictAllOnEmpty(t *testing.T) {
+	g := NewGrace(time.Hour, true)
+	g.EvictAll()
+	if !g.Enabled() {
+		t.Fatalf("Grace.Enabled() = false after EvictAll on empty cache; want true")
+	}
+}
+
+// TestGrace_EvictAllOnDisabledIsNoop: EvictAll on a disabled cache is
+// a silent no-op (there are no entries to walk).
+func TestGrace_EvictAllOnDisabledIsNoop(t *testing.T) {
+	g := NewGrace(time.Hour, false)
+	g.EvictAll() // must not panic.
+}
+
 // TestGrace_SetOverwriteDestroysPrior: Set on an existing key
 // destroys the prior SecureBytes.
 func TestGrace_SetOverwriteDestroysPrior(t *testing.T) {

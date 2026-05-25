@@ -212,8 +212,37 @@ type Snapshot struct {
 // JWT here after a successful /claim. Production-path seam; tests
 // also call it directly because they live in the same package. The
 // method remains unexported.
+//
+// On replacement, the prior *SecureBytes is explicitly Destroy'd
+// (Principle VI / Layer 5 — explicit zeroing on lifecycle transitions
+// rather than waiting for the runtime finalizer). Passing the same
+// pointer twice is a no-op; passing nil clears the slot. Any in-flight
+// reader holding the previous pointer (e.g. a concurrent Refill that
+// already captured the Snapshot.Token) is serialised on the prior
+// SecureBytes' own mutex inside Destroy, so the destroy waits for the
+// in-progress Use callback to finish before zeroing.
 func (s *Store) setToken(tok *securebytes.SecureBytes) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	prev := s.token
 	s.token = tok
+	if prev != nil && prev != tok {
+		_ = prev.Destroy()
+	}
+}
+
+// destroyToken explicitly zeroes and clears the stored token. Invoked
+// by Lifecycle.runShutdown so the supervisor's SIGTERM path retires
+// the current JWT plaintext that would otherwise outlive the
+// orchestrator (the runtime finalizer does NOT run on process exit).
+// Idempotent — calling it on an already-cleared Store is a silent
+// no-op. Mirrors Grace.Destroy on the JWT side.
+func (s *Store) destroyToken() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.token == nil {
+		return
+	}
+	_ = s.token.Destroy()
+	s.token = nil
 }
