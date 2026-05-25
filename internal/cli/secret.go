@@ -25,6 +25,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -451,12 +452,118 @@ func destroySecrets(secrets []vault.Secret) {
 	}
 }
 
+// openVaultForAdd resolves the passphrase, derives the vault key, and
+// loads the existing secrets in one step. On success the caller owns
+// vaultKey (must Destroy) and must call destroySecrets(secrets). The
+// passphrase is consumed entirely inside this helper.
+func openVaultForAdd(ctx context.Context, deps *secretDeps, in *os.File, stderr *Stream, vaultPath, name string) (*securebytes.SecureBytes, []byte, []vault.Secret, error) {
+	passphrase, err := resolveAddPassphrase(deps, in, stderr)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	defer func() { _ = passphrase.Destroy() }()
+
+	salt, err := deps.readVaultSalt(vaultPath)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	vaultKey, err := deriveVaultKey(ctx, deps, passphrase, salt)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	secrets, err := loadSecretsForAdd(ctx, deps, vaultPath, vaultKey, name)
+	if err != nil {
+		_ = vaultKey.Destroy()
+		return nil, nil, nil, err
+	}
+	return vaultKey, salt, secrets, nil
+}
+
+// loadSecretsForAdd loads the vault contents for the `add` flow and emits
+// the secret_passphrase_failed audit event on vault.ErrAuthFailed before
+// surfacing the error to the caller.
+func loadSecretsForAdd(ctx context.Context, deps *secretDeps, vaultPath string, vaultKey *securebytes.SecureBytes, name string) ([]vault.Secret, error) {
+	secrets, err := deps.loadSecrets(ctx, vaultPath, vaultKey)
+	if err != nil {
+		if errors.Is(err, vault.ErrAuthFailed) {
+			auditEvent(ctx, deps.logger, slog.LevelWarn, "secret_passphrase_failed", "add", name, "passphrase_failed")
+		}
+		return nil, err
+	}
+	return secrets, nil
+}
+
+// resolveAddPassphrase returns the passphrase SecureBytes for the `add`
+// flow — either cloned from non-interactive deps or prompted from the
+// operator. Caller owns the returned SecureBytes and is responsible for
+// Destroy().
+func resolveAddPassphrase(deps *secretDeps, in *os.File, stderr *Stream) (*securebytes.SecureBytes, error) {
+	if deps.nonInteractive {
+		if deps.passphrase == nil {
+			return nil, fmt.Errorf("%w: passphrase", errMissingFlag)
+		}
+		return cloneSecureBytes(deps.passphrase)
+	}
+	return deps.promptPassphrase(in, stderr.w, promptVaultPassphrase)
+}
+
+// promptAddValueAndDescription resolves the new secret's value and
+// description for the `add` flow. In non-interactive mode it sources from
+// deps.secretValue / deps.description. In interactive mode it prompts for
+// the value, prompts again to confirm, compares them in constant time,
+// then prompts for the description. On confirmation mismatch it emits the
+// secret_confirmation_mismatch audit and returns errSecretValueMismatch.
+//
+// Caller owns the returned value SecureBytes on success and must
+// Destroy() it. On any error the helper destroys what it allocated.
+func promptAddValueAndDescription(ctx context.Context, deps *secretDeps, in *os.File, stderr *Stream, name string) (*securebytes.SecureBytes, string, error) {
+	if deps.nonInteractive {
+		if deps.secretValue == nil {
+			return nil, "", fmt.Errorf("%w: secretValue", errMissingFlag)
+		}
+		value, err := cloneSecureBytes(deps.secretValue)
+		if err != nil {
+			return nil, "", err
+		}
+		return value, deps.description, nil
+	}
+
+	value, err := deps.promptSecret(in, stderr.w, promptSecretValue)
+	if err != nil {
+		return nil, "", err
+	}
+
+	confirm, confirmErr := deps.promptSecret(in, stderr.w, promptConfirmSecretValue)
+	if confirmErr != nil {
+		_ = value.Destroy()
+		return nil, "", confirmErr
+	}
+	defer func() { _ = confirm.Destroy() }()
+
+	equal, cmpErr := secureBytesEqual(value, confirm)
+	if cmpErr != nil {
+		_ = value.Destroy()
+		return nil, "", cmpErr
+	}
+	if !equal {
+		_ = stderr.WriteText(secretMsgValueMismatch)
+		auditEvent(ctx, deps.logger, slog.LevelWarn, "secret_confirmation_mismatch", "add", name, "value_mismatch")
+		_ = value.Destroy()
+		return nil, "", errSecretValueMismatch
+	}
+
+	description, descErr := deps.promptLine(in, stderr.w, promptDescription)
+	if descErr != nil {
+		_ = value.Destroy()
+		return nil, "", descErr
+	}
+	return value, description, nil
+}
+
 // runSecretAdd implements the `add` flow. Order:
 // stdin-TTY gate → name validation → passphrase prompt → derive vault
 // key → load vault → secret value prompt → confirm-value prompt →
 // description prompt → exists check → append → save → audit → ExitOK.
-//
-//nolint:gocognit,gocyclo,cyclop,nestif // sequential add flow; complexity is structural
 func runSecretAdd(ctx context.Context, stderr *Stream, in *os.File, deps *secretDeps, args []string) error {
 	if !deps.nonInteractive {
 		if err := enforceStdinTTY(ctx, in, deps, stderr, "add"); err != nil {
@@ -474,84 +581,22 @@ func runSecretAdd(ctx context.Context, stderr *Stream, in *os.File, deps *secret
 		return err
 	}
 
-	var passphrase *securebytes.SecureBytes
-	if deps.nonInteractive {
-		if deps.passphrase == nil {
-			return fmt.Errorf("%w: passphrase", errMissingFlag)
-		}
-		passphrase, err = cloneSecureBytes(deps.passphrase)
-	} else {
-		passphrase, err = deps.promptPassphrase(in, stderr.w, promptVaultPassphrase)
-	}
-	if err != nil {
-		return err
-	}
-	defer func() { _ = passphrase.Destroy() }()
-
-	salt, err := deps.readVaultSalt(vaultPath)
-	if err != nil {
-		return err
-	}
-
-	vaultKey, err := deriveVaultKey(ctx, deps, passphrase, salt)
+	vaultKey, salt, secrets, err := openVaultForAdd(ctx, deps, in, stderr, vaultPath, name)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = vaultKey.Destroy() }()
-
-	secrets, err := deps.loadSecrets(ctx, vaultPath, vaultKey)
-	if err != nil {
-		if errors.Is(err, vault.ErrAuthFailed) {
-			auditEvent(ctx, deps.logger, slog.LevelWarn, "secret_passphrase_failed", "add", name, "passphrase_failed")
-		}
-		return err
-	}
 	defer destroySecrets(secrets)
 
-	var value *securebytes.SecureBytes
-	var description string
-	if deps.nonInteractive {
-		if deps.secretValue == nil {
-			return fmt.Errorf("%w: secretValue", errMissingFlag)
-		}
-		value, err = cloneSecureBytes(deps.secretValue)
-		description = deps.description
-	} else {
-		value, err = deps.promptSecret(in, stderr.w, promptSecretValue)
-	}
+	value, description, err := promptAddValueAndDescription(ctx, deps, in, stderr, name)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = value.Destroy() }()
 
-	if !deps.nonInteractive {
-		confirm, confirmErr := deps.promptSecret(in, stderr.w, promptConfirmSecretValue)
-		if confirmErr != nil {
-			return confirmErr
-		}
-		defer func() { _ = confirm.Destroy() }()
-
-		equal, cmpErr := secureBytesEqual(value, confirm)
-		if cmpErr != nil {
-			return cmpErr
-		}
-		if !equal {
-			_ = stderr.WriteText(secretMsgValueMismatch)
-			auditEvent(ctx, deps.logger, slog.LevelWarn, "secret_confirmation_mismatch", "add", name, "value_mismatch")
-			return errSecretValueMismatch
-		}
-
-		description, err = deps.promptLine(in, stderr.w, promptDescription)
-		if err != nil {
-			return err
-		}
-	}
-
-	for _, s := range secrets {
-		if s.Name == name {
-			_ = stderr.WriteText(secretMsgExistsFmt, name)
-			return errSecretExists
-		}
+	if slices.ContainsFunc(secrets, func(s vault.Secret) bool { return s.Name == name }) {
+		_ = stderr.WriteText(secretMsgExistsFmt, name)
+		return errSecretExists
 	}
 
 	// Append a fresh Secret carrying our typed value SecureBytes. The

@@ -696,12 +696,431 @@ func newInitClientCmd() *cobra.Command {
 	return cmd
 }
 
-// runInitServer is the orchestration entry-point for `hush init server`.
-// All output goes to stderr (operator messages); stdout is intentionally
-// unused so machine-piped consumers see an empty data stream on success.
-//
-//nolint:gocognit,gocyclo,cyclop,nestif // sequential bootstrap flow; complexity is structural
-func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *initDeps) error {
+// initServerSetup carries the operator-supplied passphrase, bot token, and
+// non-secret string fields resolved by gatherInitServerInputs. Caller owns
+// both SecureBytes and must Destroy() them.
+type initServerSetup struct {
+	pass              *securebytes.SecureBytes
+	botToken          *securebytes.SecureBytes // may be nil in explicit-state-dir non-interactive flows
+	listenAddr        string
+	ownerID           string
+	appID             string
+	approvalChannelID string
+	auditChannelID    string
+}
+
+// destroy releases both SecureBytes. Safe to call multiple times — nil
+// fields are ignored.
+func (s *initServerSetup) destroy() {
+	if s == nil {
+		return
+	}
+	if s.pass != nil {
+		_ = s.pass.Destroy()
+	}
+	if s.botToken != nil {
+		_ = s.botToken.Destroy()
+	}
+}
+
+// promptVaultPassphraseWithConfirm prompts the operator for the vault
+// passphrase, enforces the minimum length, prompts again to confirm, and
+// returns the validated passphrase. Caller owns the returned SecureBytes.
+func promptVaultPassphraseWithConfirm(deps *initDeps, in *os.File, stderr *Stream) (*securebytes.SecureBytes, error) {
+	pass, err := deps.promptSecret(in, stderr.w, promptVaultPassphrase)
+	if err != nil {
+		return nil, err
+	}
+	if pass.Len() < minPassphraseLen {
+		_ = pass.Destroy()
+		_ = stderr.WriteText(initMsgPassphraseTooShort)
+		return nil, errPassphraseTooShort
+	}
+	confirm, confirmErr := deps.promptSecret(in, stderr.w, promptConfirmVault)
+	if confirmErr != nil {
+		_ = pass.Destroy()
+		return nil, confirmErr
+	}
+	equal, cmpErr := secureBytesEqual(pass, confirm)
+	_ = confirm.Destroy()
+	if cmpErr != nil {
+		_ = pass.Destroy()
+		return nil, cmpErr
+	}
+	if !equal {
+		_ = pass.Destroy()
+		_ = stderr.WriteText(initMsgPassphraseMismatch)
+		return nil, errPassphraseMismatch
+	}
+	return pass, nil
+}
+
+// gatherInitServerInputsNonInteractive resolves the inputs for
+// `hush init server --non-interactive`. Clones deps.serverPassphrase and
+// deps.serverBotToken (token may be skipped under --state-dir).
+func gatherInitServerInputsNonInteractive(deps *initDeps, explicitStateDir bool) (*initServerSetup, error) {
+	if deps.serverPassphrase == nil {
+		return nil, fmt.Errorf("%w: serverPassphrase", errMissingFlag)
+	}
+	pass, err := cloneSecureBytes(deps.serverPassphrase)
+	if err != nil {
+		return nil, err
+	}
+	botTokenPresent := deps.serverBotToken != nil && deps.serverBotToken.Len() > 0
+	var botToken *securebytes.SecureBytes
+	if !explicitStateDir || botTokenPresent {
+		if !botTokenPresent {
+			_ = pass.Destroy()
+			return nil, fmt.Errorf("%w: serverBotToken", errMissingFlag)
+		}
+		botToken, err = cloneSecureBytes(deps.serverBotToken)
+		if err != nil {
+			_ = pass.Destroy()
+			return nil, err
+		}
+	}
+	return &initServerSetup{
+		pass:              pass,
+		botToken:          botToken,
+		listenAddr:        strings.TrimSpace(deps.serverInputs.listenAddr),
+		ownerID:           strings.TrimSpace(deps.serverInputs.ownerID),
+		appID:             strings.TrimSpace(deps.serverInputs.applicationID),
+		approvalChannelID: strings.TrimSpace(deps.serverInputs.approvalChannelID),
+		auditChannelID:    strings.TrimSpace(deps.serverInputs.auditChannelID),
+	}, nil
+}
+
+// seedInitServerStringFields seeds the five non-secret string fields from
+// deps.serverInputs, overlaying values from an existing config when the
+// operator-supplied input is empty.
+func seedInitServerStringFields(deps *initDeps, existingCfg *config.Server) (listen, owner, app, approval, audit string) {
+	listen = strings.TrimSpace(deps.serverInputs.listenAddr)
+	owner = strings.TrimSpace(deps.serverInputs.ownerID)
+	app = strings.TrimSpace(deps.serverInputs.applicationID)
+	approval = strings.TrimSpace(deps.serverInputs.approvalChannelID)
+	audit = strings.TrimSpace(deps.serverInputs.auditChannelID)
+	if existingCfg != nil {
+		listen = firstNonEmpty(listen, existingCfg.Server.ListenAddr.String())
+		owner = firstNonEmpty(owner, existingCfg.Server.DiscordOwnerID)
+		app = firstNonEmpty(app, existingCfg.Discord.ApplicationID)
+		approval = firstNonEmpty(approval, existingCfg.Server.DiscordApprovalChannelID)
+		audit = firstNonEmpty(audit, existingCfg.Server.DiscordAuditChannelID)
+	}
+	return listen, owner, app, approval, audit
+}
+
+// promptInitServerRequiredFields prompts for any of the three required
+// fields (listen addr, owner ID, app ID) that arrived empty. On prompt
+// error it emits the field-required stderr message before returning.
+func promptInitServerRequiredFields(deps *initDeps, in *os.File, stderr *Stream, listen, owner, app string) (string, string, string, error) {
+	var err error
+	if listen == "" {
+		listen, err = promptRequired(deps.promptLine, in, stderr.w, promptListenAddr, "listen_addr")
+		if err != nil {
+			_ = stderr.WriteText(initMsgFieldRequiredFmt, "listen_addr")
+			return "", "", "", err
+		}
+	}
+	if owner == "" {
+		owner, err = promptRequired(deps.promptLine, in, stderr.w, promptOwnerID, "discord_owner_id")
+		if err != nil {
+			_ = stderr.WriteText(initMsgFieldRequiredFmt, "discord_owner_id")
+			return "", "", "", err
+		}
+	}
+	if app == "" {
+		app, err = promptRequired(deps.promptLine, in, stderr.w, promptApplicationID, "application_id")
+		if err != nil {
+			_ = stderr.WriteText(initMsgFieldRequiredFmt, "application_id")
+			return "", "", "", err
+		}
+	}
+	return listen, owner, app, nil
+}
+
+// promptInitServerOptionalChannels prompts for any of the two optional
+// Discord channel IDs that arrived empty. Guarded on promptOptionalLine
+// availability — older test deps that don't wire it skip the prompts.
+func promptInitServerOptionalChannels(deps *initDeps, in *os.File, stderr *Stream, approval, audit string) (string, string, error) {
+	if deps.promptOptionalLine == nil {
+		return approval, audit, nil
+	}
+	var err error
+	if approval == "" {
+		approval, err = promptOptional(deps.promptOptionalLine, in, stderr.w, promptApprovalChannel)
+		if err != nil {
+			return "", "", err
+		}
+	}
+	if audit == "" {
+		audit, err = promptOptional(deps.promptOptionalLine, in, stderr.w, promptAuditChannel)
+		if err != nil {
+			return "", "", err
+		}
+	}
+	return approval, audit, nil
+}
+
+// promptInitServerStringFields composes seed + required + optional steps.
+func promptInitServerStringFields(deps *initDeps, in *os.File, stderr *Stream, existingCfg *config.Server) (string, string, string, string, string, error) {
+	listen, owner, app, approval, audit := seedInitServerStringFields(deps, existingCfg)
+	listen, owner, app, err := promptInitServerRequiredFields(deps, in, stderr, listen, owner, app)
+	if err != nil {
+		return "", "", "", "", "", err
+	}
+	approval, audit, err = promptInitServerOptionalChannels(deps, in, stderr, approval, audit)
+	if err != nil {
+		return "", "", "", "", "", err
+	}
+	return listen, owner, app, approval, audit, nil
+}
+
+// gatherInitServerInputsInteractive prompts the operator on a TTY for the
+// passphrase + confirm, the non-secret fields, and the Discord bot token.
+func gatherInitServerInputsInteractive(deps *initDeps, in *os.File, stderr *Stream, existingCfg *config.Server) (*initServerSetup, error) {
+	if !deps.isTTY(in) {
+		_ = stderr.WriteText(initMsgNoTTY)
+		return nil, errNoTTY
+	}
+	pass, err := promptVaultPassphraseWithConfirm(deps, in, stderr)
+	if err != nil {
+		return nil, err
+	}
+	listenAddr, ownerID, appID, approvalChannelID, auditChannelID, err := promptInitServerStringFields(deps, in, stderr, existingCfg)
+	if err != nil {
+		_ = pass.Destroy()
+		return nil, err
+	}
+	botToken, err := deps.promptSecret(in, stderr.w, promptBotToken)
+	if err != nil {
+		_ = pass.Destroy()
+		return nil, err
+	}
+	return &initServerSetup{
+		pass:              pass,
+		botToken:          botToken,
+		listenAddr:        listenAddr,
+		ownerID:           ownerID,
+		appID:             appID,
+		approvalChannelID: approvalChannelID,
+		auditChannelID:    auditChannelID,
+	}, nil
+}
+
+// gatherInitServerInputs branches between the non-interactive (deps-driven)
+// and interactive (TTY-driven) input sources.
+func gatherInitServerInputs(deps *initDeps, in *os.File, stderr *Stream, existingCfg *config.Server, explicitStateDir bool) (*initServerSetup, error) {
+	if deps.serverNonInteractive {
+		return gatherInitServerInputsNonInteractive(deps, explicitStateDir)
+	}
+	return gatherInitServerInputsInteractive(deps, in, stderr, existingCfg)
+}
+
+// validateInitServerSetup re-checks the gathered inputs against the
+// required-field contract. Mirrors the post-gathering sanity check the
+// monolithic flow performed, so any divergence between the non-interactive
+// and interactive paths is caught uniformly.
+func validateInitServerSetup(s *initServerSetup, explicitStateDir, nonInteractive bool, stderr *Stream) error {
+	if s.pass.Len() < minPassphraseLen {
+		_ = stderr.WriteText(initMsgPassphraseTooShort)
+		return errPassphraseTooShort
+	}
+	if (s.botToken == nil || s.botToken.Len() == 0) && (!explicitStateDir || !nonInteractive) {
+		_ = stderr.WriteText(initMsgFieldRequiredFmt, "discord_bot_token")
+		return errMissingFlag
+	}
+	if s.listenAddr == "" {
+		_ = stderr.WriteText(initMsgFieldRequiredFmt, "listen_addr")
+		return errMissingFlag
+	}
+	if s.ownerID == "" {
+		_ = stderr.WriteText(initMsgFieldRequiredFmt, "discord_owner_id")
+		return errMissingFlag
+	}
+	if s.appID == "" {
+		_ = stderr.WriteText(initMsgFieldRequiredFmt, "application_id")
+		return errMissingFlag
+	}
+	return nil
+}
+
+// applyExistingArtifactGuards runs the classifier, then enforces the
+// per-artifact `fail` modes for vault + config and the legacy keychain
+// guard. Returns the per-artifact decisions on success.
+func applyExistingArtifactGuards(ctx context.Context, in *os.File, stderr *Stream, deps *initDeps, vaultPath, configPath, stateDir string, keychainItems serverKeychainItemNames, explicitStateDir bool) (recoveryDecisions, error) {
+	decisions, recoveryErr := recoverExistingArtifacts(ctx, in, stderr, deps, vaultPath, configPath, stateDir, keychainItems)
+	if recoveryErr != nil {
+		return recoveryDecisions{}, recoveryErr
+	}
+	if decisions.modeFor(setup.ArtifactVault) == onExistingFail {
+		if guardErr := guardFileAbsent(vaultPath, errVaultExists, initMsgVaultExistsFmt, stderr); guardErr != nil {
+			return recoveryDecisions{}, guardErr
+		}
+	}
+	if decisions.modeFor(setup.ArtifactConfig) == onExistingFail {
+		if guardErr := guardFileAbsent(configPath, errConfigExists, initMsgConfigExistsFmt, stderr); guardErr != nil {
+			return recoveryDecisions{}, guardErr
+		}
+	}
+	if guardErr := applyLegacyKeychainGuards(ctx, deps, stderr, decisions, keychainItems, explicitStateDir); guardErr != nil {
+		return recoveryDecisions{}, guardErr
+	}
+	return decisions, nil
+}
+
+// deriveInitServerVaultKey produces a fresh 16-byte salt and derives the
+// vault encryption key (BIP32 path m/44'/7743'/1') from the operator's
+// passphrase. Caller must Destroy() the returned SecureBytes; the
+// intermediate master seed is wiped before this returns.
+func deriveInitServerVaultKey(ctx context.Context, deps *initDeps, pass *securebytes.SecureBytes) (*securebytes.SecureBytes, []byte, error) {
+	salt := make([]byte, 16)
+	if _, saltErr := io.ReadFull(deps.randReader, salt); saltErr != nil {
+		return nil, nil, fmt.Errorf("hush/cli: init: salt: %w", saltErr)
+	}
+	var masterSeed []byte
+	var deriveErr error
+	if useErr := pass.Use(func(b []byte) {
+		masterSeed, deriveErr = deps.deriveMasterSeed(ctx, b, salt)
+	}); useErr != nil {
+		return nil, nil, useErr
+	}
+	if deriveErr != nil {
+		return nil, nil, deriveErr
+	}
+	defer zeroBytes(masterSeed)
+
+	vaultEncRaw, err := keys.DeriveVaultEncKey(masterSeed)
+	if err != nil {
+		return nil, nil, err
+	}
+	vaultEncKey, err := securebytes.New(vaultEncRaw)
+	if err != nil {
+		return nil, nil, err
+	}
+	return vaultEncKey, salt, nil
+}
+
+// writeInitialServerArtifacts ensures the state dir exists, writes the
+// empty vault when the operator didn't choose reuse, generates a fresh
+// path_prefix and writes config.toml when the operator didn't choose
+// reuse, then round-trip-validates the on-disk config.
+func writeInitialServerArtifacts(ctx context.Context, deps *initDeps, stderr *Stream, vaultPath, configPath, stateDir string, vaultEncKey *securebytes.SecureBytes, salt []byte, cfgInputs *serverInputs, decisions recoveryDecisions) (*config.Server, error) {
+	if dirErr := ensureStateDir(stateDir); dirErr != nil {
+		return nil, dirErr
+	}
+	if !reuseArtifact(decisions, setup.ArtifactVault) {
+		if saveErr := vault.SaveWithSalt(ctx, vaultPath, vaultEncKey, salt, []vault.Secret{}); saveErr != nil {
+			return nil, saveErr
+		}
+	}
+	if !reuseArtifact(decisions, setup.ArtifactConfig) {
+		pathPrefix, ppErr := generatePathPrefix(deps.randReader)
+		if ppErr != nil {
+			return nil, ppErr
+		}
+		cfgInputs.pathPrefix = pathPrefix
+		cfgBody := buildServerDecodedFromDefaults(*cfgInputs)
+		if wErr := writeConfigTOMLAtomic(configPath, cfgBody); wErr != nil {
+			_ = stderr.WriteText(initMsgWriteFailFmt, configPath, wErr)
+			return nil, wErr
+		}
+	}
+	loadedCfg, err := config.LoadServer(ctx, configPath)
+	if err != nil {
+		return nil, fmt.Errorf("hush/cli: init: round-trip-validate config: %w", err)
+	}
+	return loadedCfg, nil
+}
+
+// rewriteServerConfigWithBotPath rewrites config.toml with the supplied
+// dedicated Discord-keychain path baked into Discord.BotKeychainPath and
+// round-trip-validates. Returns the freshly-loaded config.
+func rewriteServerConfigWithBotPath(ctx context.Context, configPath string, cfgInputs *serverInputs, loadedCfg *config.Server, dedicatedKeychainPath string, stderr *Stream) (*config.Server, error) {
+	cfgInputs.pathPrefix = loadedCfg.Server.PathPrefix
+	cfgBody := buildServerDecodedFromDefaults(*cfgInputs)
+	cfgBody.Discord.BotKeychainPath = dedicatedKeychainPath
+	if wErr := writeConfigTOMLAtomic(configPath, cfgBody); wErr != nil {
+		_ = stderr.WriteText(initMsgWriteFailFmt, configPath, wErr)
+		return nil, wErr
+	}
+	reloaded, err := config.LoadServer(ctx, configPath)
+	if err != nil {
+		return nil, fmt.Errorf("hush/cli: init: round-trip-validate dedicated keychain config: %w", err)
+	}
+	return reloaded, nil
+}
+
+// storeExplicitStateBotToken tries the configured-keychain-path route first;
+// if that route doesn't handle the token, falls back to the decision-driven
+// store. Returns (autoEnvTokenMode, dedicatedKeychainPath, error).
+func storeExplicitStateBotToken(ctx context.Context, deps *initDeps, stderr *Stream, in *os.File, loadedCfg *config.Server, keychainItems serverKeychainItemNames, botToken *securebytes.SecureBytes, stateDir, binPath string, decisions recoveryDecisions) (bool, string, error) {
+	handled, configuredPath, storeErr := storeBotTokenUsingConfiguredKeychainPath(ctx, deps, stderr, botToken, loadedCfg, keychainItems.discordService, binPath)
+	if storeErr != nil {
+		return false, "", storeErr
+	}
+	if handled {
+		return false, configuredPath, nil
+	}
+	return storeBotTokenForDecision(ctx, deps, stderr, in, keychainItems, botToken, stateDir, binPath, decisions)
+}
+
+// finalizeInitServerExplicitState handles the keychain + completion flow
+// when the operator passed --state-dir. The vault passphrase is NOT
+// stored in Keychain on this path; the bot token is stored when present.
+func finalizeInitServerExplicitState(ctx context.Context, deps *initDeps, stderr *Stream, in *os.File, configPath string, loadedCfg *config.Server, cfgInputs *serverInputs, keychainItems serverKeychainItemNames, botToken *securebytes.SecureBytes, stateDir, binPath string, decisions recoveryDecisions) error {
+	_ = stderr.WriteText(initMsgExplicitStateKeychain)
+	autoEnvTokenMode := false
+	var dedicatedKeychainPath string
+	var err error
+	if botToken != nil {
+		autoEnvTokenMode, dedicatedKeychainPath, err = storeExplicitStateBotToken(ctx, deps, stderr, in, loadedCfg, keychainItems, botToken, stateDir, binPath, decisions)
+		if err != nil {
+			return err
+		}
+	}
+	if dedicatedKeychainPath != "" {
+		reloaded, rewriteErr := rewriteServerConfigWithBotPath(ctx, configPath, cfgInputs, loadedCfg, dedicatedKeychainPath, stderr)
+		if rewriteErr != nil {
+			return rewriteErr
+		}
+		loadedCfg = reloaded
+	}
+	emitServerNextCommands(stderr, configPath, loadedCfg, autoEnvTokenMode || decisions.modeFor(setup.ArtifactKeychainToken) == onExistingEnvToken || botToken == nil)
+	_ = stderr.WriteText(initMsgServerComplete)
+	return nil
+}
+
+// finalizeInitServerStandard handles the standard keychain + completion
+// flow. Vault passphrase + bot token are both written to Keychain.
+func finalizeInitServerStandard(ctx context.Context, deps *initDeps, stderr *Stream, in *os.File, configPath string, loadedCfg *config.Server, cfgInputs *serverInputs, keychainItems serverKeychainItemNames, pass, botToken *securebytes.SecureBytes, stateDir, binPath string, decisions recoveryDecisions) error {
+	// Hush-authored pre-explanations ensure no raw Apple `security`
+	// prompt fires without a hush-authored preamble of what / why /
+	// what-to-click.
+	emitKeychainPreExplain(stderr, "vault passphrase", keychainItems.vaultPassphraseService, kcAccountServer)
+	if storeErr := deps.keychain.Store(ctx, keychainItems.vaultPassphraseService, kcAccountServer, pass, binPath); storeErr != nil {
+		_ = stderr.WriteText(initMsgKeychainStoreFailFmt, storeErr)
+		return storeErr
+	}
+	autoEnvTokenMode, dedicatedKeychainPath, err := storeBotTokenForDecision(ctx, deps, stderr, in, keychainItems, botToken, stateDir, binPath, decisions)
+	if err != nil {
+		return err
+	}
+	if dedicatedKeychainPath != "" {
+		reloaded, rewriteErr := rewriteServerConfigWithBotPath(ctx, configPath, cfgInputs, loadedCfg, dedicatedKeychainPath, stderr)
+		if rewriteErr != nil {
+			return rewriteErr
+		}
+		loadedCfg = reloaded
+	}
+	emitServerNextCommands(stderr, configPath, loadedCfg, autoEnvTokenMode || decisions.modeFor(setup.ArtifactKeychainToken) == onExistingEnvToken)
+	_ = stderr.WriteText(initMsgServerComplete)
+	return nil
+}
+
+// runInitServerPreflight runs the platform-ACL gate, the --on-existing
+// flag validation, and the diagnostic preflight pipeline before any
+// prompt fires. All output goes to stderr.
+func runInitServerPreflight(ctx context.Context, deps *initDeps, stderr *Stream) error {
 	if !deps.platformACL() {
 		_ = stderr.WriteText(initMsgPlatformUnsupported, runtime.GOOS)
 		return fmt.Errorf("%w: %s", errPlatformACLUnsupported, runtime.GOOS)
@@ -710,25 +1129,23 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 		_ = stderr.WriteText(initMsgOnExistingInvalidFmt, deps.serverOnExisting)
 		return err
 	}
-
-	// 0. Diagnostic-first preflight. No prompt may fire until this
-	//    pipeline has settled. On any
-	//    `fail` result we surface the typed error + remedy and exit
-	//    non-zero. On `warn` we print and continue (Phase 2 keeps
-	//    this non-interactive; Phase 4 wires the y/n confirm flow
-	//    alongside the real clock-sync check).
 	if deps.runPreflight != nil {
 		report := deps.runPreflight(ctx)
 		if pfErr := handlePreflightReport(report, deps, stderr); pfErr != nil {
 			return pfErr
 		}
 	}
+	return nil
+}
 
-	var pass *securebytes.SecureBytes
-	var botToken *securebytes.SecureBytes
-	var err error
-	var listenAddr, ownerID, appID string
-	var approvalChannelID, auditChannelID string
+// runInitServer is the orchestration entry-point for `hush init server`.
+// All output goes to stderr (operator messages); stdout is intentionally
+// unused so machine-piped consumers see an empty data stream on success.
+func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *initDeps) error {
+	if err := runInitServerPreflight(ctx, deps, stderr); err != nil {
+		return err
+	}
+
 	explicitStateDir := strings.TrimSpace(deps.serverInputs.stateDir) != ""
 
 	// Resolve target paths before prompting so an existing reusable config can
@@ -743,177 +1160,29 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 	keychainItems := defaultServerKeychainItems()
 	existingCfg, _ := config.LoadServer(ctx, configPath)
 
-	if deps.serverNonInteractive {
-		if deps.serverPassphrase == nil {
-			return fmt.Errorf("%w: serverPassphrase", errMissingFlag)
-		}
-		pass, err = cloneSecureBytes(deps.serverPassphrase)
-		if err != nil {
-			return err
-		}
-		botTokenPresent := deps.serverBotToken != nil && deps.serverBotToken.Len() > 0
-		if !explicitStateDir || botTokenPresent {
-			if !botTokenPresent {
-				_ = pass.Destroy()
-				return fmt.Errorf("%w: serverBotToken", errMissingFlag)
-			}
-			botToken, err = cloneSecureBytes(deps.serverBotToken)
-			if err != nil {
-				_ = pass.Destroy()
-				return err
-			}
-		}
-		listenAddr = strings.TrimSpace(deps.serverInputs.listenAddr)
-		ownerID = strings.TrimSpace(deps.serverInputs.ownerID)
-		appID = strings.TrimSpace(deps.serverInputs.applicationID)
-		approvalChannelID = strings.TrimSpace(deps.serverInputs.approvalChannelID)
-		auditChannelID = strings.TrimSpace(deps.serverInputs.auditChannelID)
-	} else {
-		if !deps.isTTY(in) {
-			_ = stderr.WriteText(initMsgNoTTY)
-			return errNoTTY
-		}
+	gathered, err := gatherInitServerInputs(deps, in, stderr, existingCfg, explicitStateDir)
+	if err != nil {
+		return err
+	}
+	defer gathered.destroy()
+	if vErr := validateInitServerSetup(gathered, explicitStateDir, deps.serverNonInteractive, stderr); vErr != nil {
+		return vErr
+	}
+	pass := gathered.pass
+	botToken := gathered.botToken
+	listenAddr := gathered.listenAddr
+	ownerID := gathered.ownerID
+	appID := gathered.appID
+	approvalChannelID := gathered.approvalChannelID
+	auditChannelID := gathered.auditChannelID
 
-		// 1. Passphrase + confirmation.
-		pass, err = deps.promptSecret(in, stderr.w, promptVaultPassphrase)
-		if err != nil {
-			return err
-		}
-		if pass.Len() < minPassphraseLen {
-			_ = pass.Destroy()
-			_ = stderr.WriteText(initMsgPassphraseTooShort)
-			return errPassphraseTooShort
-		}
-		confirm, confirmErr := deps.promptSecret(in, stderr.w, promptConfirmVault)
-		if confirmErr != nil {
-			_ = pass.Destroy()
-			return confirmErr
-		}
-		equal, cmpErr := secureBytesEqual(pass, confirm)
-		_ = confirm.Destroy()
-		if cmpErr != nil {
-			_ = pass.Destroy()
-			return cmpErr
-		}
-		if !equal {
-			_ = pass.Destroy()
-			_ = stderr.WriteText(initMsgPassphraseMismatch)
-			return errPassphraseMismatch
-		}
-
-		// 2. Operator-supplied non-secret fields (no defaults).
-		// If flags supplied these values, honor them and only prompt for
-		// the missing fields. Secrets remain TTY-only in interactive mode.
-		listenAddr = strings.TrimSpace(deps.serverInputs.listenAddr)
-		ownerID = strings.TrimSpace(deps.serverInputs.ownerID)
-		appID = strings.TrimSpace(deps.serverInputs.applicationID)
-		approvalChannelID = strings.TrimSpace(deps.serverInputs.approvalChannelID)
-		auditChannelID = strings.TrimSpace(deps.serverInputs.auditChannelID)
-		if existingCfg != nil {
-			listenAddr = firstNonEmpty(listenAddr, existingCfg.Server.ListenAddr.String())
-			ownerID = firstNonEmpty(ownerID, existingCfg.Server.DiscordOwnerID)
-			appID = firstNonEmpty(appID, existingCfg.Discord.ApplicationID)
-			approvalChannelID = firstNonEmpty(approvalChannelID, existingCfg.Server.DiscordApprovalChannelID)
-			auditChannelID = firstNonEmpty(auditChannelID, existingCfg.Server.DiscordAuditChannelID)
-		}
-
-		if listenAddr == "" {
-			listenAddr, err = promptRequired(deps.promptLine, in, stderr.w, promptListenAddr, "listen_addr")
-		}
-		if err != nil {
-			_ = pass.Destroy()
-			_ = stderr.WriteText(initMsgFieldRequiredFmt, "listen_addr")
-			return err
-		}
-		if ownerID == "" {
-			ownerID, err = promptRequired(deps.promptLine, in, stderr.w, promptOwnerID, "discord_owner_id")
-		}
-		if err != nil {
-			_ = pass.Destroy()
-			_ = stderr.WriteText(initMsgFieldRequiredFmt, "discord_owner_id")
-			return err
-		}
-		if appID == "" {
-			appID, err = promptRequired(deps.promptLine, in, stderr.w, promptApplicationID, "application_id")
-		}
-		if err != nil {
-			_ = pass.Destroy()
-			_ = stderr.WriteText(initMsgFieldRequiredFmt, "application_id")
-			return err
-		}
-		if approvalChannelID == "" && deps.promptOptionalLine != nil {
-			approvalChannelID, err = promptOptional(deps.promptOptionalLine, in, stderr.w, promptApprovalChannel)
-			if err != nil {
-				_ = pass.Destroy()
-				return err
-			}
-		}
-		if auditChannelID == "" && deps.promptOptionalLine != nil {
-			auditChannelID, err = promptOptional(deps.promptOptionalLine, in, stderr.w, promptAuditChannel)
-			if err != nil {
-				_ = pass.Destroy()
-				return err
-			}
-		}
-		botToken, err = deps.promptSecret(in, stderr.w, promptBotToken)
-		if err != nil {
-			_ = pass.Destroy()
-			return err
-		}
-	}
-	defer func() { _ = pass.Destroy() }()
-	defer func() {
-		if botToken != nil {
-			_ = botToken.Destroy()
-		}
-	}()
-	if pass.Len() < minPassphraseLen {
-		_ = stderr.WriteText(initMsgPassphraseTooShort)
-		return errPassphraseTooShort
-	}
-	if (botToken == nil || botToken.Len() == 0) && (!explicitStateDir || !deps.serverNonInteractive) {
-		_ = stderr.WriteText(initMsgFieldRequiredFmt, "discord_bot_token")
-		return errMissingFlag
-	}
-	if listenAddr == "" {
-		_ = stderr.WriteText(initMsgFieldRequiredFmt, "listen_addr")
-		return errMissingFlag
-	}
-	if ownerID == "" {
-		_ = stderr.WriteText(initMsgFieldRequiredFmt, "discord_owner_id")
-		return errMissingFlag
-	}
-	if appID == "" {
-		_ = stderr.WriteText(initMsgFieldRequiredFmt, "application_id")
-		return errMissingFlag
-	}
-
-	// 4. Existence handling — classifier-first.
-	//    The classifier inspects vault / config / state-dir, and the
-	//    Discord bot-token Keychain item (the only one whose write is
-	//    skipped under explicit-state-dir flows). Each non-absent
-	//    artifact triggers a per-artifact `[r]euse / [p]repair /
-	//    [a]rchive / [q]uit` prompt (interactive) OR consumes the
-	//    `--on-existing` flag (non-interactive). The legacy passphrase
-	//    Keychain guard is preserved below so the explicit error
-	//    message contract continues to hold when the operator chose
-	//    `--on-existing=fail`.
-	decisions, recoveryErr := recoverExistingArtifacts(ctx, in, stderr, deps, vaultPath, configPath, stateDir, keychainItems)
-	if recoveryErr != nil {
-		return recoveryErr
-	}
-	if decisions.modeFor(setup.ArtifactVault) == onExistingFail {
-		if guardErr := guardFileAbsent(vaultPath, errVaultExists, initMsgVaultExistsFmt, stderr); guardErr != nil {
-			return guardErr
-		}
-	}
-	if decisions.modeFor(setup.ArtifactConfig) == onExistingFail {
-		if guardErr := guardFileAbsent(configPath, errConfigExists, initMsgConfigExistsFmt, stderr); guardErr != nil {
-			return guardErr
-		}
-	}
-	if guardErr := applyLegacyKeychainGuards(ctx, deps, stderr, decisions, keychainItems, explicitStateDir); guardErr != nil {
-		return guardErr
+	// 4. Existence handling — classifier-first. Each non-absent artifact
+	//    triggers a per-artifact prompt (interactive) or consumes
+	//    --on-existing (non-interactive). The legacy keychain guard is
+	//    preserved so the explicit error contract holds on `fail` mode.
+	decisions, err := applyExistingArtifactGuards(ctx, in, stderr, deps, vaultPath, configPath, stateDir, keychainItems, explicitStateDir)
+	if err != nil {
+		return err
 	}
 
 	// 5. Resolve binary path for keychain ACL.
@@ -922,49 +1191,14 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 		return fmt.Errorf("hush/cli: init: resolve binary path: %w", err)
 	}
 
-	// 6. Derive master seed and vault encryption key.
-	salt := make([]byte, 16)
-	if _, saltErr := io.ReadFull(deps.randReader, salt); saltErr != nil {
-		return fmt.Errorf("hush/cli: init: salt: %w", saltErr)
-	}
-	var masterSeed []byte
-	var deriveErr error
-	if useErr := pass.Use(func(b []byte) {
-		masterSeed, deriveErr = deps.deriveMasterSeed(ctx, b, salt)
-	}); useErr != nil {
-		return useErr
-	}
-	if deriveErr != nil {
-		return deriveErr
-	}
-	defer zeroBytes(masterSeed)
-
-	vaultEncRaw, err := keys.DeriveVaultEncKey(masterSeed)
-	if err != nil {
-		return err
-	}
-	vaultEncKey, err := securebytes.New(vaultEncRaw)
+	// 6. Derive vault encryption key from the passphrase.
+	vaultEncKey, salt, err := deriveInitServerVaultKey(ctx, deps, pass)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = vaultEncKey.Destroy() }()
 
-	// 7. Ensure the state directory exists at 0700, then write the
-	// empty vault. Skip vault write when the operator picked
-	// [r]euse / [p]repair for the existing vault artifact.
-	if dirErr := ensureStateDir(stateDir); dirErr != nil {
-		return dirErr
-	}
-	if reuseArtifact(decisions, setup.ArtifactVault) {
-		// Vault already on disk and the operator chose reuse/repair —
-		// nothing to write. The salt we just derived is discarded;
-		// hush serve reads the salt from the existing vault header.
-	} else if saveErr := vault.SaveWithSalt(ctx, vaultPath, vaultEncKey, salt, []vault.Secret{}); saveErr != nil {
-		return saveErr
-	}
-
-	// 8. Generate path_prefix and write config.toml atomically. Skip
-	// when the operator chose reuse/repair for the existing config.
+	// 7. State dir + empty vault + initial config + round-trip validate.
 	cfgInputs := serverInputs{
 		listenAddr:        listenAddr,
 		ownerID:           ownerID,
@@ -974,95 +1208,17 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 		auditChannelID:    auditChannelID,
 		botTokenKeychain:  keychainItems.discordService,
 	}
-	if !reuseArtifact(decisions, setup.ArtifactConfig) {
-		pathPrefix, ppErr := generatePathPrefix(deps.randReader)
-		if ppErr != nil {
-			return ppErr
-		}
-		cfgInputs.pathPrefix = pathPrefix
-		cfgBody := buildServerDecodedFromDefaults(cfgInputs)
-		if wErr := writeConfigTOMLAtomic(configPath, cfgBody); wErr != nil {
-			_ = stderr.WriteText(initMsgWriteFailFmt, configPath, wErr)
-			return wErr
-		}
-	}
-
-	// 9. Round-trip-validate the config we just wrote (or the one
-	// the operator chose to reuse — either way, hush serve will
-	// read this file).
-	loadedCfg, err := config.LoadServer(ctx, configPath)
-	if err != nil {
-		return fmt.Errorf("hush/cli: init: round-trip-validate config: %w", err)
-	}
-
-	// 10. Store the keychain items. For explicit-state learning/smoke paths,
-	// store only the Discord bot token so `hush serve` works without a second
-	// manual token export. Keep the vault passphrase out of Keychain for this
-	// isolated path; the operator supplies it at serve time.
-	var dedicatedKeychainPath string
-	if explicitStateDir {
-		_ = stderr.WriteText(initMsgExplicitStateKeychain)
-		autoEnvTokenMode := false
-		if botToken != nil {
-			handled, configuredPath, storeErr := storeBotTokenUsingConfiguredKeychainPath(ctx, deps, stderr, botToken, loadedCfg, keychainItems.discordService, binPath)
-			if storeErr != nil {
-				return storeErr
-			}
-			if handled {
-				dedicatedKeychainPath = configuredPath
-			} else {
-				var decisionStoreErr error
-				autoEnvTokenMode, dedicatedKeychainPath, decisionStoreErr = storeBotTokenForDecision(ctx, deps, stderr, in, keychainItems, botToken, stateDir, binPath, decisions)
-				if decisionStoreErr != nil {
-					return decisionStoreErr
-				}
-			}
-		}
-		if dedicatedKeychainPath != "" {
-			cfgInputs.pathPrefix = loadedCfg.Server.PathPrefix
-			cfgBody := buildServerDecodedFromDefaults(cfgInputs)
-			cfgBody.Discord.BotKeychainPath = dedicatedKeychainPath
-			if wErr := writeConfigTOMLAtomic(configPath, cfgBody); wErr != nil {
-				_ = stderr.WriteText(initMsgWriteFailFmt, configPath, wErr)
-				return wErr
-			}
-			loadedCfg, err = config.LoadServer(ctx, configPath)
-			if err != nil {
-				return fmt.Errorf("hush/cli: init: round-trip-validate dedicated keychain config: %w", err)
-			}
-		}
-		emitServerNextCommands(stderr, configPath, loadedCfg, autoEnvTokenMode || decisions.modeFor(setup.ArtifactKeychainToken) == onExistingEnvToken || botToken == nil)
-		_ = stderr.WriteText(initMsgServerComplete)
-		return nil
-	}
-	// Hush-authored pre-explanations ensure
-	// no raw Apple `security` prompt fires without a hush-authored
-	// preamble of what / why / what-to-click.
-	emitKeychainPreExplain(stderr, "vault passphrase", keychainItems.vaultPassphraseService, kcAccountServer)
-	if storeErr := deps.keychain.Store(ctx, keychainItems.vaultPassphraseService, kcAccountServer, pass, binPath); storeErr != nil {
-		_ = stderr.WriteText(initMsgKeychainStoreFailFmt, storeErr)
-		return storeErr
-	}
-	autoEnvTokenMode, dedicatedKeychainPath, err := storeBotTokenForDecision(ctx, deps, stderr, in, keychainItems, botToken, stateDir, binPath, decisions)
+	loadedCfg, err := writeInitialServerArtifacts(ctx, deps, stderr, vaultPath, configPath, stateDir, vaultEncKey, salt, &cfgInputs, decisions)
 	if err != nil {
 		return err
 	}
-	if dedicatedKeychainPath != "" {
-		cfgInputs.pathPrefix = loadedCfg.Server.PathPrefix
-		cfgBody := buildServerDecodedFromDefaults(cfgInputs)
-		cfgBody.Discord.BotKeychainPath = dedicatedKeychainPath
-		if wErr := writeConfigTOMLAtomic(configPath, cfgBody); wErr != nil {
-			_ = stderr.WriteText(initMsgWriteFailFmt, configPath, wErr)
-			return wErr
-		}
-		loadedCfg, err = config.LoadServer(ctx, configPath)
-		if err != nil {
-			return fmt.Errorf("hush/cli: init: round-trip-validate dedicated keychain config: %w", err)
-		}
+
+	// 8. Final keychain writes + completion message — branches on whether
+	//    the operator chose --state-dir.
+	if explicitStateDir {
+		return finalizeInitServerExplicitState(ctx, deps, stderr, in, configPath, loadedCfg, &cfgInputs, keychainItems, botToken, stateDir, binPath, decisions)
 	}
-	emitServerNextCommands(stderr, configPath, loadedCfg, autoEnvTokenMode || decisions.modeFor(setup.ArtifactKeychainToken) == onExistingEnvToken)
-	_ = stderr.WriteText(initMsgServerComplete)
-	return nil
+	return finalizeInitServerStandard(ctx, deps, stderr, in, configPath, loadedCfg, &cfgInputs, keychainItems, pass, botToken, stateDir, binPath, decisions)
 }
 
 func emitServerNextCommands(stderr *Stream, configPath string, cfg *config.Server, envTokenMode bool) {
