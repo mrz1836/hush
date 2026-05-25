@@ -33,6 +33,7 @@ func issueAndAdd(t *testing.T, store Store, mut func(*IssueParams)) (*Token, *ec
 
 //nolint:gocyclo,cyclop // ten-claim recovered-claim assertion: complexity is in the per-field check
 func TestValidate_HappyPath(t *testing.T) {
+	t.Parallel()
 	store := NewStore()
 	tok, priv := issueAndAdd(t, store, nil)
 
@@ -67,12 +68,13 @@ func TestValidate_HappyPath(t *testing.T) {
 }
 
 func TestValidate_HappyPath_Supervisor(t *testing.T) {
+	t.Parallel()
 	store := NewStore()
 	tok, priv := issueAndAdd(t, store, func(p *IssueParams) {
 		p.SessionType = SessionSupervisor
 	})
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		if _, err := Validate(t.Context(), tok.Encoded, &priv.PublicKey, store, "100.64.0.1", "FAKE_SECRET"); err != nil {
 			t.Fatalf("Validate iter %d: %v", i, err)
 		}
@@ -80,6 +82,7 @@ func TestValidate_HappyPath_Supervisor(t *testing.T) {
 }
 
 func TestValidate_DecrementsInteractive(t *testing.T) {
+	t.Parallel()
 	store := NewStore()
 	tok, priv := issueAndAdd(t, store, func(p *IssueParams) { p.MaxUses = 3 })
 
@@ -96,6 +99,7 @@ func TestValidate_DecrementsInteractive(t *testing.T) {
 }
 
 func TestValidate_RespectsCancelledContext(t *testing.T) {
+	t.Parallel()
 	store := NewStore()
 	tok, priv := issueAndAdd(t, store, nil)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -107,6 +111,7 @@ func TestValidate_RespectsCancelledContext(t *testing.T) {
 }
 
 func TestValidate_WrongIP(t *testing.T) {
+	t.Parallel()
 	store := NewStore()
 	tok, priv := issueAndAdd(t, store, nil)
 
@@ -118,6 +123,7 @@ func TestValidate_WrongIP(t *testing.T) {
 
 //nolint:gocognit // table-driven test with happy + rejection branches; complexity is structural
 func TestValidate_IPCheck(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name      string
 		issued    string // empty → use default issue params
@@ -133,6 +139,7 @@ func TestValidate_IPCheck(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			store := NewStore()
 			var tok *Token
 			var priv *ecdsa.PrivateKey
@@ -163,6 +170,7 @@ func hs256SecretFromPub(pub *ecdsa.PublicKey) []byte {
 }
 
 func TestValidate_RejectsWrongIssuer(t *testing.T) {
+	t.Parallel()
 	// A JWT correctly signed by our key but with iss != "hush" must be
 	// refused. Defends against key-reuse mistakes where the secp256k1
 	// signing key is also used to mint tokens under a different label.
@@ -188,6 +196,7 @@ func TestValidate_RejectsWrongIssuer(t *testing.T) {
 }
 
 func TestValidate_AlgConfusion_None_Refused(t *testing.T) {
+	t.Parallel()
 	store := NewStore()
 	tok, priv := issueAndAdd(t, store, nil)
 
@@ -202,6 +211,7 @@ func TestValidate_AlgConfusion_None_Refused(t *testing.T) {
 }
 
 func TestValidate_AlgConfusion_HS256_Refused(t *testing.T) {
+	t.Parallel()
 	store := NewStore()
 	tok, priv := issueAndAdd(t, store, nil)
 
@@ -222,6 +232,7 @@ func TestValidate_AlgConfusion_HS256_Refused(t *testing.T) {
 }
 
 func TestValidate_MalformedHeader_Refused(t *testing.T) {
+	t.Parallel()
 	store := NewStore()
 	priv := freshKey(t)
 	pub := &priv.PublicKey
@@ -236,6 +247,7 @@ func TestValidate_MalformedHeader_Refused(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			_, err := Validate(t.Context(), tc.encoded, pub, store, "100.64.0.1", "FAKE_SECRET")
 			// Pre-parse rejections (no separator, bad base64, bad JSON header)
 			// are token-malformation, not algorithm-mismatch.
@@ -249,6 +261,7 @@ func TestValidate_MalformedHeader_Refused(t *testing.T) {
 // --- Expired / scope / unknown-session-type tests --------------------
 
 func TestValidate_ExpiredJWT(t *testing.T) {
+	t.Parallel()
 	store := NewStore()
 	priv := freshKey(t)
 	params := defaultIssueParams(time.Now().Add(-2 * time.Hour))
@@ -291,6 +304,7 @@ func TestValidate_ExpiredJWT(t *testing.T) {
 //
 //nolint:gocognit // table-driven test with 5 distinct rows and conditional setup; complexity is structural
 func TestValidate_ClockSkew(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name        string
 		issueOffset time.Duration // how far back to issue the token (negative = in the past)
@@ -342,6 +356,7 @@ func TestValidate_ClockSkew(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			priv := freshKey(t)
 			params := defaultIssueParams(time.Now().Add(tc.issueOffset))
 			if tc.ttl != 0 {
@@ -373,6 +388,7 @@ func TestValidate_ClockSkew(t *testing.T) {
 }
 
 func TestValidate_OutOfScope(t *testing.T) {
+	t.Parallel()
 	store := NewStore()
 	tok, priv := issueAndAdd(t, store, func(p *IssueParams) { p.Scope = []string{"FAKE_SECRET_A"} })
 
@@ -383,6 +399,7 @@ func TestValidate_OutOfScope(t *testing.T) {
 }
 
 func TestValidate_UnknownSessionType_Refused(t *testing.T) {
+	t.Parallel()
 	store := NewStore()
 	priv := freshKey(t)
 	now := time.Now()
@@ -420,6 +437,7 @@ func TestValidate_UnknownSessionType_Refused(t *testing.T) {
 }
 
 func TestValidate_MalformedClaimIP_Refused(t *testing.T) {
+	t.Parallel()
 	store := NewStore()
 	priv := freshKey(t)
 	now := time.Now()
@@ -454,6 +472,7 @@ func TestValidate_MalformedClaimIP_Refused(t *testing.T) {
 }
 
 func TestValidate_BadSignature(t *testing.T) {
+	t.Parallel()
 	store := NewStore()
 	tok, _ := issueAndAdd(t, store, nil)
 	otherKey := freshKey(t)
@@ -472,6 +491,7 @@ const sentinelMarker = "SECRET_SHOULD_NEVER_APPEAR_2"
 
 //nolint:gocognit,gocyclo,cyclop // 8-rejection-category fan-out: complexity is inherent to the sentinel-leak witness
 func TestValidate_NoLeakOnError(t *testing.T) {
+	t.Parallel()
 	store := NewStore()
 	priv := freshKey(t)
 	pub := &priv.PublicKey
