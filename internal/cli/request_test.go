@@ -391,6 +391,12 @@ func TestRequest_FlagSetMatchesContract(t *testing.T) {
 		flagReqServer: true, flagReqScope: true, flagReqReason: true, flagReqTTL: true,
 		flagReqMaxUses: true, flagReqMachineIndex: true, flagReqClientKeyFile: true,
 		flagReqExec: true, flagReqFormat: true,
+		// PR 4: agent-context flags (optional metadata for the human approver).
+		flagReqAgentIdentity:  true,
+		flagReqAgentModel:     true,
+		flagReqToolName:       true,
+		flagReqCommandPreview: true,
+		flagReqRecentSummary:  true,
 	}
 	got := map[string]bool{}
 	cmd.Flags().VisitAll(func(f *pflag.Flag) { got[f.Name] = true })

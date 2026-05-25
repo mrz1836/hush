@@ -63,6 +63,11 @@ func (a discordApproverAdapter) RequestApproval(ctx context.Context, req server.
 		SessionType:    mapSessionType(req.SessionType),
 		SupervisorName: req.SupervisorName,
 		RequestID:      req.RequestID,
+		AgentIdentity:  req.AgentIdentity,
+		AgentModel:     req.AgentModel,
+		ToolName:       req.ToolName,
+		CommandPreview: req.CommandPreview,
+		RecentSummary:  req.RecentSummary,
 	})
 	if err != nil {
 		switch {
@@ -287,6 +292,7 @@ func runServe(ctx context.Context, stdout, stderr *Stream, deps serveDeps) error
 		ClockSyncProbe:  deps.clockSyncProbe,
 		InterfaceLister: deps.interfaceLister,
 		AllowClockSkew:  deps.allowClockSkew,
+		ServerVersion:   Version,
 	}
 	srv, err := server.New(srvDeps)
 	if err != nil {

@@ -36,6 +36,7 @@ import (
 
 	"github.com/mrz1836/hush/internal/keychain"
 	"github.com/mrz1836/hush/internal/keys"
+	"github.com/mrz1836/hush/internal/redact"
 	"github.com/mrz1836/hush/internal/transport/ecies"
 	"github.com/mrz1836/hush/internal/transport/sign"
 	"github.com/mrz1836/hush/internal/vault/securebytes"
@@ -62,15 +63,20 @@ const (
 
 // Flag-name constants used by the request subcommand.
 const (
-	flagReqServer        = "server"
-	flagReqScope         = "scope"
-	flagReqReason        = "reason"
-	flagReqTTL           = "ttl"
-	flagReqMaxUses       = "max-uses"
-	flagReqMachineIndex  = "machine-index"
-	flagReqExec          = "exec"
-	flagReqFormat        = "format"
-	flagReqClientKeyFile = "client-key-file"
+	flagReqServer         = "server"
+	flagReqScope          = "scope"
+	flagReqReason         = "reason"
+	flagReqTTL            = "ttl"
+	flagReqMaxUses        = "max-uses"
+	flagReqMachineIndex   = "machine-index"
+	flagReqExec           = "exec"
+	flagReqFormat         = "format"
+	flagReqClientKeyFile  = "client-key-file"
+	flagReqAgentIdentity  = "agent"
+	flagReqAgentModel     = "model"
+	flagReqToolName       = "tool"
+	flagReqCommandPreview = "command"
+	flagReqRecentSummary  = "summary"
 )
 
 // hostnameSanitiseRe matches characters allowed in machine_name per
@@ -122,6 +128,16 @@ type requestFlags struct {
 	execProgram   string
 	formatMode    string
 	childArgs     []string
+
+	// Agent-context fields. All optional; populated from --agent /
+	// --model / --tool / --command / --summary flags or their
+	// HUSH_AGENT_* env-var fallbacks. Length capped client-side and
+	// re-validated by the server.
+	agentIdentity  string
+	agentModel     string
+	toolName       string
+	commandPreview string
+	recentSummary  string
 }
 
 // modeOf reports which delivery mode the validated flags select. One
@@ -135,7 +151,8 @@ func (f requestFlags) modeOf() string {
 
 // claimWireRequest mirrors internal/server/claim_handler.go::claimRequest
 // exactly — same JSON tags, same field set. SupervisorName is empty for
-// interactive callers (omitempty keeps it absent on the wire).
+// interactive callers (omitempty keeps it absent on the wire). Agent-
+// context fields are likewise omitempty.
 type claimWireRequest struct {
 	Scope                []string `json:"scope"`
 	Reason               string   `json:"reason"`
@@ -149,24 +166,38 @@ type claimWireRequest struct {
 	MachineName          string   `json:"machine_name"`
 	SupervisorName       string   `json:"supervisor_name,omitempty"`
 	ClientKeyFingerprint string   `json:"client_key_fingerprint"`
+
+	// Agent-context fields. Optional on the wire (omitempty) but
+	// always present in the signed canonical form (CanonicalJSON
+	// ignores omitempty), so both client and server must declare them
+	// in the same lockstep order.
+	AgentIdentity  string `json:"agent_identity,omitempty"`
+	AgentModel     string `json:"agent_model,omitempty"`
+	ToolName       string `json:"tool_name,omitempty"`
+	CommandPreview string `json:"command_preview,omitempty"`
+	RecentSummary  string `json:"recent_summary,omitempty"`
 }
 
 // claimSignedPayload mirrors the server's signedPayload exactly. The
 // alphabetical-tag fields produce a byte-identical canonical encoding
 // via sign.CanonicalJSON. CanonicalJSON ignores omitempty — both client
-// and server emit `"supervisor_name":""` for interactive sessions, so
-// the signatures match regardless of whether the wire envelope carries
-// the empty field.
+// and server emit empty strings for unset fields, so the signatures
+// match regardless of whether the wire envelope carries the field.
 type claimSignedPayload struct {
+	AgentIdentity   string   `json:"agent_identity,omitempty"`
+	AgentModel      string   `json:"agent_model,omitempty"`
+	CommandPreview  string   `json:"command_preview,omitempty"`
 	EphemeralPubKey string   `json:"ephemeral_pubkey"`
 	MachineName     string   `json:"machine_name"`
 	Nonce           string   `json:"nonce"`
 	Reason          string   `json:"reason"`
+	RecentSummary   string   `json:"recent_summary,omitempty"`
 	RequestID       string   `json:"request_id"`
 	Scope           []string `json:"scope"`
 	SessionType     string   `json:"session_type"`
 	SupervisorName  string   `json:"supervisor_name,omitempty"`
 	Timestamp       string   `json:"timestamp"`
+	ToolName        string   `json:"tool_name,omitempty"`
 	TTL             string   `json:"ttl"`
 }
 
@@ -251,6 +282,15 @@ func newRequestCmd() *cobra.Command {
 	cmd.Flags().String(flagReqExec, "", "Program to exec with secrets injected as env vars (mutually exclusive with --format)")
 	cmd.Flags().String(flagReqFormat, "", "Delivery format; only literal value `eval` accepted (mutually exclusive with --exec)")
 
+	// Agent-context flags (optional). Each falls back to its
+	// HUSH_AGENT_* env var so AI runtimes can set them once per
+	// process and have every claim carry the metadata.
+	cmd.Flags().String(flagReqAgentIdentity, "", "Agent identity shown to the approver (e.g. claude-code/1.2.3)")
+	cmd.Flags().String(flagReqAgentModel, "", "Agent model shown to the approver (e.g. claude-opus-4-7)")
+	cmd.Flags().String(flagReqToolName, "", "Tool the agent is about to invoke (e.g. Bash)")
+	cmd.Flags().String(flagReqCommandPreview, "", "Command preview (≤1024 chars; client-side redacted for common secret patterns)")
+	cmd.Flags().String(flagReqRecentSummary, "", "One-line recent-activity summary (≤256 chars)")
+
 	return cmd
 }
 
@@ -301,16 +341,32 @@ func parseAndValidateFlags(cmd *cobra.Command, args []string) (requestFlags, err
 		}
 	}
 
+	// Agent-context flags. Project policy (TestServe_NeverReadsEnv)
+	// forbids environment reads inside internal/cli, so these are
+	// populated solely from CLI flags. Operators that want per-process
+	// defaults should wrap the invocation in a shell alias or wrapper
+	// script that injects --agent / --model / etc. on every call.
+	agentIdentity, _ := cmd.Flags().GetString(flagReqAgentIdentity)
+	agentModel, _ := cmd.Flags().GetString(flagReqAgentModel)
+	toolName, _ := cmd.Flags().GetString(flagReqToolName)
+	commandPreview, _ := cmd.Flags().GetString(flagReqCommandPreview)
+	recentSummary, _ := cmd.Flags().GetString(flagReqRecentSummary)
+
 	flags := requestFlags{
-		server:        strings.TrimSpace(server),
-		scope:         scope,
-		reason:        reason,
-		ttl:           ttl,
-		maxUses:       maxUses,
-		machineIndex:  machineIndex,
-		clientKeyFile: strings.TrimSpace(clientKeyFile),
-		execProgram:   execProgram,
-		formatMode:    formatMode,
+		server:         strings.TrimSpace(server),
+		scope:          scope,
+		reason:         reason,
+		ttl:            ttl,
+		maxUses:        maxUses,
+		machineIndex:   machineIndex,
+		clientKeyFile:  strings.TrimSpace(clientKeyFile),
+		execProgram:    execProgram,
+		formatMode:     formatMode,
+		agentIdentity:  strings.TrimSpace(agentIdentity),
+		agentModel:     strings.TrimSpace(agentModel),
+		toolName:       strings.TrimSpace(toolName),
+		commandPreview: strings.TrimSpace(commandPreview),
+		recentSummary:  strings.TrimSpace(recentSummary),
 	}
 
 	if missing := missingRequestFlags(flags, maxUsesSet, machineIndexSet); len(missing) > 0 {
@@ -579,14 +635,19 @@ func buildClaimPayload(flags requestFlags, ephHex string, deps requestDeps) (cla
 	host = sanitiseMachineName(host)
 
 	return claimSignedPayload{
+		AgentIdentity:   flags.agentIdentity,
+		AgentModel:      flags.agentModel,
+		CommandPreview:  redact.CommandPreview(flags.commandPreview),
 		EphemeralPubKey: ephHex,
 		MachineName:     host,
 		Nonce:           base64.RawURLEncoding.EncodeToString(nonceRaw),
 		Reason:          flags.reason,
+		RecentSummary:   flags.recentSummary,
 		RequestID:       base64.RawURLEncoding.EncodeToString(requestIDRaw),
 		Scope:           append([]string(nil), flags.scope...),
 		SessionType:     "interactive",
 		Timestamp:       deps.nowFn().UTC().Format(time.RFC3339Nano),
+		ToolName:        flags.toolName,
 		TTL:             flags.ttl.String(),
 	}, nil
 }
@@ -628,6 +689,11 @@ func signAndWrapClaim(ctx context.Context, clientKey *ecdsa.PrivateKey, payload 
 		RequestID:            payload.RequestID,
 		MachineName:          payload.MachineName,
 		ClientKeyFingerprint: fp,
+		AgentIdentity:        payload.AgentIdentity,
+		AgentModel:           payload.AgentModel,
+		ToolName:             payload.ToolName,
+		CommandPreview:       payload.CommandPreview,
+		RecentSummary:        payload.RecentSummary,
 	}, nil
 }
 

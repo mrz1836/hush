@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -18,11 +17,13 @@ import (
 	"golang.org/x/term"
 
 	"github.com/mrz1836/hush/internal/supervise"
+	"github.com/mrz1836/hush/pkg/client"
 )
 
-// statusDoc mirrors the statusJSON shape one-to-one. Used for
-// human-rendering on TTY paths. The pipe / `--json` path writes the
-// raw socket bytes verbatim.
+// statusDoc mirrors the supervisor wire DTO. Used for human-rendering
+// on the TTY path. The pipe / `--json` path writes the raw socket bytes
+// verbatim so any future supervisor-side field additions pass through
+// untouched.
 type statusDoc struct {
 	Supervisor        string   `json:"supervisor"`
 	State             string   `json:"state"`
@@ -34,12 +35,6 @@ type statusDoc struct {
 	ChildPID          *int     `json:"child_pid"`
 	ChildUptime       string   `json:"child_uptime"`
 	DiscordConnected  bool     `json:"discord_connected"`
-}
-
-// refreshAck is the terminal refresh-verb response shape.
-type refreshAck struct {
-	OK    bool   `json:"ok"`
-	Error string `json:"error,omitempty"`
 }
 
 // clientStatusTimeout is the wall-clock ceiling on `client
@@ -163,9 +158,9 @@ func resolveSocketPath(socket, supervisor string) (string, error) {
 // without invoking a panicking helper.
 var supervisorSlugRe = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
-// runClientStatus dials the supervisor socket, sends "status\n", reads
-// the response, and dispatches to the human-text or raw-JSON output
-// path per the TTY / --json decision (cli-client.md §2.4 / §2.5).
+// runClientStatus dials the supervisor socket via pkg/client, then
+// dispatches to the human-text or raw-JSON output path per the TTY /
+// --json decision (cli-client.md §2.4 / §2.5).
 func runClientStatus(cmd *cobra.Command, flags clientStatusFlags) error {
 	stderr := cmd.ErrOrStderr()
 
@@ -178,9 +173,10 @@ func runClientStatus(cmd *cobra.Command, flags clientStatusFlags) error {
 	ctx, cancel := context.WithTimeout(cmd.Context(), clientStatusTimeout)
 	defer cancel()
 
-	body, err := unixRoundTrip(ctx, path, "status\n")
-	if err != nil {
-		wrapped := fmt.Errorf("%w: %w", errSocketUnreachable, err)
+	sup := client.NewSupervisorStatus(path)
+	body, sdkErr := sup.SnapshotRaw(ctx)
+	if sdkErr != nil {
+		wrapped := wrapSDKErrAsUnreachable(sdkErr)
 		printClientErr(stderr, "status", wrapped)
 		return wrapped
 	}
@@ -195,7 +191,6 @@ func runClientStatus(cmd *cobra.Command, flags clientStatusFlags) error {
 		}
 	}
 	if useJSON {
-		body = ensureSingleTrailingNewline(body)
 		if _, werr := stdout.Write(body); werr != nil {
 			return fmt.Errorf("hush: client status: write: %w", werr)
 		}
@@ -223,55 +218,41 @@ func runClientRefresh(cmd *cobra.Command, flags clientRefreshFlags) error {
 	ctx, cancel := context.WithTimeout(cmd.Context(), clientRefreshTimeout)
 	defer cancel()
 
-	body, err := unixRoundTrip(ctx, path, "refresh\n")
-	if err != nil {
-		wrapped := fmt.Errorf("%w: %w", errSocketUnreachable, err)
+	sup := client.NewSupervisorStatus(path)
+	if sdkErr := sup.Refresh(ctx); sdkErr != nil {
+		wrapped := wrapRefreshSDKErr(sdkErr)
 		printClientErr(stderr, "refresh", wrapped)
 		return wrapped
 	}
-	var ack refreshAck
-	if jerr := json.Unmarshal(bytes.TrimSpace(body), &ack); jerr != nil {
-		wrapped := fmt.Errorf("%w: parse ack: %w", errSocketUnreachable, jerr)
-		printClientErr(stderr, "refresh", wrapped)
-		return wrapped
-	}
-	if ack.OK {
-		return nil
-	}
-	wrapped := fmt.Errorf("%w: %s", errSupervisorRefused, ack.Error)
-	printClientErr(stderr, "refresh", wrapped)
-	return wrapped
+	return nil
 }
 
-// unixRoundTrip dials a Unix socket at path, writes verb, reads the
-// full response until EOF or the ctx deadline, and returns the bytes
-// read. Single attempt — never retries.
-func unixRoundTrip(ctx context.Context, path, verb string) ([]byte, error) {
-	var dialer net.Dialer
-	conn, err := dialer.DialContext(ctx, "unix", path)
-	if err != nil {
-		return nil, fmt.Errorf("dial %s: %w", path, err)
+// wrapSDKErrAsUnreachable translates pkg/client typed errors into the
+// CLI's exit-code sentinels. Both ErrSocketUnavailable and
+// ErrInvalidResponse map to errSocketUnreachable so the existing
+// ExitErr classification is preserved.
+func wrapSDKErrAsUnreachable(err error) error {
+	switch {
+	case errors.Is(err, client.ErrSocketUnavailable),
+		errors.Is(err, client.ErrInvalidResponse):
+		return fmt.Errorf("%w: %w", errSocketUnreachable, err)
+	default:
+		return fmt.Errorf("%w: %w", errSocketUnreachable, err)
 	}
-	defer func() { _ = conn.Close() }()
-	if deadline, ok := ctx.Deadline(); ok {
-		_ = conn.SetDeadline(deadline)
-	}
-	if _, werr := conn.Write([]byte(verb)); werr != nil {
-		return nil, fmt.Errorf("write verb: %w", werr)
-	}
-	body, rerr := io.ReadAll(conn)
-	if rerr != nil && !errors.Is(rerr, io.EOF) {
-		return nil, fmt.Errorf("read response: %w", rerr)
-	}
-	return body, nil
 }
 
-// ensureSingleTrailingNewline returns body with exactly one trailing
-// '\n' — adds one when absent, trims duplicates when present.
-func ensureSingleTrailingNewline(body []byte) []byte {
-	body = bytes.TrimRight(body, "\n")
-	body = append(body, '\n')
-	return body
+// wrapRefreshSDKErr translates pkg/client refresh errors into CLI
+// sentinels. ErrRefreshDenied → errSupervisorRefused (ack returned
+// ok=false). Everything else → errSocketUnreachable.
+func wrapRefreshSDKErr(err error) error {
+	if errors.Is(err, client.ErrRefreshDenied) {
+		// Strip the SDK's "hush/client: supervisor refused refresh: "
+		// prefix so the surfaced message preserves the existing
+		// "<supervisor refused>: <reason>" shape.
+		reason := strings.TrimPrefix(err.Error(), client.ErrRefreshDenied.Error()+": ")
+		return fmt.Errorf("%w: %s", errSupervisorRefused, reason)
+	}
+	return fmt.Errorf("%w: %w", errSocketUnreachable, err)
 }
 
 // writeHumanStatus renders doc as the locked human-summary format
