@@ -67,6 +67,16 @@ func (k *linuxKeychain) Store(_ context.Context, service, account string, value 
 }
 
 // Retrieve fetches the stored secret via the Secret Service backend.
+//
+// Residual: zalando/go-keyring's Linux backend returns a Go string, which
+// cannot be zeroed (Go strings are immutable). `securebytes.New([]byte(v))`
+// mlocks and zeroes the []byte copy it received, but the source string `v`
+// survives in unmlocked heap until GC. Documented as the "Linux Secret
+// Service retrievals leak an unzeroable string copy" entry in
+// docs/SECURITY.md §6. macOS retrievals use the `/usr/bin/security`
+// shell-out which returns raw []byte and so do not have this residual.
+// Removing this requires either switching libraries or talking godbus
+// directly.
 func (k *linuxKeychain) Retrieve(_ context.Context, service, account string) (*securebytes.SecureBytes, error) {
 	v, err := k.backend.Get(service, account)
 	if err != nil {
