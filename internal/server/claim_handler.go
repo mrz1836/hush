@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"github.com/mrz1836/hush/internal/config"
+	"github.com/mrz1836/hush/internal/redact"
 	"github.com/mrz1836/hush/internal/token"
 	"github.com/mrz1836/hush/internal/transport/sign"
 )
@@ -84,6 +85,7 @@ var (
 	errShapeSupervisorNameMissing = errors.New("server: claim: supervisor session requires non-empty supervisor_name")
 	errShapeSupervisorNameSet     = errors.New("server: claim: interactive session must not carry supervisor_name")
 	errShapeSupervisorNameInvalid = errors.New("server: claim: supervisor_name invalid")
+	errShapeAgentFieldTooLong     = errors.New("server: claim: agent context field exceeds maximum length")
 )
 
 // Static error codes returned in response bodies. The set is exhaustive;
@@ -167,8 +169,10 @@ func getNonceCharsRe() *regexp.Regexp {
 }
 
 // claimRequest is the JSON-decoded request body. All fields are required
-// except SupervisorName, which is required iff SessionType=="supervisor"
-// and MUST be absent/empty otherwise (enforced by parseClaimRequest).
+// except SupervisorName (required iff SessionType=="supervisor") and
+// the five agent-context fields, which are optional and shown to the
+// human approver verbatim. Length caps are enforced by parseClaimRequest;
+// CommandPreview is re-redacted server-side as belt-and-braces.
 type claimRequest struct {
 	Scope                []string `json:"scope"`
 	Reason               string   `json:"reason"`
@@ -182,7 +186,28 @@ type claimRequest struct {
 	MachineName          string   `json:"machine_name"`
 	SupervisorName       string   `json:"supervisor_name,omitempty"`
 	ClientKeyFingerprint string   `json:"client_key_fingerprint"`
+
+	// Optional agent-context fields. Visible to the Discord approver
+	// and recorded in the audit log. Empty values are omitted from
+	// canonical-JSON so old clients (no agent context) remain
+	// signature-compatible with the new server.
+	AgentIdentity  string `json:"agent_identity,omitempty"`
+	AgentModel     string `json:"agent_model,omitempty"`
+	ToolName       string `json:"tool_name,omitempty"`
+	CommandPreview string `json:"command_preview,omitempty"`
+	RecentSummary  string `json:"recent_summary,omitempty"`
 }
+
+// Maximum lengths for the optional agent-context fields. Enforced by
+// parseClaimRequest so a malicious or buggy client cannot bloat the
+// Discord prompt or the audit log.
+const (
+	maxAgentIdentityLen  = 128
+	maxAgentModelLen     = 64
+	maxToolNameLen       = 64
+	maxCommandPreviewLen = 1024
+	maxRecentSummaryLen  = 256
+)
 
 // claimResponse is the success-path response body. Encoded with explicit field
 // order via the json tags — exactly three keys, no others.
@@ -204,17 +229,25 @@ type errorResponse struct {
 // signature itself and the client_key_fingerprint.
 //
 // CanonicalJSON sorts struct fields alphabetically by JSON tag name; the
-// result is byte-identical between client and server.
+// result is byte-identical between client and server. Agent-context
+// fields are tagged omitempty so a client that supplies none of them
+// produces the same canonical bytes as a pre-PR-4 client — preserving
+// signature compatibility across the upgrade.
 type signedPayload struct {
+	AgentIdentity   string   `json:"agent_identity,omitempty"`
+	AgentModel      string   `json:"agent_model,omitempty"`
+	CommandPreview  string   `json:"command_preview,omitempty"`
 	EphemeralPubKey string   `json:"ephemeral_pubkey"`
 	MachineName     string   `json:"machine_name"`
 	Nonce           string   `json:"nonce"`
 	Reason          string   `json:"reason"`
+	RecentSummary   string   `json:"recent_summary,omitempty"`
 	RequestID       string   `json:"request_id"`
 	Scope           []string `json:"scope"`
 	SessionType     string   `json:"session_type"`
 	SupervisorName  string   `json:"supervisor_name,omitempty"`
 	Timestamp       string   `json:"timestamp"`
+	ToolName        string   `json:"tool_name,omitempty"`
 	TTL             string   `json:"ttl"`
 }
 
@@ -235,6 +268,9 @@ func (s *Server) RegisterHandlers() error {
 	}
 	if err := s.Mount(http.MethodGet, "/hz", http.HandlerFunc(s.handleHealth)); err != nil {
 		return fmt.Errorf("server: register /hz: %w", err)
+	}
+	if err := s.Mount(http.MethodPost, "/me", http.HandlerFunc(s.handleMe)); err != nil {
+		return fmt.Errorf("server: register /me: %w", err)
 	}
 	return nil
 }
@@ -264,6 +300,12 @@ func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
 		s.respondError(w, ctx, errCodeBadSignature, outcomeBadSignature, requestID, req)
 		return
 	}
+
+	// Stage 2.5: post-verify defensive redaction. We must NOT touch
+	// the bytes used in signature verification, so this runs only
+	// after Stage 2. Belt-and-braces: the SDK already redacts
+	// client-side, but a malicious client could skip that.
+	req.CommandPreview = redact.CommandPreview(req.CommandPreview)
 
 	// Stage 3: nonce uniqueness within the configured replay window.
 	// ErrNonceCacheFull is broken out as its own loud failure (503 +
@@ -338,6 +380,11 @@ func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
 		SessionType:    sessionType,
 		RequestedTTL:   cappedTTL,
 		SupervisorName: req.SupervisorName,
+		AgentIdentity:  req.AgentIdentity,
+		AgentModel:     req.AgentModel,
+		ToolName:       req.ToolName,
+		CommandPreview: req.CommandPreview,
+		RecentSummary:  req.RecentSummary,
 	})
 
 	switch {
@@ -554,6 +601,29 @@ func (s *Server) parseClaimRequest(r *http.Request) (*claimRequest, error) {
 	if !getFingerprintRe().MatchString(req.ClientKeyFingerprint) {
 		return nil, errShapeFingerprintInvalid
 	}
+	// Agent-context length caps. Each is optional; only enforced
+	// when present. Belt-and-braces redaction on CommandPreview
+	// (the SDK / CLI redacts client-side, but a malicious client
+	// could omit redaction — the server re-runs it).
+	if len(req.AgentIdentity) > maxAgentIdentityLen {
+		return nil, errShapeAgentFieldTooLong
+	}
+	if len(req.AgentModel) > maxAgentModelLen {
+		return nil, errShapeAgentFieldTooLong
+	}
+	if len(req.ToolName) > maxToolNameLen {
+		return nil, errShapeAgentFieldTooLong
+	}
+	if len(req.CommandPreview) > maxCommandPreviewLen {
+		return nil, errShapeAgentFieldTooLong
+	}
+	if len(req.RecentSummary) > maxRecentSummaryLen {
+		return nil, errShapeAgentFieldTooLong
+	}
+	// CommandPreview redaction is deliberately deferred to
+	// handleClaim, AFTER signature verification. Redacting here
+	// would mutate the bytes the client signed over and produce
+	// bad_signature on every claim that supplied a CommandPreview.
 	return &req, nil
 }
 
@@ -567,15 +637,20 @@ func (s *Server) verifyClaimSignature(ctx context.Context, req *claimRequest) er
 		return err
 	}
 	payload := signedPayload{
+		AgentIdentity:   req.AgentIdentity,
+		AgentModel:      req.AgentModel,
+		CommandPreview:  req.CommandPreview,
 		EphemeralPubKey: req.EphemeralPubKey,
 		MachineName:     req.MachineName,
 		Nonce:           req.Nonce,
 		Reason:          req.Reason,
+		RecentSummary:   req.RecentSummary,
 		RequestID:       req.RequestID,
 		Scope:           req.Scope,
 		SessionType:     req.SessionType,
 		SupervisorName:  req.SupervisorName,
 		Timestamp:       req.Timestamp,
+		ToolName:        req.ToolName,
 		TTL:             req.TTL,
 	}
 	canonical, err := sign.CanonicalJSON(payload)

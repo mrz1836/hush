@@ -212,6 +212,13 @@ func TestApprover_TypeShape(t *testing.T) {
 		"RequestedTTL":   "time.Duration",
 		"SupervisorName": "string",
 		"Metadata":       "map[string]string",
+		// PR 4: agent-context fields, all caller-optional. Visible to
+		// the human approver; NOT authenticators.
+		"AgentIdentity":  "string",
+		"AgentModel":     "string",
+		"ToolName":       "string",
+		"CommandPreview": "string",
+		"RecentSummary":  "string",
 	}
 	got := fieldMap(reflect.TypeOf(ApprovalRequest{}))
 	if !reflect.DeepEqual(got, wantReq) {

@@ -34,6 +34,56 @@ func WithClockSkew(skew time.Duration) ValidateOpt {
 	}
 }
 
+// Inspect parses and verifies an encoded ES256K JWT WITHOUT enforcing
+// per-request access controls — it skips the scope check, the client
+// IP comparison, and the use-count decrement. Returns the parsed
+// *Claims after verifying the signature, expiry, issuer, and
+// session-type vocabulary.
+//
+// Inspect is intended for read-only paths such as the /me endpoint,
+// where the caller wants to learn about a session without consuming
+// it. It MUST NOT be used as an authorization gate for secret
+// retrieval — call [Validate] for that.
+//
+// Optional behavior is controlled via ValidateOpt; see WithClockSkew.
+func Inspect(
+	ctx context.Context,
+	encoded string,
+	verifyKey *ecdsa.PublicKey,
+	opts ...ValidateOpt,
+) (*Claims, error) {
+	var cfg validateConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	Register()
+
+	if err := validateAlgorithm(encoded); err != nil {
+		return nil, err
+	}
+
+	keyfunc := func(*jwt.Token) (any, error) { return verifyKey, nil }
+	parserOpts := []jwt.ParserOption{jwt.WithValidMethods([]string{"ES256K"})}
+	if cfg.clockSkew > 0 {
+		parserOpts = append(parserOpts, jwt.WithLeeway(cfg.clockSkew))
+	}
+	parsed, err := jwt.ParseWithClaims(encoded, &Claims{}, keyfunc, parserOpts...)
+	if err != nil {
+		return nil, mapJWTParseError(err)
+	}
+	claims := parsed.Claims.(*Claims)
+	if claims.Issuer != tokenIssuer {
+		return nil, ErrInvalidIssuer
+	}
+	if !validSessionType(claims.SessionType) {
+		return nil, ErrUnknownSessionType
+	}
+	return claims, nil
+}
+
 // Validate parses and verifies an encoded ES256K JWT, then runs the
 // deterministic validation ordering: ctx → header alg → signature +
 // expiry → session-type vocabulary → scope → client IP → store

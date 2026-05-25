@@ -46,17 +46,25 @@ type ClientOpts struct {
 // JSON tag, so struct field order is irrelevant. SupervisorName is required
 // for session_type=supervisor; CanonicalJSON ignores omitempty (always
 // emits exported fields) so client and server canonical bytes match
-// regardless of value.
+// regardless of value. Agent-context fields (PR 4) appear here as
+// empty strings on every harness claim — the harness doesn't populate
+// them but their presence in the struct is required for canonical
+// parity with the production server.
 type claimSignedPayloadJSON struct {
+	AgentIdentity   string   `json:"agent_identity,omitempty"`
+	AgentModel      string   `json:"agent_model,omitempty"`
+	CommandPreview  string   `json:"command_preview,omitempty"`
 	EphemeralPubKey string   `json:"ephemeral_pubkey"`
 	MachineName     string   `json:"machine_name"`
 	Nonce           string   `json:"nonce"`
 	Reason          string   `json:"reason"`
+	RecentSummary   string   `json:"recent_summary,omitempty"`
 	RequestID       string   `json:"request_id"`
 	Scope           []string `json:"scope"`
 	SessionType     string   `json:"session_type"`
 	SupervisorName  string   `json:"supervisor_name,omitempty"`
 	Timestamp       string   `json:"timestamp"`
+	ToolName        string   `json:"tool_name,omitempty"`
 	TTL             string   `json:"ttl"`
 }
 

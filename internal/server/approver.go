@@ -55,6 +55,18 @@ type ApprovalRequest struct {
 	// implementations may rely on it.
 	SupervisorName string
 
+	// Agent-context fields, all caller-optional. Shown to the human
+	// approver verbatim. These are operator-visible metadata for
+	// anomaly detection — NOT authenticators. A compromised agent
+	// could lie in any of these fields; trust the cryptographic
+	// identity (client signature, MachineName, ClientIP) for
+	// authorization decisions.
+	AgentIdentity  string // e.g. "claude-code/1.2.3"
+	AgentModel     string // e.g. "claude-opus-4-7"
+	ToolName       string // e.g. "Bash"
+	CommandPreview string // first 1024 chars of argv, server-side re-redacted
+	RecentSummary  string // optional one-line activity summary
+
 	// Metadata is an open extension surface. The chassis treats it as
 	// opaque. Values MUST NOT contain secret material or request-body
 	// bytes.

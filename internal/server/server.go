@@ -204,6 +204,11 @@ type Deps struct {
 	// auto-sudos to fix the clock; this flag is the only override path
 	// on the serve side.
 	AllowClockSkew bool
+
+	// ServerVersion is the semantic version reported by /me. Production
+	// wiring passes the ldflags-injected `cli.Version`. Defaults to
+	// "dev" when empty.
+	ServerVersion string
 }
 
 // mountedRoute is one (method, path, handler) tuple captured before Run via
@@ -242,6 +247,7 @@ type Server struct {
 	reloadDrainWindow time.Duration
 	shutdownTimeout   time.Duration
 	allowClockSkew    bool
+	serverVersion     string
 
 	runStartedAt time.Time
 	clockInSync  atomic.Bool
@@ -266,6 +272,8 @@ type Server struct {
 // [ErrMissingVaultPtr], [ErrMissingTokenStore], [ErrMissingApprover],
 // [ErrMissingLogger], [ErrMissingAuditWriter]) for each missing required
 // dependency. Optional fields default to host-platform helpers.
+//
+//nolint:cyclop,gocyclo // sequential dependency wiring; complexity is structural
 func New(deps Deps) (*Server, error) {
 	if err := validateDeps(deps); err != nil {
 		return nil, err
@@ -292,7 +300,11 @@ func New(deps Deps) (*Server, error) {
 		reloadDrainWindow: deps.ReloadDrainWindow,
 		shutdownTimeout:   deps.ShutdownTimeout,
 		allowClockSkew:    deps.AllowClockSkew,
+		serverVersion:     deps.ServerVersion,
 		shutdownDoneCh:    make(chan struct{}),
+	}
+	if s.serverVersion == "" {
+		s.serverVersion = "dev"
 	}
 
 	if s.clock == nil {

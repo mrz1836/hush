@@ -56,16 +56,26 @@ type claimWireRequest struct {
 }
 
 // claimSignedPayload mirrors internal/server/claim_handler.go::signedPayload.
+// Agent-context fields (PR 4) are unused by the supervisor today but
+// must be present in the struct for canonical-JSON parity with the
+// server — CanonicalJSON ignores omitempty and includes every exported
+// field, so adding the fields here makes the supervisor's signature
+// byte-identical to the server's expectation.
 type claimSignedPayload struct {
+	AgentIdentity   string   `json:"agent_identity,omitempty"`
+	AgentModel      string   `json:"agent_model,omitempty"`
+	CommandPreview  string   `json:"command_preview,omitempty"`
 	EphemeralPubKey string   `json:"ephemeral_pubkey"`
 	MachineName     string   `json:"machine_name"`
 	Nonce           string   `json:"nonce"`
 	Reason          string   `json:"reason"`
+	RecentSummary   string   `json:"recent_summary,omitempty"`
 	RequestID       string   `json:"request_id"`
 	Scope           []string `json:"scope"`
 	SessionType     string   `json:"session_type"`
 	SupervisorName  string   `json:"supervisor_name,omitempty"`
 	Timestamp       string   `json:"timestamp"`
+	ToolName        string   `json:"tool_name,omitempty"`
 	TTL             string   `json:"ttl"`
 }
 
