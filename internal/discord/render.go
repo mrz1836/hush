@@ -57,6 +57,7 @@ func renderInteractive(req ApprovalRequest, customID string) *discordgo.MessageS
 		fmt.Sprintf("Reason:  %s", req.Reason),
 		fmt.Sprintf("TTL:     %s", req.RequestedTTL),
 	}
+	lines = appendAgentContextLines(lines, req, "%s: %s")
 	lines = appendRequestIDLine(lines, "Request: %s", req.RequestID)
 	return &discordgo.MessageSend{
 		Embeds: []*discordgo.MessageEmbed{{
@@ -78,6 +79,7 @@ func renderDaemon(req ApprovalRequest, customID string) *discordgo.MessageSend {
 		fmt.Sprintf("Reason:     %s", req.Reason),
 		fmt.Sprintf("TTL:        %s", req.RequestedTTL),
 	}
+	lines = appendAgentContextLines(lines, req, "%-11s %s")
 	lines = appendRequestIDLine(lines, "Request:    %s", req.RequestID)
 	return &discordgo.MessageSend{
 		Embeds: []*discordgo.MessageEmbed{{
@@ -86,6 +88,33 @@ func renderDaemon(req ApprovalRequest, customID string) *discordgo.MessageSend {
 		}},
 		Components: approvalButtons(customID),
 	}
+}
+
+// appendAgentContextLines appends one line per populated agent-context
+// field. format is the per-line printf template with two positional
+// args (label, value) — callers pass alignment-tweaked variants for
+// interactive vs daemon prompts.
+//
+// Long CommandPreview values are truncated at 512 chars with a
+// `…[truncated]` marker so the embed never blows Discord's per-field
+// limit. Empty fields are silently skipped — the approver sees only
+// what the agent actually supplied.
+func appendAgentContextLines(lines []string, req ApprovalRequest, format string) []string {
+	add := func(label, value string) {
+		if value == "" {
+			return
+		}
+		if len(value) > 512 {
+			value = value[:512] + "…[truncated]"
+		}
+		lines = append(lines, fmt.Sprintf(format, label+":", value))
+	}
+	add("Agent", req.AgentIdentity)
+	add("Model", req.AgentModel)
+	add("Tool", req.ToolName)
+	add("Command", req.CommandPreview)
+	add("Summary", req.RecentSummary)
+	return lines
 }
 
 // appendRequestIDLine appends a "Request: <id>" line when the chassis

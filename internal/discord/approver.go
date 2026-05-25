@@ -48,6 +48,15 @@ type ApprovalRequest struct {
 	SessionType    token.SessionType
 	SupervisorName string
 	RequestID      string
+
+	// Agent-context fields propagated from the chassis. All optional;
+	// the Discord render omits empty rows. NOT authenticators — see
+	// server.ApprovalRequest for the security note.
+	AgentIdentity  string
+	AgentModel     string
+	ToolName       string
+	CommandPreview string
+	RecentSummary  string
 }
 
 // Decision is returned by RequestApproval only on the
