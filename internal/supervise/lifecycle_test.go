@@ -505,6 +505,54 @@ func TestLifecycle_GracefulShutdownDrainsChild(t *testing.T) {
 	}
 }
 
+// TestLifecycle_ShutdownDestroysGraceCache verifies the Principle-VI
+// explicit-zeroing path: when the supervisor's runShutdown returns, the
+// Grace cache has been Destroy'd so any retained per-scope plaintext is
+// zeroed rather than left for the runtime finalizer (which does not run
+// on process exit).
+func TestLifecycle_ShutdownDestroysGraceCache(t *testing.T) {
+	tl := newTestLifecycle(t, longChildCmd())
+	tl.vault.QueueOK()
+
+	cancel, done := runWithCancel(tl)
+	defer cancel()
+
+	// Reach StateRunning so retainSecrets has populated the grace cache.
+	eventually(t, "reach StateRunning", 5*time.Second, func() bool {
+		return snapshotState(tl) == StateRunning
+	})
+	if !tl.lc.grace.Enabled() {
+		t.Fatalf("grace cache disabled at StateRunning; test precondition broken")
+	}
+	tl.lc.grace.mu.RLock()
+	preShutdownEntries := len(tl.lc.grace.entries)
+	tl.lc.grace.mu.RUnlock()
+	if preShutdownEntries == 0 {
+		t.Fatalf("grace.entries empty at StateRunning; expected at least 1 cached scope")
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Run returned: %v", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatalf("Run did not exit within 15s")
+	}
+
+	// Post-shutdown: grace must be drained and disabled.
+	tl.lc.grace.mu.RLock()
+	post := len(tl.lc.grace.entries)
+	tl.lc.grace.mu.RUnlock()
+	if post != 0 {
+		t.Fatalf("grace.entries=%d after shutdown; want 0 (Destroy not called)", post)
+	}
+	if tl.lc.grace.Enabled() {
+		t.Fatalf("grace.Enabled() = true after shutdown; want false (Destroy not called)")
+	}
+}
+
 // TestLifecycle_BootRetryShutdownNeverContactsDiscord (T040) — boot-retry
 // in progress, ctx cancelled; Run exits promptly with no /claim contact.
 func TestLifecycle_BootRetryShutdownNeverContactsDiscord(t *testing.T) {

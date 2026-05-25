@@ -113,6 +113,28 @@ func (g *Grace) Evict(name string) {
 	}
 }
 
+// Destroy zeroes every cached SecureBytes and clears the map. Invoked by
+// Lifecycle.runShutdown so the supervisor's SIGTERM path explicitly retires
+// plaintext that would otherwise outlive the orchestrator (the runtime
+// finalizer does NOT run on process exit, and pure kernel page reclamation
+// is not the explicit-zeroing discipline Principle VI mandates).
+//
+// Destroy is idempotent; calling it a second time is a silent no-op.
+// Safe to call concurrently with Get/Set/Evict — they all take g.mu, and
+// post-Destroy Get returns (nil, false), Set is a no-op, and Evict has no
+// entries to act on.
+func (g *Grace) Destroy() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for name, entry := range g.entries {
+		_ = entry.sb.Destroy()
+		delete(g.entries, name)
+	}
+	// Mark cache permanently empty so any further Set after Destroy is a
+	// no-op (mirrors the disabled-mode contract).
+	g.enabled = false
+}
+
 // Enabled reports whether the cache will actually retain entries —
 // true only when retention was enabled at construction AND the
 // effective window is positive. When false, Set is a no-op and the

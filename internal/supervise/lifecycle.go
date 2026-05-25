@@ -468,10 +468,19 @@ func (l *Lifecycle) mainLoop(ctx context.Context) {
 	}
 }
 
-// runShutdown executes the SIGTERM → grace → SIGKILL → wg.Wait sequence.
+// runShutdown executes the SIGTERM → grace → SIGKILL → wg.Wait sequence,
+// then explicitly destroys the Grace cache so any retained per-scope
+// plaintext is zeroed on the supervisor's way out (Principle VI: explicit
+// zeroing on lifecycle transitions; finalizers do not run on process exit).
 // Pidfile release is owned by the cli shim's defer.
 func (l *Lifecycle) runShutdown(parentCtx context.Context) {
 	_ = parentCtx
+	// Destroy the grace cache on every shutdown path — even if SIGKILL
+	// escalation timed out and goroutines may leak below, zeroing the
+	// cached plaintext before this frame returns reduces the window any
+	// stray reference holds a usable secret.
+	defer l.grace.Destroy()
+
 	hardDeadline := time.Now().Add(shutdownHardCeiling)
 
 	// Forward SIGTERM to the child if one is alive.

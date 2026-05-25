@@ -213,6 +213,106 @@ func graceWorker(t *testing.T, g *Grace, seed int64) {
 	}
 }
 
+// TestGrace_DestroyZeroesAllEntries: Destroy walks every cached entry,
+// calls sb.Destroy on each, clears the map, and disables the cache.
+// This is the Principle-VI explicit-zeroing path the supervisor's
+// SIGTERM handler invokes — finalizers do not run on process exit, so a
+// missing Destroy here would leave plaintext until the kernel reclaimed
+// the pages.
+func TestGrace_DestroyZeroesAllEntries(t *testing.T) {
+	g := NewGrace(time.Hour, true)
+	sb1 := newSecureBytes(t, []byte("A"))
+	sb2 := newSecureBytes(t, []byte("B"))
+	sb3 := newSecureBytes(t, []byte("C"))
+	g.Set("scope1", sb1)
+	g.Set("scope2", sb2)
+	g.Set("scope3", sb3)
+
+	g.Destroy()
+
+	for label, sb := range map[string]*securebytes.SecureBytes{"sb1": sb1, "sb2": sb2, "sb3": sb3} {
+		if err := sb.Use(func(_ []byte) {}); !errors.Is(err, securebytes.ErrDestroyed) {
+			t.Fatalf("%s.Use err=%v want ErrDestroyed after Grace.Destroy", label, err)
+		}
+	}
+
+	g.mu.RLock()
+	size := len(g.entries)
+	g.mu.RUnlock()
+	if size != 0 {
+		t.Fatalf("entries=%d after Destroy, want 0", size)
+	}
+
+	// Cache is now disabled; subsequent Get / Set / Enabled reflect that.
+	if g.Enabled() {
+		t.Fatalf("Grace.Enabled() = true after Destroy; want false")
+	}
+	if _, ok := g.Get("scope1"); ok {
+		t.Fatalf("Get hit after Destroy")
+	}
+}
+
+// TestGrace_DestroyIsIdempotent: double Destroy is a silent no-op.
+func TestGrace_DestroyIsIdempotent(t *testing.T) {
+	g := NewGrace(time.Hour, true)
+	sb := newSecureBytes(t, []byte("X"))
+	g.Set("X", sb)
+	g.Destroy()
+	g.Destroy() // must not panic, must not call sb.Destroy twice (sb.Destroy is itself idempotent, but the map traversal must be empty)
+	if g.Enabled() {
+		t.Fatalf("Grace.Enabled() = true after double Destroy")
+	}
+}
+
+// TestGrace_DestroyOnEmpty: Destroy on a never-populated cache is a no-op.
+func TestGrace_DestroyOnEmpty(t *testing.T) {
+	g := NewGrace(time.Hour, true)
+	g.Destroy() // no entries, no panic.
+	if g.Enabled() {
+		t.Fatalf("Grace.Enabled() = true after Destroy on empty cache")
+	}
+}
+
+// TestGrace_DestroyOnDisabled: Destroy on a disabled cache is a no-op.
+func TestGrace_DestroyOnDisabled(t *testing.T) {
+	g := NewGrace(time.Hour, false)
+	g.Destroy() // already disabled, no entries, no panic.
+	if g.Enabled() {
+		t.Fatalf("Grace.Enabled() = true after Destroy on disabled cache")
+	}
+}
+
+// TestGrace_PostDestroySetIsNoop: after Destroy, Set leaves the
+// caller's SecureBytes intact (ownership-stays-with-caller contract,
+// matching disabled mode).
+func TestGrace_PostDestroySetIsNoop(t *testing.T) {
+	g := NewGrace(time.Hour, true)
+	g.Destroy()
+
+	sb := newSecureBytes(t, []byte("late"))
+	g.Set("late", sb)
+
+	// sb must still be usable — Grace did NOT take ownership.
+	var got []byte
+	if err := sb.Use(func(b []byte) { got = append(got, b...) }); err != nil {
+		t.Fatalf("sb.Use err=%v want nil; Grace.Set after Destroy must not consume", err)
+	}
+	if string(got) != "late" {
+		t.Fatalf("got %q want %q", got, "late")
+	}
+
+	// Map must still be empty.
+	g.mu.RLock()
+	size := len(g.entries)
+	g.mu.RUnlock()
+	if size != 0 {
+		t.Fatalf("entries=%d after post-Destroy Set, want 0", size)
+	}
+
+	// Caller cleans up since Grace did not take ownership.
+	_ = sb.Destroy()
+}
+
 // TestGrace_ConcurrentRaceClean: 100 goroutines hammering Set/Get/
 // Evict against the same key — race-clean and consistent.
 func TestGrace_ConcurrentRaceClean(t *testing.T) {
