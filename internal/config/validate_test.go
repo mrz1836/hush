@@ -506,9 +506,15 @@ func TestServer_RejectsMissingPathPrefix(t *testing.T) {
 //  5. path_prefix
 //  6. audit_log containment
 //  7. max_supervisor_ttl bounds
+//  8. claim_approval_timeout bounds
+//  9. nonce_ttl ≥ 2 × clock_skew (only fires when clock_skew > 0)
 //
 // Operators rely on this ordering to triage multi-violation configs
 // ("fix the first error first"); a silent reorder would break that workflow.
+//
+// Rule 9 does NOT fire in this test because the input leaves clock_skew
+// at zero; a dedicated test in TestServer_RejectsNonceTTLBelowReplayWindow
+// covers the rule directly with both fields populated.
 func TestValidate_RuleOrderDeterministic(t *testing.T) {
 	t.Parallel()
 
@@ -572,4 +578,176 @@ func TestValidate_RuleOrderDeterministic(t *testing.T) {
 		require.ErrorIsf(t, leaves[i], want,
 			"leaves[%d] = %v, want errors.Is(_, %v)", i, leaves[i], want)
 	}
+}
+
+// ---- rule 9: nonce_ttl ≥ 2 × clock_skew (replay-window invariant) ----------
+
+// TestServer_RejectsNonceTTLBelowReplayWindow drives rule 9 directly through
+// Validate() with a Server that satisfies every other rule. Each table row
+// represents one (nonce_ttl, clock_skew) combination plus the expected
+// outcome — pinning both the positive (defaults pass) and negative
+// (operator tweaks open a replay window) sides of the invariant.
+//
+// The invariant: nonce_ttl ≥ 2 × clock_skew. The factor of 2 is the
+// timestamp acceptance window (±clock_skew = 2 × clock_skew total). With
+// the production defaults (60s, 30s), the bound is satisfied EXACTLY —
+// any operator tweak that narrows nonce_ttl or widens clock_skew without
+// preserving the 2× relationship opens a window in which a captured
+// request's nonce can expire from the cache while its timestamp is still
+// fresh, enabling replay.
+func TestServer_RejectsNonceTTLBelowReplayWindow(t *testing.T) {
+	t.Parallel()
+
+	// validCryptoBase returns a CryptoSection that passes every Crypto-
+	// related rule EXCEPT rule 9, leaving NonceTTL/ClockSkew to each
+	// case to vary.
+	validCryptoBase := func(nonceTTL, clockSkew time.Duration) CryptoSection {
+		return CryptoSection{
+			ArgonMemoryMB:        DefaultArgonMemoryMB,
+			ArgonTime:            DefaultArgonTime,
+			ArgonThreads:         DefaultArgonThreads,
+			JWTDefaultTTL:        DefaultJWTTTL,
+			MaxInteractiveTTL:    DefaultMaxInteractiveTTL,
+			MaxSupervisorTTL:     DefaultMaxSupervisorTTL,
+			ClaimApprovalTimeout: DefaultClaimApprovalTimeout,
+			NonceTTL:             nonceTTL,
+			ClockSkew:            clockSkew,
+		}
+	}
+
+	cases := []struct {
+		name      string
+		nonceTTL  time.Duration
+		clockSkew time.Duration
+		wantErr   bool
+	}{
+		{
+			name:      "defaults (60s, 30s) satisfy exactly",
+			nonceTTL:  DefaultNonceTTL,
+			clockSkew: DefaultClockSkew,
+			wantErr:   false,
+		},
+		{
+			name:      "boundary equal: 60s >= 60s",
+			nonceTTL:  60 * time.Second,
+			clockSkew: 30 * time.Second,
+			wantErr:   false,
+		},
+		{
+			name:      "boundary just-passing: 61s >= 60s",
+			nonceTTL:  61 * time.Second,
+			clockSkew: 30 * time.Second,
+			wantErr:   false,
+		},
+		{
+			name:      "wider TTL passes: 120s >= 60s",
+			nonceTTL:  120 * time.Second,
+			clockSkew: 30 * time.Second,
+			wantErr:   false,
+		},
+		{
+			name:      "boundary just-failing: 59s < 60s",
+			nonceTTL:  59 * time.Second,
+			clockSkew: 30 * time.Second,
+			wantErr:   true,
+		},
+		{
+			name:      "tightened skew with default TTL: 60s < 80s",
+			nonceTTL:  DefaultNonceTTL,
+			clockSkew: 40 * time.Second,
+			wantErr:   true,
+		},
+		{
+			name:      "narrowed TTL with default skew: 10s < 60s",
+			nonceTTL:  10 * time.Second,
+			clockSkew: DefaultClockSkew,
+			wantErr:   true,
+		},
+		{
+			name:      "zero TTL with default skew fails: 0 < 60s",
+			nonceTTL:  0,
+			clockSkew: DefaultClockSkew,
+			wantErr:   true,
+		},
+		{
+			name:      "zero skew skips rule (vacuous): 0s would pass 0",
+			nonceTTL:  0,
+			clockSkew: 0,
+			wantErr:   false,
+		},
+		{
+			name:      "zero skew skips rule even with positive TTL",
+			nonceTTL:  60 * time.Second,
+			clockSkew: 0,
+			wantErr:   false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			listenRaw := "100.64.1.1:7743"
+			listenAP := netip.MustParseAddrPort(listenRaw)
+			stateDir := t.TempDir()
+			require.NoError(t, os.Chmod(stateDir, 0o700))
+
+			s := &Server{
+				Network: NetworkSection{
+					RequireTailscale: true,
+					AllowedCIDRs:     []string{"100.64.0.0/10"},
+				},
+				Crypto: validCryptoBase(tc.nonceTTL, tc.clockSkew),
+				Server: ServerSection{
+					ListenAddr: listenAP,
+					PathPrefix: "abcdef",
+					StateDir:   stateDir,
+					AuditLog:   filepath.Join(stateDir, "audit.jsonl"),
+				},
+				rawListenAddr: listenRaw,
+			}
+
+			err := s.Validate()
+			if tc.wantErr {
+				require.Error(t, err, "expected validation failure for (nonce_ttl=%s, clock_skew=%s)", tc.nonceTTL, tc.clockSkew)
+				require.ErrorIs(t, err, ErrNonceTTLBelowReplayWindow,
+					"error chain must carry ErrNonceTTLBelowReplayWindow for triage")
+			} else {
+				require.NoError(t, err, "unexpected validation failure for (nonce_ttl=%s, clock_skew=%s): %v", tc.nonceTTL, tc.clockSkew, err)
+			}
+		})
+	}
+}
+
+// TestServer_DefaultsSatisfyReplayWindowInvariant pins the contract that the
+// shipped defaults satisfy rule 9. A defaults regression here (e.g. someone
+// later bumping DefaultClockSkew without bumping DefaultNonceTTL) would
+// silently re-open the replay window for every operator who relied on
+// defaults. The test goes through LoadServer so it exercises the full
+// parse-then-validate path that production uses.
+func TestServer_DefaultsSatisfyReplayWindowInvariant(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	require.NoError(t, os.Chmod(dir, 0o700))
+	// Minimal config — all crypto fields take defaults.
+	content := "[server]\n" +
+		"listen_addr = \"100.64.1.1:7743\"\n" +
+		"path_prefix = \"abcdef\"\n" +
+		"state_dir = \"" + dir + "\"\n" +
+		"audit_log = \"" + dir + "/audit.jsonl\"\n" +
+		"discord_owner_id = \"123456789012345678\"\n" +
+		"\n[discord]\n" +
+		"bot_token_keychain_item = \"hush-discord\"\n" +
+		"application_id = \"345678901234567890\"\n"
+	cfg := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(cfg, []byte(content), 0o600))
+
+	s, err := LoadServer(context.Background(), cfg)
+	require.NoError(t, err, "default config must satisfy rule 9 — replay-window invariant")
+	require.NotNil(t, s)
+	// Sanity-check the loaded values match the documented defaults.
+	require.Equal(t, DefaultNonceTTL, s.Crypto.NonceTTL)
+	require.Equal(t, DefaultClockSkew, s.Crypto.ClockSkew)
+	require.GreaterOrEqual(t, s.Crypto.NonceTTL, 2*s.Crypto.ClockSkew,
+		"defaults regression: nonce_ttl=%s < 2 × clock_skew=%s", s.Crypto.NonceTTL, s.Crypto.ClockSkew)
 }

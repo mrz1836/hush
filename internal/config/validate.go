@@ -32,6 +32,8 @@ func getPathPrefixRegex() *regexp.Regexp {
 //  5. path_prefix
 //  6. audit_log containment
 //  7. max_supervisor_ttl bounds
+//  8. claim_approval_timeout bounds
+//  9. nonce_ttl ≥ 2 × clock_skew (replay-window invariant)
 func (s *Server) Validate() error { //nolint:cyclop,gocognit,gocyclo // rule-engine: one function per locked rule order
 	var errs []error
 
@@ -97,6 +99,21 @@ func (s *Server) Validate() error { //nolint:cyclop,gocognit,gocyclo // rule-eng
 			"field claim_approval_timeout=%s (min=%s, max=%s): %w",
 			s.Crypto.ClaimApprovalTimeout, MinClaimApprovalTimeout, MaxClaimApprovalTimeout,
 			ErrClaimApprovalTimeoutOutOfRange,
+		))
+	}
+
+	// 9. nonce_ttl ≥ 2 × clock_skew — replay-window invariant.
+	// Layer 4 (request signing): the nonce-cache TTL must span the full
+	// ±clock_skew acceptance window. Otherwise a captured request whose
+	// nonce expires from the cache can be replayed while its timestamp
+	// is still inside the freshness window. The rule fires only when
+	// clock_skew is positive — a zero or negative clock_skew is rejected
+	// at parse time, and `0 ≥ 0` would otherwise pass vacuously.
+	if s.Crypto.ClockSkew > 0 && s.Crypto.NonceTTL < 2*s.Crypto.ClockSkew {
+		errs = append(errs, fmt.Errorf(
+			"field nonce_ttl=%s (clock_skew=%s, required≥%s): %w",
+			s.Crypto.NonceTTL, s.Crypto.ClockSkew, 2*s.Crypto.ClockSkew,
+			ErrNonceTTLBelowReplayWindow,
 		))
 	}
 

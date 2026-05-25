@@ -60,6 +60,15 @@ var ErrSupervisorTTLOutOfRange = errors.New("hush/config: max_supervisor_ttl out
 // (request slot starvation) values.
 var ErrClaimApprovalTimeoutOutOfRange = errors.New("hush/config: claim_approval_timeout out of range (must be ≥ 1s and ≤ 10m)")
 
+// ErrNonceTTLBelowReplayWindow is returned when nonce_ttl < 2 * clock_skew.
+// The replay-defense layer requires the nonce-cache TTL to span the full
+// ±clock_skew acceptance window so an expired nonce cannot be replayed while
+// its timestamp is still fresh. Defaults (nonce_ttl=60s, clock_skew=30s)
+// satisfy the invariant exactly; any operator tweak that narrows nonce_ttl
+// or widens clock_skew without preserving the 2× relationship opens a
+// silent replay window.
+var ErrNonceTTLBelowReplayWindow = errors.New("hush/config: nonce_ttl must be ≥ 2 × clock_skew (replay-window invariant)")
+
 // File-permissions error. Surfaced when require_file_mode_checks is true and
 // the config file's own permissions are looser than 0600.
 var ErrConfigFileMode = errors.New("hush/config: config file permissions must be 0600")
