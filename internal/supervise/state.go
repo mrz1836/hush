@@ -218,7 +218,7 @@ type Snapshot struct {
 // rather than waiting for the runtime finalizer). Passing the same
 // pointer twice is a no-op; passing nil clears the slot.
 //
-// Serialisation is per-Use, not per-snapshot: a reader currently
+// Serialization is per-Use, not per-snapshot: a reader currently
 // inside the prior *SecureBytes' Use callback blocks Destroy on that
 // SecureBytes' own mutex, so the in-flight Use completes before the
 // buffer is zeroed. Callers that hold a Snapshot.Token reference

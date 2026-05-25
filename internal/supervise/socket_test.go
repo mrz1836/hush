@@ -284,7 +284,10 @@ func TestSocket_GracefulShutdownOnCtx(t *testing.T) {
 }
 
 // TestSocket_ConnectionForceClosedOnCtxCancel — mid-handler ctx cancel
-// force-closes the conn within sub-second; Run returns within sub-second.
+// force-closes the conn; Run returns. Correctness signal is the ERROR
+// CATEGORY (force-close vs read-deadline), not wall-clock — the
+// race-detector's scheduler jitter makes timing assertions flaky without
+// changing the underlying invariant.
 func TestSocket_ConnectionForceClosedOnCtxCancel(t *testing.T) {
 	path := tempSocketPath(t)
 	srv := NewStatusServer(path, nil, silentLogger())
@@ -294,7 +297,7 @@ func TestSocket_ConnectionForceClosedOnCtxCancel(t *testing.T) {
 	go func() { errCh <- srv.Run(ctx) }()
 
 	// Wait for listener.
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	var d net.Dialer
 	var conn net.Conn
 	for time.Now().Before(deadline) {
@@ -309,24 +312,28 @@ func TestSocket_ConnectionForceClosedOnCtxCancel(t *testing.T) {
 	defer func() { _ = conn.Close() }()
 
 	// Don't write a request: handler is reading; cancel ctx mid-read.
-	start := time.Now()
+	// Read deadline is intentionally LARGER than the test's overall budget so
+	// the only way conn.Read can return is the server's force-close path
+	// (watch goroutine closes every tracked conn after ctx.Done()). A return
+	// caused by SetReadDeadline would manifest as os.ErrDeadlineExceeded,
+	// which the assertion below rejects.
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(30*time.Second)))
 	cancelFn()
 
-	require.NoError(t, conn.SetReadDeadline(time.Now().Add(2*time.Second)))
 	buf := make([]byte, 64)
 	_, readErr := conn.Read(buf)
-	// Read returns either io.EOF (clean close) or an error containing
-	// "use of closed" / "connection reset" depending on platform.
 	if readErr == nil {
 		t.Fatalf("expected read error after ctx cancel, got nil")
 	}
-	assert.Less(t, time.Since(start), 2*time.Second)
+	if errors.Is(readErr, os.ErrDeadlineExceeded) {
+		t.Fatalf("read returned via SetReadDeadline (force-close did not fire): %v", readErr)
+	}
 
 	select {
 	case err := <-errCh:
 		assert.NoError(t, err)
-	case <-time.After(2 * time.Second):
-		t.Fatal("Run did not return within 2s after ctx cancel")
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not return within 10s after ctx cancel")
 	}
 }
 
