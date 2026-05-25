@@ -246,6 +246,7 @@ type claimBodyOpts struct {
 	Timestamp       time.Time
 	RequestID       string
 	MachineName     string
+	SupervisorName  string
 	Fingerprint     string
 	// SignWithKey lets tests sign with a different (incorrect) private key
 	// to drive the bad_signature path.
@@ -311,6 +312,7 @@ func signedClaimBody(t *testing.T, h *claimTestHarness, o claimBodyOpts) []byte 
 		RequestID:       o.RequestID,
 		Scope:           o.Scope,
 		SessionType:     o.SessionType,
+		SupervisorName:  o.SupervisorName,
 		Timestamp:       timestamp.Format(time.RFC3339Nano),
 		TTL:             o.TTL.String(),
 	}
@@ -344,6 +346,9 @@ func signedClaimBody(t *testing.T, h *claimTestHarness, o claimBodyOpts) []byte 
 		"request_id":             o.RequestID,
 		"machine_name":           o.MachineName,
 		"client_key_fingerprint": fp,
+	}
+	if o.SupervisorName != "" {
+		body["supervisor_name"] = o.SupervisorName
 	}
 	out, err := json.Marshal(body)
 	if err != nil {
@@ -602,6 +607,7 @@ func TestClaim_SupervisorRequest_DaemonLabel(t *testing.T) {
 	)
 	o := defaultClaimBodyOpts(h)
 	o.SessionType = "supervisor"
+	o.SupervisorName = "claude-worker"
 	o.TTL = 4 * time.Hour
 	rr, _ := h.do(t, signedClaimBody(t, h, o))
 	if rr.Code != http.StatusOK {
@@ -674,6 +680,7 @@ func signedClaimBodyWithLiteralTTL(t *testing.T, h *claimTestHarness, o claimBod
 		RequestID:       o.RequestID,
 		Scope:           o.Scope,
 		SessionType:     o.SessionType,
+		SupervisorName:  o.SupervisorName,
 		Timestamp:       timestamp.Format(time.RFC3339Nano),
 		TTL:             ttlLiteral,
 	}
@@ -691,6 +698,9 @@ func signedClaimBodyWithLiteralTTL(t *testing.T, h *claimTestHarness, o claimBod
 		"request_id":             o.RequestID,
 		"machine_name":           o.MachineName,
 		"client_key_fingerprint": h.fingerprint,
+	}
+	if o.SupervisorName != "" {
+		body["supervisor_name"] = o.SupervisorName
 	}
 	out := mustMarshal(t, body)
 	return out
@@ -2036,6 +2046,7 @@ func TestClaim_SupervisorSessionResumption(t *testing.T) {
 	// First claim — goes through the approver as a normal cold claim.
 	o1 := defaultClaimBodyOpts(h)
 	o1.SessionType = "supervisor"
+	o1.SupervisorName = "claude-worker"
 	o1.TTL = 4 * time.Hour
 	o1.Scope = []string{"ANTHROPIC_API_KEY", "GEMINI_API_KEY"}
 	rr1, _ := h.do(t, signedClaimBody(t, h, o1))
@@ -2052,6 +2063,7 @@ func TestClaim_SupervisorSessionResumption(t *testing.T) {
 	// nonce + ephemeral key change as they would after a process restart.
 	o2 := defaultClaimBodyOpts(h)
 	o2.SessionType = "supervisor"
+	o2.SupervisorName = "claude-worker"
 	o2.TTL = 4 * time.Hour
 	o2.Scope = []string{"ANTHROPIC_API_KEY", "GEMINI_API_KEY"}
 	o2.Nonce = freshNonce()
@@ -2098,6 +2110,7 @@ func TestClaim_SupervisorSessionResumption_DifferentScopeStillPromptsApprover(t 
 
 	o1 := defaultClaimBodyOpts(h)
 	o1.SessionType = "supervisor"
+	o1.SupervisorName = "claude-worker"
 	o1.TTL = 4 * time.Hour
 	o1.Scope = []string{"ANTHROPIC_API_KEY"}
 	rr1, _ := h.do(t, signedClaimBody(t, h, o1))
@@ -2108,6 +2121,7 @@ func TestClaim_SupervisorSessionResumption_DifferentScopeStillPromptsApprover(t 
 	// Second claim with a wider scope — must go through approver again.
 	o2 := defaultClaimBodyOpts(h)
 	o2.SessionType = "supervisor"
+	o2.SupervisorName = "claude-worker"
 	o2.TTL = 4 * time.Hour
 	o2.Scope = []string{"ANTHROPIC_API_KEY", "GEMINI_API_KEY"}
 	o2.Nonce = freshNonce()

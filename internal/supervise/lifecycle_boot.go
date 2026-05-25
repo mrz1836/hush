@@ -38,6 +38,8 @@ var (
 )
 
 // claimWireRequest mirrors internal/server/claim_handler.go::claimRequest.
+// SupervisorName is populated from the supervisor's [name] config field
+// and is required by the server when session_type=supervisor.
 type claimWireRequest struct {
 	Scope                []string `json:"scope"`
 	Reason               string   `json:"reason"`
@@ -49,6 +51,7 @@ type claimWireRequest struct {
 	Signature            string   `json:"signature"`
 	RequestID            string   `json:"request_id"`
 	MachineName          string   `json:"machine_name"`
+	SupervisorName       string   `json:"supervisor_name,omitempty"`
 	ClientKeyFingerprint string   `json:"client_key_fingerprint"`
 }
 
@@ -61,6 +64,7 @@ type claimSignedPayload struct {
 	RequestID       string   `json:"request_id"`
 	Scope           []string `json:"scope"`
 	SessionType     string   `json:"session_type"`
+	SupervisorName  string   `json:"supervisor_name,omitempty"`
 	Timestamp       string   `json:"timestamp"`
 	TTL             string   `json:"ttl"`
 }
@@ -316,8 +320,10 @@ func (l *Lifecycle) applyClaimResponse(ctx context.Context, resp claimWireRespon
 	return nil
 }
 
-// buildClaimPayload assembles the nine-field signed payload using the
-// configured supervisor metadata and randomized nonce / request_id.
+// buildClaimPayload assembles the signed payload using the configured
+// supervisor metadata and randomized nonce / request_id. SupervisorName
+// is populated from the supervisor config [name] field — the server
+// requires it for session_type=supervisor.
 func (l *Lifecycle) buildClaimPayload() claimSignedPayload {
 	return claimSignedPayload{
 		EphemeralPubKey: l.deps.EphemeralPubKeyHex,
@@ -327,6 +333,7 @@ func (l *Lifecycle) buildClaimPayload() claimSignedPayload {
 		RequestID:       l.deps.RequestIDFn(),
 		Scope:           append([]string(nil), l.config.Scope...),
 		SessionType:     l.config.SessionType,
+		SupervisorName:  l.config.Name,
 		Timestamp:       l.deps.NowFn().UTC().Format(time.RFC3339Nano),
 		TTL:             l.config.RequestedTTL.String(),
 	}
@@ -354,6 +361,7 @@ func signAndWrapClaim(ctx context.Context, clientKey *ecdsa.PrivateKey, fp strin
 		Signature:            base64.StdEncoding.EncodeToString(sig),
 		RequestID:            payload.RequestID,
 		MachineName:          payload.MachineName,
+		SupervisorName:       payload.SupervisorName,
 		ClientKeyFingerprint: fp,
 	}, nil
 }

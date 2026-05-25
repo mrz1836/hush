@@ -55,12 +55,14 @@ type discordApproverAdapter struct {
 
 func (a discordApproverAdapter) RequestApproval(ctx context.Context, req server.ApprovalRequest) (server.Decision, error) {
 	dec, err := a.inner.RequestApproval(ctx, discord.ApprovalRequest{
-		MachineName:  req.MachineName,
-		ClientIP:     req.ClientIP.String(),
-		Reason:       req.Reason,
-		Scope:        req.Scope,
-		RequestedTTL: req.RequestedTTL,
-		SessionType:  mapSessionType(req.SessionType),
+		MachineName:    req.MachineName,
+		ClientIP:       req.ClientIP.String(),
+		Reason:         req.Reason,
+		Scope:          req.Scope,
+		RequestedTTL:   req.RequestedTTL,
+		SessionType:    mapSessionType(req.SessionType),
+		SupervisorName: req.SupervisorName,
+		RequestID:      req.RequestID,
 	})
 	if err != nil {
 		switch {

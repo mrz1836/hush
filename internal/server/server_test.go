@@ -203,14 +203,15 @@ func TestApprover_TypeShape(t *testing.T) {
 
 	// ApprovalRequest field set.
 	wantReq := map[string]string{
-		"RequestID":    "string",
-		"MachineName":  "string",
-		"ClientIP":     "netip.Addr",
-		"Scope":        "[]string",
-		"Reason":       "string",
-		"SessionType":  "server.SessionType",
-		"RequestedTTL": "time.Duration",
-		"Metadata":     "map[string]string",
+		"RequestID":      "string",
+		"MachineName":    "string",
+		"ClientIP":       "netip.Addr",
+		"Scope":          "[]string",
+		"Reason":         "string",
+		"SessionType":    "server.SessionType",
+		"RequestedTTL":   "time.Duration",
+		"SupervisorName": "string",
+		"Metadata":       "map[string]string",
 	}
 	got := fieldMap(reflect.TypeOf(ApprovalRequest{}))
 	if !reflect.DeepEqual(got, wantReq) {

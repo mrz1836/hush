@@ -41,9 +41,12 @@ type ClientOpts struct {
 	MachineName  string
 }
 
-// claimSignedPayloadJSON mirrors internal/server's signedPayload — the nine
+// claimSignedPayloadJSON mirrors internal/server's signedPayload — the
 // fields canonicalised and signed by the client. sign.CanonicalJSON sorts by
-// JSON tag, so struct field order is irrelevant.
+// JSON tag, so struct field order is irrelevant. SupervisorName is required
+// for session_type=supervisor; CanonicalJSON ignores omitempty (always
+// emits exported fields) so client and server canonical bytes match
+// regardless of value.
 type claimSignedPayloadJSON struct {
 	EphemeralPubKey string   `json:"ephemeral_pubkey"`
 	MachineName     string   `json:"machine_name"`
@@ -52,12 +55,14 @@ type claimSignedPayloadJSON struct {
 	RequestID       string   `json:"request_id"`
 	Scope           []string `json:"scope"`
 	SessionType     string   `json:"session_type"`
+	SupervisorName  string   `json:"supervisor_name,omitempty"`
 	Timestamp       string   `json:"timestamp"`
 	TTL             string   `json:"ttl"`
 }
 
-// claimWireJSON mirrors internal/server's claimRequest — the twelve-field
-// POST /claim body.
+// claimWireJSON mirrors internal/server's claimRequest — the POST /claim
+// body. SupervisorName is omitted from the wire envelope when empty
+// (interactive callers).
 type claimWireJSON struct {
 	Scope                []string `json:"scope"`
 	Reason               string   `json:"reason"`
@@ -69,6 +74,7 @@ type claimWireJSON struct {
 	Signature            string   `json:"signature"`
 	RequestID            string   `json:"request_id"`
 	MachineName          string   `json:"machine_name"`
+	SupervisorName       string   `json:"supervisor_name,omitempty"`
 	ClientKeyFingerprint string   `json:"client_key_fingerprint"`
 }
 

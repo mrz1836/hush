@@ -87,6 +87,7 @@ func (s *integrationFakeServer) handleClaim(w http.ResponseWriter, r *http.Reque
 		RequestID:       req.RequestID,
 		Scope:           req.Scope,
 		SessionType:     req.SessionType,
+		SupervisorName:  req.SupervisorName,
 		Timestamp:       req.Timestamp,
 		TTL:             req.TTL,
 	}

@@ -20,6 +20,7 @@ const (
 	errCodeRevokeBadRequest     = "bad_request"
 	errCodeRevokeBadSignature   = "bad_signature"
 	errCodeRevokeNonceReplay    = "nonce_replay"
+	errCodeRevokeNonceCacheFull = "nonce_cache_full"
 	errCodeRevokeStaleTimestamp = "stale_timestamp"
 )
 
@@ -163,8 +164,22 @@ func (s *Server) handleRevoke(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Nonce + timestamp gates.
+	// ErrNonceCacheFull is broken out as its own loud failure (503 +
+	// dedicated audit action) so cache saturation cannot hide as replay —
+	// Constitution VI requires saturation to be observable in the audit
+	// stream before the kernel reaps the process for OOM.
 	firstSeen, nonceErr := s.nonceCache.Add(ctx, req.Nonce, s.cfg.Crypto.NonceTTL)
-	if nonceErr != nil || !firstSeen {
+	switch {
+	case errors.Is(nonceErr, sign.ErrNonceCacheFull):
+		s.emitRevokeAudit(ctx, audit.ActionRevokeNonceCacheFull, requestID, peer, req.JTI, req.ClientKeyFingerprint, "revoke_nonce_cache_full")
+		s.logger.ErrorContext(
+			ctx, "nonce cache saturated",
+			"request_id", requestID,
+			"outcome", "revoke_nonce_cache_full",
+		)
+		writeStaticError(w, http.StatusServiceUnavailable, errCodeRevokeNonceCacheFull, requestID)
+		return
+	case nonceErr != nil || !firstSeen:
 		s.emitRevokeAudit(ctx, audit.ActionRevokeNonceReplay, requestID, peer, req.JTI, req.ClientKeyFingerprint, "revoke_nonce_replay")
 		writeStaticError(w, http.StatusForbidden, errCodeRevokeNonceReplay, requestID)
 		return

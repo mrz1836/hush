@@ -48,6 +48,13 @@ type ApprovalRequest struct {
 	// grant a smaller TTL via Decision.GrantedTTL.
 	RequestedTTL time.Duration
 
+	// SupervisorName is the operator-assigned label of the supervisor
+	// process making the claim. Required (non-empty) when SessionType
+	// is SessionSupervisor; MUST be empty otherwise. The chassis enforces
+	// this invariant at the shape-validation stage so Approver
+	// implementations may rely on it.
+	SupervisorName string
+
 	// Metadata is an open extension surface. The chassis treats it as
 	// opaque. Values MUST NOT contain secret material or request-body
 	// bytes.

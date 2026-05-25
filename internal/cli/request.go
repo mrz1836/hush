@@ -134,7 +134,8 @@ func (f requestFlags) modeOf() string {
 }
 
 // claimWireRequest mirrors internal/server/claim_handler.go::claimRequest
-// exactly — same JSON tags, same field set.
+// exactly — same JSON tags, same field set. SupervisorName is empty for
+// interactive callers (omitempty keeps it absent on the wire).
 type claimWireRequest struct {
 	Scope                []string `json:"scope"`
 	Reason               string   `json:"reason"`
@@ -146,12 +147,16 @@ type claimWireRequest struct {
 	Signature            string   `json:"signature"`
 	RequestID            string   `json:"request_id"`
 	MachineName          string   `json:"machine_name"`
+	SupervisorName       string   `json:"supervisor_name,omitempty"`
 	ClientKeyFingerprint string   `json:"client_key_fingerprint"`
 }
 
 // claimSignedPayload mirrors the server's signedPayload exactly. The
-// nine alphabetical-tag fields produce a byte-identical canonical
-// encoding via sign.CanonicalJSON.
+// alphabetical-tag fields produce a byte-identical canonical encoding
+// via sign.CanonicalJSON. CanonicalJSON ignores omitempty — both client
+// and server emit `"supervisor_name":""` for interactive sessions, so
+// the signatures match regardless of whether the wire envelope carries
+// the empty field.
 type claimSignedPayload struct {
 	EphemeralPubKey string   `json:"ephemeral_pubkey"`
 	MachineName     string   `json:"machine_name"`
@@ -160,6 +165,7 @@ type claimSignedPayload struct {
 	RequestID       string   `json:"request_id"`
 	Scope           []string `json:"scope"`
 	SessionType     string   `json:"session_type"`
+	SupervisorName  string   `json:"supervisor_name,omitempty"`
 	Timestamp       string   `json:"timestamp"`
 	TTL             string   `json:"ttl"`
 }

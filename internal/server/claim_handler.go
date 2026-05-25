@@ -52,6 +52,7 @@ const (
 	outcomeBadRequest         outcomeLabel = "bad-request"
 	outcomeBadSignature       outcomeLabel = "bad-signature"
 	outcomeNonceReplay        outcomeLabel = "nonce-replay"
+	outcomeNonceCacheFull     outcomeLabel = "nonce-cache-full"
 	outcomeStaleTimestamp     outcomeLabel = "stale-timestamp"
 	outcomeIPNotAllowed       outcomeLabel = "ip-not-allowed"
 	outcomeDenied             outcomeLabel = "denied"
@@ -66,20 +67,23 @@ const (
 // without echoing the failing field, so the caller cannot distinguish them
 // on the wire — but the error chain remains useful for triage logs.
 var (
-	errShapeTrailingData       = errors.New("server: claim: trailing data after JSON value")
-	errShapeScopeEmpty         = errors.New("server: claim: scope is empty")
-	errShapeScopeBadName       = errors.New("server: claim: scope element invalid")
-	errShapeReasonLen          = errors.New("server: claim: reason length out of [1, 256]")
-	errShapeTTLInvalid         = errors.New("server: claim: ttl invalid or non-positive")
-	errShapeSessionTypeUnknown = errors.New("server: claim: session_type not in {interactive, supervisor}")
-	errShapeEphemeralPub       = errors.New("server: claim: ephemeral_pubkey not 33-byte hex")
-	errShapeNonceInvalid       = errors.New("server: claim: nonce invalid")
-	errShapeTimestampFormat    = errors.New("server: claim: timestamp not RFC3339Nano")
-	errShapeSignatureEmpty     = errors.New("server: claim: signature empty")
-	errShapeRequestIDInvalid   = errors.New("server: claim: request_id invalid")
-	errShapeMachineNameInvalid = errors.New("server: claim: machine_name invalid")
-	errShapeFingerprintInvalid = errors.New("server: claim: client_key_fingerprint invalid")
-	errShapeBase64Invalid      = errors.New("server: claim: signature not a recognized base64 encoding")
+	errShapeTrailingData          = errors.New("server: claim: trailing data after JSON value")
+	errShapeScopeEmpty            = errors.New("server: claim: scope is empty")
+	errShapeScopeBadName          = errors.New("server: claim: scope element invalid")
+	errShapeReasonLen             = errors.New("server: claim: reason length out of [1, 256]")
+	errShapeTTLInvalid            = errors.New("server: claim: ttl invalid or non-positive")
+	errShapeSessionTypeUnknown    = errors.New("server: claim: session_type not in {interactive, supervisor}")
+	errShapeEphemeralPub          = errors.New("server: claim: ephemeral_pubkey not 33-byte hex")
+	errShapeNonceInvalid          = errors.New("server: claim: nonce invalid")
+	errShapeTimestampFormat       = errors.New("server: claim: timestamp not RFC3339Nano")
+	errShapeSignatureEmpty        = errors.New("server: claim: signature empty")
+	errShapeRequestIDInvalid      = errors.New("server: claim: request_id invalid")
+	errShapeMachineNameInvalid    = errors.New("server: claim: machine_name invalid")
+	errShapeFingerprintInvalid    = errors.New("server: claim: client_key_fingerprint invalid")
+	errShapeBase64Invalid         = errors.New("server: claim: signature not a recognized base64 encoding")
+	errShapeSupervisorNameMissing = errors.New("server: claim: supervisor session requires non-empty supervisor_name")
+	errShapeSupervisorNameSet     = errors.New("server: claim: interactive session must not carry supervisor_name")
+	errShapeSupervisorNameInvalid = errors.New("server: claim: supervisor_name invalid")
 )
 
 // Static error codes returned in response bodies. The set is exhaustive;
@@ -88,6 +92,7 @@ const (
 	errCodeBadRequest         = "bad_request"
 	errCodeBadSignature       = "bad_signature"
 	errCodeNonceReplay        = "nonce_replay"
+	errCodeNonceCacheFull     = "nonce_cache_full"
 	errCodeStaleTimestamp     = "stale_timestamp"
 	errCodeIPNotAllowed       = "ip_not_allowed"
 	errCodeDenied             = "denied"
@@ -112,6 +117,9 @@ var (
 
 	fingerprintOnce sync.Once
 	fingerprintRe   *regexp.Regexp
+
+	supervisorNameOnce sync.Once
+	supervisorNameRe   *regexp.Regexp
 
 	ephemeralPubKeyOnce sync.Once
 	ephemeralPubKeyRe   *regexp.Regexp
@@ -140,6 +148,13 @@ func getFingerprintRe() *regexp.Regexp {
 	return fingerprintRe
 }
 
+func getSupervisorNameRe() *regexp.Regexp {
+	// Same character class as machine_name; supervisor labels are
+	// operator-assigned text identifiers (e.g. "claude-worker-1").
+	supervisorNameOnce.Do(func() { supervisorNameRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`) })
+	return supervisorNameRe
+}
+
 func getEphemeralPubKeyRe() *regexp.Regexp {
 	ephemeralPubKeyOnce.Do(func() { ephemeralPubKeyRe = regexp.MustCompile(`^[0-9a-fA-F]{66}$`) })
 	return ephemeralPubKeyRe
@@ -151,7 +166,9 @@ func getNonceCharsRe() *regexp.Regexp {
 	return nonceCharsRe
 }
 
-// claimRequest is the JSON-decoded request body. All fields are required.
+// claimRequest is the JSON-decoded request body. All fields are required
+// except SupervisorName, which is required iff SessionType=="supervisor"
+// and MUST be absent/empty otherwise (enforced by parseClaimRequest).
 type claimRequest struct {
 	Scope                []string `json:"scope"`
 	Reason               string   `json:"reason"`
@@ -163,6 +180,7 @@ type claimRequest struct {
 	Signature            string   `json:"signature"`
 	RequestID            string   `json:"request_id"`
 	MachineName          string   `json:"machine_name"`
+	SupervisorName       string   `json:"supervisor_name,omitempty"`
 	ClientKeyFingerprint string   `json:"client_key_fingerprint"`
 }
 
@@ -195,6 +213,7 @@ type signedPayload struct {
 	RequestID       string   `json:"request_id"`
 	Scope           []string `json:"scope"`
 	SessionType     string   `json:"session_type"`
+	SupervisorName  string   `json:"supervisor_name,omitempty"`
 	Timestamp       string   `json:"timestamp"`
 	TTL             string   `json:"ttl"`
 }
@@ -247,8 +266,16 @@ func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Stage 3: nonce uniqueness within the configured replay window.
+	// ErrNonceCacheFull is broken out as its own loud failure (503 +
+	// distinct audit outcome) so cache saturation cannot hide as replay —
+	// Constitution VI requires saturation to be observable in the audit
+	// stream before the kernel reaps the process for OOM.
 	firstSeen, err := s.nonceCache.Add(ctx, req.Nonce, s.cfg.Crypto.NonceTTL)
-	if err != nil || !firstSeen {
+	switch {
+	case errors.Is(err, sign.ErrNonceCacheFull):
+		s.respondNonceCacheFull(w, ctx, requestID, req)
+		return
+	case err != nil || !firstSeen:
 		s.respondError(w, ctx, errCodeNonceReplay, outcomeNonceReplay, requestID, req)
 		return
 	}
@@ -303,13 +330,14 @@ func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	dec, apprErr := s.approverImpl.RequestApproval(apprCtx, ApprovalRequest{
-		RequestID:    requestID,
-		MachineName:  req.MachineName,
-		ClientIP:     peer,
-		Scope:        sortedScope(req.Scope),
-		Reason:       req.Reason,
-		SessionType:  sessionType,
-		RequestedTTL: cappedTTL,
+		RequestID:      requestID,
+		MachineName:    req.MachineName,
+		ClientIP:       peer,
+		Scope:          sortedScope(req.Scope),
+		Reason:         req.Reason,
+		SessionType:    sessionType,
+		RequestedTTL:   cappedTTL,
+		SupervisorName: req.SupervisorName,
 	})
 
 	switch {
@@ -492,6 +520,19 @@ func (s *Server) parseClaimRequest(r *http.Request) (*claimRequest, error) {
 	if req.SessionType != sessionTypeInteractiveStr && req.SessionType != sessionTypeSupervisorStr {
 		return nil, errShapeSessionTypeUnknown
 	}
+	switch req.SessionType {
+	case sessionTypeSupervisorStr:
+		if req.SupervisorName == "" {
+			return nil, errShapeSupervisorNameMissing
+		}
+		if !getSupervisorNameRe().MatchString(req.SupervisorName) {
+			return nil, errShapeSupervisorNameInvalid
+		}
+	case sessionTypeInteractiveStr:
+		if req.SupervisorName != "" {
+			return nil, errShapeSupervisorNameSet
+		}
+	}
 	if !getEphemeralPubKeyRe().MatchString(req.EphemeralPubKey) {
 		return nil, errShapeEphemeralPub
 	}
@@ -533,6 +574,7 @@ func (s *Server) verifyClaimSignature(ctx context.Context, req *claimRequest) er
 		RequestID:       req.RequestID,
 		Scope:           req.Scope,
 		SessionType:     req.SessionType,
+		SupervisorName:  req.SupervisorName,
 		Timestamp:       req.Timestamp,
 		TTL:             req.TTL,
 	}
@@ -563,6 +605,36 @@ func (s *Server) respondBadRequest(w http.ResponseWriter, ctx context.Context, r
 	)
 	writeJSONResponse(w, http.StatusBadRequest, errorResponse{
 		Error:     errCodeBadRequest,
+		RequestID: requestID,
+	})
+}
+
+// respondNonceCacheFull writes the dedicated 503 response for the
+// nonce-cache saturation path. Distinct from [Server.respondError] so the
+// loud signal (status, ops log, audit detail) cannot be conflated with a
+// replay-defense rejection. Constitution VI: silent OOM is unacceptable —
+// every cap-hit MUST emit a [outcomeNonceCacheFull] audit entry the
+// operator can alert on before the kernel reaps the process.
+func (s *Server) respondNonceCacheFull(
+	w http.ResponseWriter,
+	ctx context.Context,
+	requestID string,
+	req *claimRequest,
+) {
+	sessionType := parseSessionType(req.SessionType)
+	scope := sortedScope(req.Scope)
+	detail := buildAuditDetail(outcomeNonceCacheFull, scope, sessionType, 0, "")
+	peer, _ := parseRemoteAddr("")
+	s.emitClaimAudit(ctx, requestID, peer, detail)
+	s.logger.ErrorContext(
+		ctx, "nonce cache saturated",
+		"request_id", requestID,
+		"outcome", string(outcomeNonceCacheFull),
+		"session_type", sessionType.String(),
+		"scope_count", len(req.Scope),
+	)
+	writeJSONResponse(w, http.StatusServiceUnavailable, errorResponse{
+		Error:     errCodeNonceCacheFull,
 		RequestID: requestID,
 	})
 }

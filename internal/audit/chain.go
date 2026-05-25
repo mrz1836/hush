@@ -60,6 +60,7 @@ const (
 	ActionRevokeBadRequest               = "revoke_bad_request"
 	ActionRevokeBadSignature             = "revoke_bad_signature"
 	ActionRevokeNonceReplay              = "revoke_nonce_replay"
+	ActionRevokeNonceCacheFull           = "revoke_nonce_cache_full"
 	ActionRevokeStaleTimestamp           = "revoke_stale_timestamp"
 
 	// Supervisor lifecycle. Emitted by the
