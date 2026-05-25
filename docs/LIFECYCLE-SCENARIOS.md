@@ -300,6 +300,117 @@ Expected outcomes:
 
 ---
 
+## Scenario 16 — zero-downtime HTTP reload (`hush supervise reload`)
+
+Applies only to supervisors that opt into the HTTP-proxy handoff via
+`[child.handoff] mode = "http-proxy"` plus `[child.readiness]`. Plain
+supervisors that omit `[child.handoff]` reject the reload at the
+`config-invalid` gate (16C below) and restart the standard way
+(scenario 3/4).
+
+State transitions: `running → swapping → running`. The status socket
+reports `state = "swapping"` for the duration of the swap; agents
+subscribed via `pkg/client.SupervisorStatus.Watch()` observe an
+`EventStateChange` for each transition.
+
+### 16A — happy path (zero-downtime swap)
+
+Flow:
+1. operator runs `hush supervise reload <new-config-path>`
+2. CLI loads and validates `<new-config-path>` locally (rejecting
+   malformed files with the same sentinel set as `hush supervise`)
+3. CLI dials the supervisor's status socket, sends the `reload` verb
+4. supervisor enters `StateSwapping` and allocates a private
+   loopback backend port `P_new`
+5. supervisor silently refills scopes via the existing JWT (no
+   `/claim`, no Discord approval)
+6. supervisor starts the new child with `HUSH_BIND_PORT=P_new`
+   in env; the child binds `127.0.0.1:P_new`
+7. supervisor probes the configured `[child.readiness].http_url`
+   (host:port rewritten to the new private port) until 2xx or
+   `timeout` elapses
+8. on 2xx, supervisor atomically swaps the proxy backend pointer to
+   `P_new`; in-flight requests on `P_old` drain on the old URL,
+   subsequent requests land on `P_new`
+9. supervisor appends one `supervisor_child_swap` audit event
+10. supervisor SIGTERMs the old child; waits up to
+    `[child.shutdown].grace`; SIGKILLs if still alive
+11. supervisor returns `StateRunning`; CLI prints
+    `hush: supervise: reload: ok (readiness <ms>, strategy http-proxy)`
+    and exits 0
+
+Expected outcomes:
+- the public listen address never goes connect-refused
+- in-flight requests against the old child run to completion against
+  the old URL captured per-request
+- one and only one `supervisor_child_swap` audit event is appended
+  with `old_pid`, `new_pid`, `swap_completed_at` (RFC3339 UTC),
+  `readiness_duration_ms`, and `strategy = "http-proxy"`
+- no Discord approval is requested; the existing JWT covers the
+  refill (same path as `supervisor_silent_refill`)
+
+### 16B — readiness failure (rollback, old child stays serving)
+
+Flow:
+1. steps 1–7 of 16A
+2. new child responds non-2xx (or fails to bind) until
+   `[child.readiness].timeout` elapses
+3. supervisor SIGTERMs the candidate (with the configured grace),
+   leaves the proxy backend pointing at the old child, and
+   transitions back to `StateRunning` via `EventSwapFailed`
+4. CLI receives `ErrReloadReadinessFailed`, prints
+   `hush: supervise: reload: <reason>` to stderr, exits non-zero
+
+Expected outcomes:
+- old child remains the active backend; the proxy continues to
+  serve its responses uninterrupted
+- **no** `supervisor_child_swap` event is appended (the audit
+  chain is not polluted with would-be swaps)
+- the slog stream records a warn-level
+  `supervise: swap readiness failed` line with the new candidate's
+  PID and the underlying error class
+- subsequent reload attempts succeed once the new child is fixed —
+  no per-supervisor cooldown, no manual recovery step required
+
+### 16C — config refusal (reload-eligibility gating)
+
+Flow A — supervisor lacks `[child.handoff]`:
+1. operator runs `hush supervise reload <config-path>` against a
+   supervisor whose live config has no `[child.handoff]`
+2. supervisor refuses with `ErrSwapNotEligible`
+3. CLI returns `ErrReloadConfigInvalid` (`config-invalid` result code)
+4. exit class `ExitInputErr`; remedy: add `[child.handoff]` +
+   `[child.readiness]` to the supervisor TOML, restart the supervisor
+
+Flow B — on-disk config is structurally invalid for reload:
+1. operator runs `hush supervise reload <bad-config-path>`
+2. CLI's local `config.Load` rejects the file at the
+   `ErrHandoffRequiresReadiness` / `ErrHandoffRequiresBindPortRef` /
+   `ErrHandoffModeInvalid` gate
+3. No socket I/O occurs; live supervisor is unaffected
+
+Expected outcomes:
+- the operator cannot accidentally drive a live supervisor into a
+  broken reload state
+- both failure modes return non-zero with a clear sentinel; nothing
+  silent about the refusal
+
+### 16D — concurrent reloads
+
+Flow:
+1. two reloads race
+2. the loser receives `ErrSwapInFlight` (`swap-in-flight` result)
+3. the winner runs the full 16A or 16B path
+
+Expected outcomes:
+- single-flight is enforced by the supervisor's atomic-bool CAS,
+  not a filesystem lock — the loser sees the refusal without any
+  side effect
+- operators should treat `swap-in-flight` as "retry once the
+  current reload completes", not as a permanent failure
+
+---
+
 ## Required alert classes
 
 Distinct operator-visible alert classes:

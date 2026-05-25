@@ -21,6 +21,7 @@ the human what your agent is about to do**.
 | Monitor your own session's freshness from inside the child | **`pkg/client.SupervisorStatus`** |
 | Know what scopes the vault holds without triggering an approval | **`pkg/client.Me`** |
 | React to "your credentials expire in 5 minutes" before getting killed | **`pkg/client.SupervisorStatus.Watch`** |
+| Trigger a zero-downtime HTTP reload of a supervised child from code | **`pkg/client.SupervisorStatus.Reload`** |
 | Show the human what tool/command you're about to invoke before they approve | **`hush request --agent --model --tool --command`** |
 
 The SDK is a Go module at `github.com/mrz1836/hush/pkg/client`. Import
@@ -184,7 +185,88 @@ forward-compatible.
 
 ---
 
-## 6. Agent context on approvals — `--agent --model --tool --command`
+## 6. Zero-downtime HTTP reload — `Reload()`
+
+Agents that orchestrate their own supervised HTTP children (deploy
+hooks, control-plane daemons) can trigger a zero-downtime reload
+in-process via `pkg/client.SupervisorStatus.Reload`. The semantics
+mirror the `hush supervise reload` CLI: hush starts a candidate
+child on a private loopback port, HTTP-probes the configured
+readiness URL, atomically swaps the proxy backend pointer, and
+SIGTERMs the old child within the configured shutdown grace.
+
+```go
+sup := client.NewSupervisorStatus(os.Getenv("HUSH_STATUS_SOCKET"))
+defer func() { _ = sup.Close() }()
+
+ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+defer cancel()
+
+res, err := sup.Reload(ctx, "/etc/hush/supervisors/api-gateway.toml")
+switch {
+case err == nil:
+    log.Printf("swap ok: old=%d new=%d readiness=%s strategy=%s",
+        res.OldPID, res.NewPID, res.ReadinessDuration, res.Strategy)
+
+case errors.Is(err, client.ErrReloadConfigInvalid):
+    // Supervisor is not reload-eligible (missing [child.readiness] or
+    // [child.handoff] mode = "http-proxy"). Fix the supervisor TOML
+    // and restart the supervisor before retrying.
+    log.Fatal("reload not eligible:", err)
+
+case errors.Is(err, client.ErrReloadReadinessFailed):
+    // Candidate child failed the HTTP readiness probe. Old child is
+    // still the active backend; check the new child's startup logs.
+    log.Println("readiness failed; old child still serving:", err)
+
+case errors.Is(err, client.ErrReloadInFlight):
+    // Another reload is already running. Back off and retry.
+    log.Println("another reload in flight; retrying later")
+
+default:
+    log.Fatal("reload failed:", err)
+}
+```
+
+The `configPath` argument is the on-disk supervisor config the
+operator/agent wants the supervisor to validate against. **Load
+and validate it locally first** (`hush supervise <path> --dry-run`
+or `internal/supervise/config.Load`) so a malformed file is caught
+before the socket round-trip. The supervisor itself uses its
+already-loaded config for the actual swap; the path is forwarded
+purely for audit attribution (`config_path` field in the reload
+ack).
+
+### `Reload()` typed errors
+
+Compare with `errors.Is`:
+
+| Error | Server result code | When |
+|---|---|---|
+| `ErrReloadConfigInvalid` | `config-invalid` | Supervisor's config is not reload-eligible, or proxy listener not attached. |
+| `ErrReloadReadinessFailed` | `readiness-failed` | Candidate child started but did not pass the HTTP readiness probe within budget; old child still serving. |
+| `ErrReloadInFlight` | `swap-in-flight` | Another reload is already running. |
+| `ErrReloadFailed` | `error` | Any other supervisor-side failure (child start, backend port allocation, wrong state). |
+| `ErrSocketUnavailable` | client-side only | Supervisor socket could not be dialed. |
+| `ErrInvalidResponse` | client-side only | Response payload could not be parsed (version skew). |
+
+### Audit and observability
+
+A successful reload appends exactly one `supervisor_child_swap`
+audit event. The event contains only PIDs, an RFC3339 UTC
+timestamp, the readiness duration in ms, and the strategy string
+(`"http-proxy"` in v1) — **never** any secret/env value. Failed
+reloads emit no audit event. The supervisor's state transitions
+(`running → swapping → running`) are observable in real time via
+`Watch()` as `EventStateChange` events.
+
+For the operator-side mirror of this surface (CLI, config matrix,
+failure-mode catalog), see
+[`docs/SUPERVISE-RELOAD.md`](SUPERVISE-RELOAD.md).
+
+---
+
+## 7. Agent context on approvals — `--agent --model --tool --command`
 
 When your agent issues a `/claim` through the CLI, populate the
 agent-context flags so the human approver sees **what tool you're
@@ -233,7 +315,7 @@ and re-redacted server-side. Length caps: `--agent` ≤128, `--model`
 
 ---
 
-## 7. End-to-end example
+## 8. End-to-end example
 
 A runnable program demonstrating Snapshot + Me + Watch in one place
 lives at [`examples/agent/`](../examples/agent/). Use it as a starting
@@ -246,7 +328,7 @@ go run .
 
 ---
 
-## 8. Versioning + stability
+## 9. Versioning + stability
 
 - `pkg/client` is **v1**. Breaking changes follow semantic-versioning
   rules at the module level.
@@ -261,7 +343,7 @@ go run .
 
 ---
 
-## 9. What's NOT in the SDK (yet)
+## 10. What's NOT in the SDK (yet)
 
 - **In-process `/claim`**. The SDK today exposes `Me()` (read-only)
   but does not yet provide a typed `Claim()` that performs the full
@@ -277,10 +359,14 @@ These are tracked as follow-ups to the agent-integration work.
 
 ---
 
-## 10. Cross-references
+## 11. Cross-references
 
 - [`pkg/client/README.md`](../pkg/client/README.md) — surface reference
 - [`docs/API.md`](API.md) — wire format including `/me` schema
 - [`docs/DAEMONS.md`](DAEMONS.md) — supervisor lifecycle scenarios
 - [`docs/SECURITY.md`](SECURITY.md) — threat model + residual risks
 - [`docs/OPERATIONS.md`](OPERATIONS.md) — day-to-day operator runbook
+- [`docs/SUPERVISE-RELOAD.md`](SUPERVISE-RELOAD.md) — operator-side
+  runbook for the HTTP-proxy reload surface backing `Reload()`
+- [`docs/LIFECYCLE-SCENARIOS.md`](LIFECYCLE-SCENARIOS.md) §16 —
+  end-to-end reload behaviour spec

@@ -87,4 +87,12 @@ Compare with `errors.Is`.
 
 All exports are part of hush's v1 public API. Wire-format additions appear as new optional fields with `omitempty` so existing SDK builds keep working when talking to newer servers. Use `SnapshotRaw` when you need to forward fields the SDK does not yet know about.
 
-See `docs/AGENT-INTEGRATION.md` (added in a later PR) for the complete agent integration guide.
+## Related docs
+
+- [`docs/AGENT-INTEGRATION.md`](../docs/AGENT-INTEGRATION.md) —
+  complete agent integration guide (Snapshot, Me, Watch, Reload).
+- [`docs/SUPERVISE-RELOAD.md`](../docs/SUPERVISE-RELOAD.md) —
+  operator-side runbook for the HTTP-proxy reload surface backing
+  `Reload()`.
+- [`docs/LIFECYCLE-SCENARIOS.md`](../docs/LIFECYCLE-SCENARIOS.md)
+  §16 — end-to-end reload behaviour spec.

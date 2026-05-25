@@ -322,6 +322,29 @@ Intent:
 - child restarts do not normally require a new phone approval
 - refreshes happen in waking hours
 
+### Zero-downtime daemon reload (HTTP services)
+
+When the supervised child is an HTTP server and the supervisor TOML
+opts into the HTTP-proxy handoff
+(`[child.handoff] mode = "http-proxy"` + `[child.readiness]`),
+operators can roll out a new child without interrupting public
+traffic:
+
+```bash
+hush supervise reload ~/.hush/supervisors/<name>.toml
+```
+
+The supervisor starts a candidate child on a private loopback port,
+HTTP-probes the configured readiness URL, atomically swaps the
+proxy backend pointer, and SIGTERMs the old child within the
+configured shutdown grace. Success line:
+`hush: supervise: reload: ok (readiness <ms>, strategy http-proxy)`.
+
+Plain (non-handoff) supervisors return `config-invalid` here — they
+are not affected and continue to restart via the standard cycle. See
+[`docs/SUPERVISE-RELOAD.md`](SUPERVISE-RELOAD.md) for the operator
+runbook, config matrix, failure modes, and audit event shape.
+
 ---
 
 ## 3. Operational truths
@@ -439,6 +462,8 @@ These are the operational topics the final implementation must cover:
 - client registration / machine-index assignment
 - interactive session request workflow
 - daemon supervisor deployment (one supervisor TOML per long-running daemon)
+- zero-downtime daemon reload for HTTP services (see
+  [`docs/SUPERVISE-RELOAD.md`](SUPERVISE-RELOAD.md))
 - vault secret rotation
 - `hush client refresh` flow after rotation
 - validator failure response
@@ -482,6 +507,7 @@ If a doc surface legitimately needs to *describe* the forbidden constructs (e.g.
 ## 10. Cross-references
 
 - daemon lifecycle details: `docs/LIFECYCLE-SCENARIOS.md`
+- zero-downtime HTTP reload runbook: `docs/SUPERVISE-RELOAD.md`
 - config locations and fields: `docs/CONFIG-SCHEMA.md`
 - supervisor pattern + validators: `docs/DAEMONS.md`
 - security posture (including Keychain vs env-token positioning): `docs/SECURITY.md`
