@@ -1,41 +1,38 @@
-[supervisor]
-name = "hermes"
-server = "http://100.90.223.110:7743"
-reason = "Hermes gateway (daemon)"
+# hermes — multi-provider AI gateway daemon
+#
+# Schema reference: deploy/examples/supervisors/example-daemon.toml
+# Full field docs:  docs/CONFIG-SCHEMA.md#supervisor-config
+#
+# Replace server_url and client_machine_index with values from your
+# `hush init server` / `hush init client --machine-index N` output.
+
+name                      = "hermes"
+reason                    = "Hermes AI gateway"
+server_url                = "http://100.64.0.1:7743/h/example"
+client_machine_index      = 1
+session_type              = "supervisor"
+requested_ttl             = "20h"
+refresh_window            = "09:00-10:00"
+cache_secrets_for_restart = true
+cache_grace_ttl           = "60m"
+status_socket             = "/tmp/hush/supervise-hermes.sock"
+pid_file                  = "/tmp/hush/supervise-hermes.pid"
+
 scope = [
   "ANTHROPIC_API_KEY",
   "OPENAI_API_KEY",
   "GEMINI_API_KEY",
 ]
 
-[supervisor.child]
-argv = ["hermes", "gateway", "start"]
-auth_failure_exit_code = 78
+[child]
+command         = ["/usr/local/bin/hermes", "gateway", "start"]
+env_passthrough = ["PATH", "HOME", "SHELL"]
 
-[supervisor.session]
-type = "supervisor"
-refresh_window_start = "09:00"
-refresh_window_end = "10:00"
-refresh_window_tz = "America/New_York"
-max_ttl = "20h"
-
-[supervisor.grace]
-cache_secrets_for_restart = true
-window = "60m"
-
-[supervisor.validators]
+[validators]
 ANTHROPIC_API_KEY = "anthropic"
-OPENAI_API_KEY = "openai"
-GEMINI_API_KEY = "google-ai"
+OPENAI_API_KEY    = "openai"
+GEMINI_API_KEY    = "google-ai"
 
-[supervisor.status_socket]
-path = "~/Library/Caches/hush/supervise-hermes.sock"
-
-[supervisor.log_patterns]
-auth_failure = [
-  "401 Unauthorized",
-  "invalid x-api-key",
-]
-
-[supervisor.bootstrap]
-boot_retry_timeout = "10m"
+[watchdog]
+enabled  = true
+patterns = ["401 Unauthorized", "invalid x-api-key"]

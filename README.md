@@ -207,13 +207,33 @@ upgrade does not touch any supervised process.
 
 <br/>
 
+## 🗺️ Command palette
+
+Every hush subcommand at a glance — every entry below is real today.
+
+| Command | Purpose |
+|---------|---------|
+| `hush smoke` | Guided end-to-end test with a fake secret — start here |
+| `hush init server` / `hush init client` | Bootstrap a vault host / enroll an agent host |
+| `hush serve` | Run the vault server (Tailscale-only) |
+| `hush secret add` / `list` / `remove` / `rotate` | Manage vault entries (rotate re-encrypts and hot-reloads) |
+| `hush request --exec …` | One-shot interactive fetch + child exec |
+| `hush supervise <config.toml>` | Long-running daemon with grace cache + validators |
+| `hush health` / `server-url` / `version` | Daily-driver helpers |
+| `hush revoke --jti …` | Kill an active session token |
+| `hush upgrade` | Self-upgrade from a GitHub release (stable / beta / edge) |
+
+Global flags — `--config <path>`, `--verbose`, `--quiet`, `--no-color` — work on every command.
+
+<br/>
+
 ## ⚡ Quick Start
 
-Get up and running with these essential commands:
+Four flows, in the order you'll use them.
 
-<br>
+<br/>
 
-### Run a confidence check
+### Try it in 60 seconds
 
 **One command, fake secret, real Discord approval:**
 
@@ -224,59 +244,118 @@ hush smoke --state-dir ~/.hush-smoke --reset
 `hush smoke` walks the setup prompts, creates an isolated test vault, adds
 `HUSH_SMOKE_TEST=hello-from-hush`, starts a temporary Tailscale-only server,
 enrolls a client, asks you to approve in Discord, verifies the fake secret,
-and then shuts the temporary server down. Clean smoke artifacts safely with
-`hush smoke clean` (archives by default).
+and shuts the temporary server down.
 
-<br>
+> 🧹 **Cleanup:** `hush smoke clean` archives smoke artifacts by default.
+> Add `--destroy --confirm 'destroy smoke'` to permanently delete them.
+
+<br/>
 
 ### Bootstrap the vault host
 
+Three commands, run on the host you trust with your secrets.
+
 ```bash
-hush init server          # guided / interactive; preflight + prompts
-hush secret add OPENAI_API_KEY
-hush serve                # binds Tailscale interface, brokers approvals
+hush init server                       # interactive preflight + prompts
+hush secret add ANTHROPIC_API_KEY      # then OPENAI_API_KEY, GEMINI_API_KEY, …
+hush serve                             # binds Tailscale, brokers approvals
 ```
 
-`hush init server` is the canonical first-run entry point. It runs a
-diagnostic-first preflight, prompts for the inputs it actually needs,
-classifies pre-existing state per-artifact, and never silently overwrites.
-When it asks for a listen address, use the **vault host's Tailscale IPv4**
-plus a free port (for example, run `printf '%s:7743\n' "$(tailscale ip -4)"`
-on the server host). Do not use the laptop/client IP.
+> 🛰️ **Listen on the vault host's Tailscale IPv4 — not your laptop IP.**
+> When `hush init server` asks for a listen address, run
+> `printf '%s:7743\n' "$(tailscale ip -4)"` on the **server** host and paste
+> the result. Set `discord_approval_channel_id` to route approvals to a
+> channel; leave it empty to DM the owner directly.
 
-During `hush init server`, set `discord_approval_channel_id` if you want
-approvals in a Discord channel instead of owner DMs. On macOS, if the login
-Keychain is locked or unavailable, choose the env-token fallback and run
-`hush serve` with `HUSH_DISCORD_BOT_TOKEN` exported in that terminal.
+> 🔐 **macOS Keychain locked?** Choose the env-token fallback during init
+> and run `hush serve` with `HUSH_DISCORD_BOT_TOKEN` exported in that
+> terminal. Full recovery flow in [`docs/SECURITY.md`](docs/SECURITY.md) §2.4.
 
-<br>
+<br/>
 
-### Enrol the agent host
+### Enroll the agent host
+
+Enroll a per-machine client key, then fetch secrets straight into a child
+process. Nothing lands on disk.
 
 ```bash
 hush init client --machine-index 1
 HUSH_SERVER="$(hush --config ~/.hush/config.toml server-url)"
+
 hush request \
   --server "$HUSH_SERVER" \
-  --machine-index 1 --scope OPENAI_API_KEY \
-  --max-uses 1 --ttl 5m --reason "smoke test" \
-  --exec printenv -- OPENAI_API_KEY
+  --machine-index 1 \
+  --scope ANTHROPIC_API_KEY --scope OPENAI_API_KEY --scope GEMINI_API_KEY \
+  --max-uses 3 --ttl 10m \
+  --reason "claude-code session" \
+  --exec zsh
 ```
 
-Approve on Discord; the child process you named in `--exec` runs with
-`OPENAI_API_KEY` in its environment — and only there. `--exec` names a
-program, not a shell string; pass child arguments after `--`. Nothing is
-written to disk on the agent host.
+Approve on Discord; the shell you launched inherits all three keys in its
+environment — and **only there**. They are zeroed the moment the shell exits.
+
+> ⚙️ **`--scope` is repeatable and comma-separated.** Either
+> `--scope A --scope B` or `--scope A,B` works. `--max-uses` must be ≥ the
+> number of scopes (one fetch per scope per session). `--exec` names a
+> program, not a shell string — pass child arguments after `--`.
 
 <br/>
 
-> 📖 **For the full walkthrough — Keychain ACL recovery, clock-skew override,
-> `--non-interactive` mode — see [`docs/OPERATIONS.md`](docs/OPERATIONS.md).**
-> For Keychain vs `HUSH_DISCORD_BOT_TOKEN` positioning and the threat model,
-> see [`docs/SECURITY.md`](docs/SECURITY.md) §2.4. For long-running daemons,
-> see [`docs/DAEMONS.md`](docs/DAEMONS.md) and
-> [`deploy/examples/supervisors/`](deploy/examples/supervisors/). For server +
-> supervisor TOML schemas, see [`docs/CONFIG-SCHEMA.md`](docs/CONFIG-SCHEMA.md).
+### Run a long-running daemon
+
+For agents that run overnight, swap `hush request` for `hush supervise`.
+One approval per refresh window keeps a 24/7 child alive across crashes;
+the grace cache silently restarts a child that dies inside
+`cache_grace_ttl`, so a 3am OOM doesn't page you.
+
+Save the snippet below to `~/.hush/supervisors/hermes.toml` — the full
+schema lives in
+[`deploy/examples/supervisors/example-daemon.toml`](deploy/examples/supervisors/example-daemon.toml):
+
+```toml
+name                      = "hermes"
+reason                    = "Hermes AI gateway"
+server_url                = "http://100.64.0.1:7743/h/example"
+client_machine_index      = 1
+session_type              = "supervisor"
+requested_ttl             = "20h"
+refresh_window            = "09:00-10:00"
+cache_secrets_for_restart = true
+cache_grace_ttl           = "60m"
+status_socket             = "/tmp/hush/supervise-hermes.sock"
+pid_file                  = "/tmp/hush/supervise-hermes.pid"
+
+scope = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY"]
+
+[child]
+command = ["/usr/local/bin/hermes", "gateway", "start"]
+
+[validators]
+ANTHROPIC_API_KEY = "anthropic"
+OPENAI_API_KEY    = "openai"
+GEMINI_API_KEY    = "google-ai"
+```
+
+Then:
+
+```bash
+hush supervise ~/.hush/supervisors/hermes.toml --dry-run   # validate the config
+hush supervise ~/.hush/supervisors/hermes.toml             # run for real
+```
+
+Built-in validators (`anthropic`, `anthropic-oauth`, `openai`, `google-ai`,
+`github`) hit each provider before the child starts — stale credentials
+fail loudly instead of breaking your daemon at 3am. Full guide in
+[`docs/DAEMONS.md`](docs/DAEMONS.md).
+
+<br/>
+
+> 📖 **More?** [`docs/OPERATIONS.md`](docs/OPERATIONS.md) covers Keychain
+> ACL recovery, clock-skew overrides, and `--non-interactive` mode for
+> Terraform/Ansible provisioning. [`docs/CONFIG-SCHEMA.md`](docs/CONFIG-SCHEMA.md)
+> has the full server + supervisor TOML schemas, and
+> [`deploy/examples/supervisors/`](deploy/examples/supervisors/) holds
+> production templates ready to copy.
 
 <br/>
 
@@ -293,6 +372,28 @@ written to disk on the agent host.
 - No multi-owner approvals (a single configured operator approves; multi-owner is post-v0.1.0 future scope).
 - No cloud KMS / SaaS dependency. The vault is self-hosted and offline-capable.
 - No public network exposure. The vault server is bound to a Tailscale interface and refuses to start otherwise.
+
+**Daily-driver helpers:**
+
+- `hush health --server "$(hush server-url)"` — one-shot reachability + clock-skew check.
+- `hush secret list` — enumerate vault entries (TTY: `NAME — description`; pipe-friendly).
+- `hush secret rotate` — re-encrypt the vault and hot-reload `hush serve` (SIGHUP, no downtime).
+- `hush server-url` — print the canonical server URL from your TOML config, perfect for `$(…)` substitution.
+- `hush revoke --jti <uuid>` — kill an active JWT before its TTL expires.
+
+<br/>
+
+## 🔀 Operating modes
+
+Two ways to consume secrets; pick by **how often you can answer your phone**.
+
+| Mode | Best for | Approval cadence |
+|------|----------|------------------|
+| `hush request --exec` | Interactive shells, one-shot scripts, CI jobs | Once per invocation |
+| `hush supervise` | 24/7 daemons, AI gateways, long-running agents | Once per refresh window (e.g. 09:00–10:00 daily) |
+
+Pick `request` for ad-hoc work; pick `supervise` when a phone buzz per
+restart would page you at 3am.
 
 <br/>
 
