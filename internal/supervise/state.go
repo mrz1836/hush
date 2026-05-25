@@ -216,11 +216,16 @@ type Snapshot struct {
 // On replacement, the prior *SecureBytes is explicitly Destroy'd
 // (Principle VI / Layer 5 — explicit zeroing on lifecycle transitions
 // rather than waiting for the runtime finalizer). Passing the same
-// pointer twice is a no-op; passing nil clears the slot. Any in-flight
-// reader holding the previous pointer (e.g. a concurrent Refill that
-// already captured the Snapshot.Token) is serialised on the prior
-// SecureBytes' own mutex inside Destroy, so the destroy waits for the
-// in-progress Use callback to finish before zeroing.
+// pointer twice is a no-op; passing nil clears the slot.
+//
+// Serialisation is per-Use, not per-snapshot: a reader currently
+// inside the prior *SecureBytes' Use callback blocks Destroy on that
+// SecureBytes' own mutex, so the in-flight Use completes before the
+// buffer is zeroed. Callers that hold a Snapshot.Token reference
+// across multiple Use calls (e.g. a multi-scope Refiller.Refill) MUST
+// tolerate ErrDestroyed on subsequent Use invocations — between calls
+// there is no protection against a concurrent setToken destroying the
+// captured pointer. Re-Snapshot per iteration to narrow the window.
 func (s *Store) setToken(tok *securebytes.SecureBytes) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

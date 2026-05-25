@@ -91,6 +91,14 @@ func NewRefiller(client *http.Client, store *Store, logger *slog.Logger) *Refill
 // successfully decrypted *SecureBytes from the current call is
 // destroyed BEFORE Refill returns and the map is nil.
 //
+// The bearer-token snapshot is re-captured before each fetchOne so a
+// concurrent Store.setToken from claimRefreshLoop (which destroys the
+// prior *SecureBytes eagerly per Principle VI) does not surface as a
+// phantom ErrDestroyed mid-Refill. Per-scope snapshotting narrows the
+// rotation race to the window between Snapshot and the next tok.Use,
+// well inside a single fetchOne. Both old and new JWTs are server-
+// valid, so mixing across scopes inside one Refill is benign.
+//
 // Returned errors:
 //   - errors.Is(err, ErrJTIUnknown): the server returned 401 with
 //     body {"error":"unknown_jti"}. Orchestrator MUST transition to
@@ -115,12 +123,11 @@ func (r *Refiller) Refill(ctx context.Context, scopes []string) (map[string]*sec
 		}
 	}()
 
-	snap := r.store.Snapshot()
-	if snap.Token == nil {
-		return nil, errNilBearerToken
-	}
-
 	for _, name := range scopes {
+		snap := r.store.Snapshot()
+		if snap.Token == nil {
+			return nil, errNilBearerToken
+		}
 		sb, err := r.fetchOne(ctx, name, snap.Token)
 		if err != nil {
 			r.logger.Info(
