@@ -34,8 +34,21 @@ fmt.Println("expires at:", status.SessionExpiresAt)
 | `Snapshot(ctx)` | Fetch the typed status document. |
 | `SnapshotRaw(ctx)` | Fetch the raw JSON bytes (forward-compatible pass-through). |
 | `Refresh(ctx)` | Ask the supervisor to refill and restart its child immediately. |
+| `Reload(ctx, configPath)` | Trigger a zero-downtime HTTP-proxy handoff against the supervisor's already-loaded config; returns a `ReloadResult` with old/new PIDs, readiness duration, and the strategy string (`"http-proxy"`). Operator should load + validate `configPath` locally before calling. |
 | `Watch(ctx, WatchOptions)` | Stream lifecycle `Event`s (state changes, scope-health changes, session renewals, pre-expiry warnings) so an agent can wind down gracefully. |
 | `Close()` | Release resources. No-op in v1; reserved for future use. |
+
+#### `Reload()` typed errors
+
+`Reload` returns one of these wrapped sentinels when the supervisor refuses or fails the handoff. Compare with `errors.Is`:
+
+| Error | Server result code | Meaning |
+|---|---|---|
+| `ErrReloadConfigInvalid` | `config-invalid` | Supervisor config is missing `[child.readiness]` or `[child.handoff] mode = "http-proxy"`, or no proxy listener is attached. |
+| `ErrReloadReadinessFailed` | `readiness-failed` | Replacement child started but did not pass the HTTP readiness probe within the configured budget; old child remains the active backend. |
+| `ErrReloadInFlight` | `swap-in-flight` | Another reload is already running. Retry once it completes. |
+| `ErrReloadFailed` | `error` | Any other supervisor-side failure (child start, backend port allocation, wrong state, etc.). Wrapped message carries the supervisor's reason verbatim. |
+| `ErrSocketUnavailable` | `supervisor-unreachable` (client-side) | The supervisor socket could not be dialed or the round-trip failed. |
 
 #### `Watch()` event types
 
@@ -65,6 +78,7 @@ batch multiple scopes into a single human approval.
 - `ErrSocketUnavailable` — supervisor not running, socket missing, HTTP transport failure, or context cancelled mid-round-trip.
 - `ErrInvalidResponse` — server responded but the payload could not be parsed (or had a non-2xx status that isn't an auth failure).
 - `ErrRefreshDenied` — supervisor accepted the refresh request but refused (vault unreachable, window closed, etc.).
+- `ErrReloadConfigInvalid`, `ErrReloadReadinessFailed`, `ErrReloadInFlight`, `ErrReloadFailed` — see the `Reload()` table above.
 - `ErrUnauthenticated` — `/me` returned 401/403 (bad signature, unknown fingerprint, replayed nonce, stale timestamp, or non-Tailscale source IP).
 
 Compare with `errors.Is`.

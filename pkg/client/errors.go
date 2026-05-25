@@ -22,3 +22,33 @@ var ErrInvalidResponse = errors.New("hush/client: supervisor response invalid")
 // closed. The wrapped error message carries the supervisor's reason
 // string verbatim.
 var ErrRefreshDenied = errors.New("hush/client: supervisor refused refresh")
+
+// ErrReloadConfigInvalid is returned by (*SupervisorStatus).Reload when
+// the supervisor refused the reload because the running config is not
+// reload-eligible — typically missing [child.readiness] or
+// [child.handoff] mode = "http-proxy", or the supervisor has no proxy
+// listener attached. The wrapped error message carries the supervisor's
+// reason string verbatim. Compare via errors.Is.
+var ErrReloadConfigInvalid = errors.New("hush/client: supervisor rejected reload: config invalid")
+
+// ErrReloadReadinessFailed is returned by (*SupervisorStatus).Reload
+// when the supervisor started a replacement child but its HTTP
+// readiness probe did not pass within the configured budget. The old
+// child remains the active backend; the rollout failed. The wrapped
+// error message carries the supervisor's reason string verbatim.
+// Compare via errors.Is.
+var ErrReloadReadinessFailed = errors.New("hush/client: supervisor reload failed readiness")
+
+// ErrReloadInFlight is returned by (*SupervisorStatus).Reload when
+// another reload is already running against the same supervisor.
+// Callers can retry once the in-flight reload completes. Compare via
+// errors.Is.
+var ErrReloadInFlight = errors.New("hush/client: supervisor reload already in flight")
+
+// ErrReloadFailed is returned by (*SupervisorStatus).Reload for any
+// supervisor-side failure that does not match the more specific
+// sentinels above — for example a child start failure, backend port
+// allocation failure, or the supervisor not being in the running
+// state. The wrapped error message carries the supervisor's reason
+// string verbatim. Compare via errors.Is.
+var ErrReloadFailed = errors.New("hush/client: supervisor reload failed")
