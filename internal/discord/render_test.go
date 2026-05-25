@@ -131,6 +131,65 @@ func TestApprovalRender_AllRequestFieldsPresent(t *testing.T) {
 	}
 }
 
+// TestApprovalRender_IncludesRequestID — P3: the chassis-assigned
+// request_id must appear in the rendered prompt, the resolved
+// approval message, and the audit-channel mirror so operators can
+// cross-reference Discord-visible events with the hash-chained on-disk
+// audit entry (Layer 6). Covers interactive, daemon, and audit shapes.
+func TestApprovalRender_IncludesRequestID(t *testing.T) {
+	t.Parallel()
+	const reqID = "rq-correlate-abc"
+
+	interactive := interactiveSampleRequest()
+	interactive.RequestID = reqID
+	if desc := renderedDescription(t, interactive, "uuid"); !strings.Contains(desc, reqID) {
+		t.Errorf("interactive prompt missing request_id %q:\n%s", reqID, desc)
+	}
+
+	daemon := daemonSampleRequest()
+	daemon.RequestID = reqID
+	if desc := renderedDescription(t, daemon, "uuid"); !strings.Contains(desc, reqID) {
+		t.Errorf("daemon prompt missing request_id %q:\n%s", reqID, desc)
+	}
+
+	for _, et := range []auditEventType{auditRequestReceived, auditApproved, auditDenied, auditTimedOut, auditRateLimited} {
+		am := renderAudit(et, daemon)
+		if len(am.Embeds) == 0 {
+			t.Fatalf("renderAudit(%s) produced no embed", et)
+		}
+		if !strings.Contains(am.Embeds[0].Description, reqID) {
+			t.Errorf("audit mirror (%s) missing request_id %q:\n%s", et, reqID, am.Embeds[0].Description)
+		}
+	}
+
+	// Resolved-approval update also carries the request_id.
+	resolved := renderResolvedApproval(daemon, true)
+	if len(resolved.Embeds) == 0 || !strings.Contains(resolved.Embeds[0].Description, reqID) {
+		t.Errorf("resolved approval missing request_id %q", reqID)
+	}
+}
+
+// TestApprovalRender_OmitsRequestIDWhenEmpty — backward compat: an
+// ApprovalRequest with RequestID="" must NOT render a stub "Request: "
+// line (which would be cosmetically wrong and could appear in audit
+// records as a stale label). Use the absence of "Request:" as the
+// invariant; this guards against accidental always-on rendering.
+func TestApprovalRender_OmitsRequestIDWhenEmpty(t *testing.T) {
+	t.Parallel()
+	req := interactiveSampleRequest()
+	req.RequestID = ""
+	desc := renderedDescription(t, req, "uuid")
+	if strings.Contains(desc, "Request:") {
+		t.Errorf("interactive prompt should not render 'Request:' for empty RequestID:\n%s", desc)
+	}
+
+	// Audit mirror — same rule.
+	am := renderAudit(auditRequestReceived, req)
+	if strings.Contains(am.Embeds[0].Description, "Request:") {
+		t.Errorf("audit mirror should not render 'Request:' for empty RequestID:\n%s", am.Embeds[0].Description)
+	}
+}
+
 func TestApprovalRender_NeverIncludesToken(t *testing.T) {
 	t.Parallel()
 	req := ApprovalRequest{

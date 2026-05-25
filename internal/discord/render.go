@@ -48,7 +48,7 @@ func renderApproval(req ApprovalRequest, customID string) *discordgo.MessageSend
 }
 
 func renderInteractive(req ApprovalRequest, customID string) *discordgo.MessageSend {
-	body := strings.Join([]string{
+	lines := []string{
 		headerInteractive,
 		"",
 		fmt.Sprintf("Machine: %s", req.MachineName),
@@ -56,10 +56,11 @@ func renderInteractive(req ApprovalRequest, customID string) *discordgo.MessageS
 		fmt.Sprintf("Scope:   %s", strings.Join(req.Scope, ", ")),
 		fmt.Sprintf("Reason:  %s", req.Reason),
 		fmt.Sprintf("TTL:     %s", req.RequestedTTL),
-	}, "\n")
+	}
+	lines = appendRequestIDLine(lines, "Request: %s", req.RequestID)
 	return &discordgo.MessageSend{
 		Embeds: []*discordgo.MessageEmbed{{
-			Description: body,
+			Description: strings.Join(lines, "\n"),
 			Color:       colorInteractive,
 		}},
 		Components: approvalButtons(customID),
@@ -67,7 +68,7 @@ func renderInteractive(req ApprovalRequest, customID string) *discordgo.MessageS
 }
 
 func renderDaemon(req ApprovalRequest, customID string) *discordgo.MessageSend {
-	body := strings.Join([]string{
+	lines := []string{
 		headerDaemon,
 		"",
 		fmt.Sprintf("Machine:    %s", req.MachineName),
@@ -76,14 +77,27 @@ func renderDaemon(req ApprovalRequest, customID string) *discordgo.MessageSend {
 		fmt.Sprintf("Scope:      %s", strings.Join(req.Scope, ", ")),
 		fmt.Sprintf("Reason:     %s", req.Reason),
 		fmt.Sprintf("TTL:        %s", req.RequestedTTL),
-	}, "\n")
+	}
+	lines = appendRequestIDLine(lines, "Request:    %s", req.RequestID)
 	return &discordgo.MessageSend{
 		Embeds: []*discordgo.MessageEmbed{{
-			Description: body,
+			Description: strings.Join(lines, "\n"),
 			Color:       colorDaemon,
 		}},
 		Components: approvalButtons(customID),
 	}
+}
+
+// appendRequestIDLine appends a "Request: <id>" line when the chassis
+// has supplied one. The format string carries the column-alignment
+// padding the caller uses for the rest of its fields. A missing
+// RequestID is silently elided so legacy callers (no chassis wiring)
+// still render valid prompts.
+func appendRequestIDLine(lines []string, format, requestID string) []string {
+	if requestID == "" {
+		return lines
+	}
+	return append(lines, fmt.Sprintf(format, requestID))
 }
 
 func approvalButtons(customID string) []discordgo.MessageComponent {
@@ -128,6 +142,7 @@ func renderResolvedApproval(req ApprovalRequest, approved bool) *discordgo.Inter
 		fmt.Sprintf("Reason:  %s", req.Reason),
 		fmt.Sprintf("TTL:     %s", req.RequestedTTL),
 	)
+	lines = appendRequestIDLine(lines, "Request: %s", req.RequestID)
 	return &discordgo.InteractionResponseData{
 		Embeds: []*discordgo.MessageEmbed{{
 			Description: strings.Join(lines, "\n"),
@@ -162,6 +177,7 @@ func renderAudit(eventType auditEventType, req ApprovalRequest) *discordgo.Messa
 		fmt.Sprintf("Reason: %s", req.Reason),
 		fmt.Sprintf("TTL: %s", req.RequestedTTL),
 	)
+	lines = appendRequestIDLine(lines, "Request: %s", req.RequestID)
 	return &discordgo.MessageSend{
 		Embeds: []*discordgo.MessageEmbed{{
 			Description: strings.Join(lines, "\n"),

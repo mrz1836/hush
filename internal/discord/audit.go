@@ -19,6 +19,7 @@ func (a *BotApprover) mirrorAudit(ctx context.Context, eventType auditEventType,
 	}
 	payload := renderAudit(eventType, req)
 	go func() {
+		defer a.recoverGoroutine("audit_mirror", nil)
 		if ctx.Err() != nil {
 			return
 		}

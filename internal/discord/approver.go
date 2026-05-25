@@ -34,6 +34,11 @@ type Approver interface {
 //
 // SupervisorName MUST be non-empty when SessionType is
 // token.SessionSupervisor and MUST be empty otherwise.
+//
+// RequestID is the chassis-assigned correlation identifier. The package
+// embeds it verbatim into the approval prompt body and the audit-channel
+// mirror payload so operators can cross-reference Discord-visible events
+// with the on-disk hash-chained audit entry (Layer 6).
 type ApprovalRequest struct {
 	MachineName    string
 	ClientIP       string
@@ -42,6 +47,7 @@ type ApprovalRequest struct {
 	RequestedTTL   time.Duration
 	SessionType    token.SessionType
 	SupervisorName string
+	RequestID      string
 }
 
 // Decision is returned by RequestApproval only on the

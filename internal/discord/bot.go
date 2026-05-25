@@ -262,6 +262,7 @@ func (a *BotApprover) RequestApproval(ctx context.Context, req ApprovalRequest) 
 	// once the REST call returns.
 	sendErr := make(chan error, 1)
 	go func() {
+		defer a.recoverGoroutine("send_wrapper", sendErr)
 		_, sendCallErr := a.session.ChannelMessageSendComplex(dest, msg)
 		sendErr <- sendCallErr
 	}()
@@ -388,6 +389,20 @@ func (a *BotApprover) onInteractionCreate(i *discordgo.InteractionCreate) {
 		return
 	}
 
+	// Approver allow-list gate (Constitution II). The bot may post the
+	// approval prompt to a shared channel via cfg.ApprovalChannelID; any
+	// channel member is technically able to click the buttons. Discord's
+	// gateway delivers the interaction with the clicker's user ID — verify
+	// it matches the configured owner. Mismatch is treated like a stale
+	// click: ephemeral notice, pending entry stays live so a real owner
+	// click can still resolve the request.
+	if !a.isOwnerInteraction(i) {
+		a.logger.Warn("hush/discord: rejecting interaction from non-owner",
+			slog.String("err_class", "approver_not_authorized"))
+		a.respondInteractionNotice(i, "Not authorized. Only the configured operator can approve secret requests.")
+		return
+	}
+
 	var ev decisionEvent
 	var approved bool
 	switch action {
@@ -448,6 +463,54 @@ func (a *BotApprover) respondInteractionNotice(i *discordgo.InteractionCreate, c
 		a.logger.Warn("hush/discord: failed to acknowledge stale approval interaction",
 			slog.String("err_class", "discord_unavailable"))
 	}
+}
+
+// recoverGoroutine is the package's standard panic-recovery shim for
+// spawned goroutines (Constitution VII — every goroutine recover()s).
+// Catches a panic, WARN-logs it (no value bytes), and — when sendErr is
+// non-nil — surfaces a wrapped error onto the caller's channel so the
+// outer RequestApproval flow returns a discord_unavailable instead of
+// hanging on a deadlocked receive.
+func (a *BotApprover) recoverGoroutine(site string, sendErr chan<- error) {
+	r := recover()
+	if r == nil {
+		return
+	}
+	a.logger.Warn("hush/discord: goroutine panic recovered",
+		slog.String("site", site),
+		slog.String("err_class", "panic_recovered"))
+	if sendErr != nil {
+		select {
+		case sendErr <- fmt.Errorf("%w: panic in %s", ErrDiscordUnavailable, site):
+		default:
+		}
+	}
+}
+
+// isOwnerInteraction reports whether the clicker of an interaction
+// is the configured operator. discordgo populates Member.User for
+// guild-channel interactions and User for DM interactions; either may
+// be nil depending on context — both are checked. An absent user ID
+// is treated as not-authorized (fail-closed, Constitution II).
+func (a *BotApprover) isOwnerInteraction(i *discordgo.InteractionCreate) bool {
+	if i == nil || i.Interaction == nil {
+		return false
+	}
+	uid := interactionUserID(i.Interaction)
+	return uid != "" && uid == a.ownerID
+}
+
+// interactionUserID extracts the clicker's Discord user ID from an
+// Interaction. Returns "" when neither Member.User nor User carries an ID
+// (e.g. malformed payload, future Discord schema drift).
+func interactionUserID(i *discordgo.Interaction) string {
+	if i.Member != nil && i.Member.User != nil && i.Member.User.ID != "" {
+		return i.Member.User.ID
+	}
+	if i.User != nil && i.User.ID != "" {
+		return i.User.ID
+	}
+	return ""
 }
 
 // newRequestID returns a 32-character hex-encoded random identifier

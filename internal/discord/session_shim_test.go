@@ -206,10 +206,43 @@ func (s *sessionShim) TriggerDisconnect() {
 	}
 }
 
+// testOwnerID is the canonical Discord user ID used by tests as the
+// configured operator. Every test in this package sets
+// BotConfig.OwnerID = testOwnerID so that the shim's default
+// TriggerInteractionCreate populates a Member.User that satisfies the
+// onInteractionCreate owner check.
+const testOwnerID = "owner"
+
 // TriggerInteractionCreate invokes every registered InteractionCreate
 // handler with a synthetic message-component interaction whose
-// CustomID is set to customID (e.g. "uuid:approve").
+// CustomID is set to customID (e.g. "uuid:approve"). Sets the
+// Interaction.Member.User.ID to testOwnerID so the production owner
+// check accepts it; use TriggerInteractionCreateAs to simulate a
+// non-owner click.
 func (s *sessionShim) TriggerInteractionCreate(customID string) {
+	s.TriggerInteractionCreateAs(customID, testOwnerID)
+}
+
+// TriggerInteractionCreateAs is the explicit-user-ID form of
+// TriggerInteractionCreate. Populates Interaction.Member.User.ID with
+// the supplied userID. When userID == "" the interaction has neither
+// Member nor User — used to exercise the malformed-payload defensive
+// path.
+func (s *sessionShim) TriggerInteractionCreateAs(customID, userID string) {
+	ic := &discordgo.InteractionCreate{
+		Interaction: buildInteractionWithUser(customID, userID).Interaction,
+	}
+	s.mu.Lock()
+	hs := append([]func(*discordgo.Session, *discordgo.InteractionCreate){}, s.interactionHandlers...)
+	s.mu.Unlock()
+	for _, h := range hs {
+		h(nil, ic)
+	}
+}
+
+// buildInteractionWithUser is the package-private constructor shared
+// by the shim and the unit-test helper buildButtonInteraction.
+func buildInteractionWithUser(customID, userID string) *discordgo.InteractionCreate {
 	ic := &discordgo.InteractionCreate{
 		Interaction: &discordgo.Interaction{
 			Type: discordgo.InteractionMessageComponent,
@@ -219,12 +252,10 @@ func (s *sessionShim) TriggerInteractionCreate(customID string) {
 			},
 		},
 	}
-	s.mu.Lock()
-	hs := append([]func(*discordgo.Session, *discordgo.InteractionCreate){}, s.interactionHandlers...)
-	s.mu.Unlock()
-	for _, h := range hs {
-		h(nil, ic)
+	if userID != "" {
+		ic.Member = &discordgo.Member{User: &discordgo.User{ID: userID}}
 	}
+	return ic
 }
 
 // SetSendErr programs the shim to return err for every call to

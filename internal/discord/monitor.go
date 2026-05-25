@@ -19,6 +19,7 @@ func (a *BotApprover) runMonitor(ctx context.Context) {
 		_ = a.session.Close()
 		a.drainPending()
 	}()
+	defer a.recoverGoroutine("monitor", nil)
 
 	for {
 		select {

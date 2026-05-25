@@ -22,17 +22,11 @@ import (
 var errInternalForTest = errors.New("internal failure")
 
 // buildButtonInteraction synthesizes a message-component interaction
-// payload for unit-testing the dispatcher directly.
+// payload for unit-testing the dispatcher directly. Defaults to the
+// configured testOwnerID so the production owner-allowlist check
+// accepts the synthetic click.
 func buildButtonInteraction(customID string) *discordgo.InteractionCreate {
-	return &discordgo.InteractionCreate{
-		Interaction: &discordgo.Interaction{
-			Type: discordgo.InteractionMessageComponent,
-			Data: discordgo.MessageComponentInteractionData{
-				CustomID:      customID,
-				ComponentType: discordgo.ButtonComponent,
-			},
-		},
-	}
+	return buildInteractionWithUser(customID, testOwnerID)
 }
 
 func TestNewBotApprover_ValidatesConfig(t *testing.T) {
