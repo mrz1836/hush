@@ -17,10 +17,12 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/mrz1836/hush/internal/supervise/config"
 	"github.com/mrz1836/hush/internal/vault/securebytes"
 )
 
@@ -142,19 +144,29 @@ func (l *Lifecycle) lookupValidator(scope string) Validator {
 	return noopValidator{}
 }
 
-// buildChildEnv assembles the child env []string from three layered sources,
+// buildChildEnv assembles the child env []string from four layered sources,
 // lowest priority first:
 //  1. EnvPassthrough: named vars copied from the supervisor's own os.Environ()
 //     — only keys present in the supervisor env land here.
 //  2. Env: explicit KEY=VALUE pairs declared in the supervisor config.
-//  3. Scope: per-scope secrets fetched from the vault.
+//  3. overlay: non-secret KEY=VALUE pairs injected by the orchestrator (e.g.
+//     HUSH_BIND_PORT for reload-eligible configs). Overlay keys whose name
+//     matches a configured scope are silently dropped — the vault is the
+//     source of truth for any scope-named env var, and an overlay must not
+//     mask it.
+//  4. Scope: per-scope secrets fetched from the vault.
 //
 // Later layers overwrite earlier layers on key collision. This is the ONE
 // permitted `string(*SecureBytes)` site — the OS fork boundary. The caller
 // owns zeroing the returned slice once the child has been started (or the
 // start path errors out).
-func (l *Lifecycle) buildChildEnv(secrets secretSet) ([]string, error) {
-	capHint := len(l.config.Child.EnvPassthrough) + len(l.config.Child.Env) + len(l.config.Scope)
+//
+// The overlay is "non-secret" by contract: callers MUST only put values
+// here that are safe to surface in logs or audit events (port numbers,
+// listener addresses, strategy strings). Scope secrets always flow through
+// the secretSet path; they are never read through the overlay.
+func (l *Lifecycle) buildChildEnv(secrets secretSet, overlay map[string]string) ([]string, error) {
+	capHint := len(l.config.Child.EnvPassthrough) + len(l.config.Child.Env) + len(overlay) + len(l.config.Scope)
 	env := make([]string, 0, capHint)
 	seen := make(map[string]int, capHint)
 	upsertEnv := func(key, value string) {
@@ -174,12 +186,35 @@ func (l *Lifecycle) buildChildEnv(secrets secretSet) ([]string, error) {
 	for key, value := range l.config.Child.Env {
 		upsertEnv(key, value)
 	}
+	applyEnvOverlay(overlay, l.config.Scope, upsertEnv)
 	for _, scope := range l.config.Scope {
 		if err := appendScopeEnv(secrets, scope, upsertEnv); err != nil {
 			return env, err
 		}
 	}
 	return env, nil
+}
+
+// applyEnvOverlay feeds the non-secret overlay into upsert, skipping any
+// key that collides with a configured scope name. Scope-name collisions
+// are dropped silently because the vault MUST remain the source of truth
+// for any scope-named env var, and an overlay is by contract non-secret —
+// allowing it to mask a scope would let a logged overlay value substitute
+// for a vault-backed secret.
+func applyEnvOverlay(overlay map[string]string, scope []string, upsert func(key, value string)) {
+	if len(overlay) == 0 {
+		return
+	}
+	scopeNames := make(map[string]struct{}, len(scope))
+	for _, name := range scope {
+		scopeNames[name] = struct{}{}
+	}
+	for key, value := range overlay {
+		if _, isScope := scopeNames[key]; isScope {
+			continue
+		}
+		upsert(key, value)
+	}
 }
 
 // appendScopeEnv resolves one scope's plaintext from secrets and feeds it to
@@ -205,15 +240,54 @@ func appendScopeEnv(secrets secretSet, scope string, upsert func(key, value stri
 	return nil
 }
 
+// buildChildEnvOverlay returns the non-secret env overlay the orchestrator
+// injects into the child env on top of the operator's EnvPassthrough/Env.
+// Returns an empty map (never nil) when the config has not opted into
+// reload-eligibility — non-reload configs see the same env shape they
+// always have.
+//
+// For reload-eligible configs ([child.handoff] mode = "http-proxy"), the
+// overlay carries HUSH_BIND_PORT, set to a freshly allocated loopback port.
+// The port is also recorded on Lifecycle.backendPort so Phase 5's proxy
+// can target it without re-allocating.
+//
+// The overlay MUST contain only non-secret values — its contents are safe
+// to surface in audit events. Vault-backed scope secrets flow through the
+// secretSet path in buildChildEnv, never through this overlay.
+func (l *Lifecycle) buildChildEnvOverlay(ctx context.Context) (map[string]string, error) {
+	overlay := map[string]string{}
+	if l.config.Child.Handoff == nil || l.config.Child.Handoff.Mode != config.HandoffModeHTTPProxy {
+		return overlay, nil
+	}
+	port, err := AllocateBackendPort(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("supervise: child env overlay: %w", err)
+	}
+	l.backendMu.Lock()
+	l.backendPort = port
+	l.backendMu.Unlock()
+	overlay[config.EnvVarBindPort] = strconv.FormatUint(uint64(port), 10)
+	return overlay, nil
+}
+
 // startChild builds ChildConfig.Env from the supplied per-scope plaintext,
 // instantiates the Child, calls Start(ctx), spawns childWaitLoop, and updates
 // inputs. The secrets are borrowed — startChild neither retains nor destroys
 // them.
 //
+// When [child.handoff] is configured, startChild allocates a private
+// loopback backend port and injects it as HUSH_BIND_PORT via the
+// non-secret env overlay. The allocated port is recorded on the Lifecycle
+// so Phase 5's proxy can forward traffic to it.
+//
 // This is the ONE permitted `string(*SecureBytes)` site — the OS fork
 // boundary. The env slice is zeroed after Start returns.
 func (l *Lifecycle) startChild(ctx context.Context, secrets secretSet) error {
-	env, err := l.buildChildEnv(secrets)
+	overlay, err := l.buildChildEnvOverlay(ctx)
+	if err != nil {
+		return err
+	}
+	env, err := l.buildChildEnv(secrets, overlay)
 	// Zero the env slice on every exit path — success, every
 	// error return below, and any panic that unwinds through this frame.
 	// Child.Start makes its own defensive copy of the slice into cmd.Env,

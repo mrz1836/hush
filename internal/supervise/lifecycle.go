@@ -269,6 +269,15 @@ type Lifecycle struct {
 	// next childExit message — used when the orchestrator itself terminates a
 	// child for an operator-driven refresh (stopChildForRefresh).
 	suppressNextChildExit atomic.Bool
+
+	// backendMu guards backendPort. backendPort is non-zero when a
+	// reload-eligible child has been started and the supervisor has
+	// allocated a private loopback port for it; Phase 5's proxy reads
+	// this to point at the active backend. Zero means "no backend port
+	// has ever been allocated" — i.e. either the config is not
+	// reload-eligible, or startChild has not yet run.
+	backendMu   sync.Mutex
+	backendPort uint16
 }
 
 // NewLifecycle constructs a Lifecycle. Validates required Deps fields and
