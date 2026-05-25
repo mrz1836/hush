@@ -7,7 +7,6 @@ import (
 
 	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // katFingerprintHex is the expected PublicKeyFingerprint output for
@@ -24,15 +23,13 @@ func testKATFingerprintScalar() []byte {
 }
 
 func TestPublicKeyFingerprint_Stable(t *testing.T) {
-	key1, err := scalarToECDSAKey(testKATFingerprintScalar())
-	require.NoError(t, err)
+	key1 := scalarToECDSAKey(testKATFingerprintScalar())
 
 	scalar2 := make([]byte, 32)
 	for i := range scalar2 {
 		scalar2[i] = byte(i + 2)
 	}
-	key2, err := scalarToECDSAKey(scalar2)
-	require.NoError(t, err)
+	key2 := scalarToECDSAKey(scalar2)
 
 	t.Run("two invocations on same key return identical strings", func(t *testing.T) {
 		fp1 := PublicKeyFingerprint(&key1.PublicKey)

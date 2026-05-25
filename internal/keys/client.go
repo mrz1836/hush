@@ -13,11 +13,15 @@ import (
 // machineIndex is passed directly to Child, covering the full uint32 range.
 // Indices below HardenedKeyStart yield non-hardened children; at or above yield
 // hardened children.  All values succeed and produce distinct keypairs.
+//
+// The intermediate and final hdkeychain.ExtendedKey nodes derived along the
+// path are zeroed before this returns; only the *ecdsa.PrivateKey survives.
 func DeriveClientKey(seed []byte, machineIndex uint32) (*ecdsa.PrivateKey, error) {
 	child, err := deriveHDChildClient(seed, machineIndex)
 	if err != nil {
 		return nil, err
 	}
+	defer child.Zero()
 	return ecPrivKeyFromChild(child)
 }
 
