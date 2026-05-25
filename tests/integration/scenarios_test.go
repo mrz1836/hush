@@ -24,8 +24,9 @@
 //	N=15  Scenario 13  MidSessionRotation           scenario_13_test.go
 //	N=16  Scenario 14  DuplicateStart               scenario_14_test.go
 //	N=17  Scenario 15  LogPatternMatch              scenario_15_test.go
+//	N=18  Scenario 16  ReloadHTTPProxy              scenario_16_reload_test.go
 //
-// All 17 scenarios are wired against the real harness — none uses
+// All 18 scenarios are wired against the real harness — none uses
 // t.Skip; the suite reaches full coverage only when every scenario
 // passes under `magex test:race` with the integration build tag.
 package integration_test

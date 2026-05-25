@@ -67,6 +67,8 @@ type TestSupervisor struct {
 	vaultHzStub   func(context.Context, string) error
 	startedAt     time.Time
 	logCaptureRef *LogCapture
+	cfgPath       string
+	proxy         *supervise.Proxy
 }
 
 // realClock implements supervise.Clock backed by time.Now. Used as the
@@ -107,6 +109,15 @@ type SupervisorOpts struct {
 	// the harness runs its matcher loop and bridges matches into the Discord
 	// alert log as AlertClassLogPatternMatch (Scenario 15).
 	WatchdogPatterns []watchdog.Pattern
+	// Reload, when non-nil, builds a reload-eligible supervisor: the
+	// supervisor's child command is overridden with the testdata
+	// reload-child binary, the TOML is augmented with [child.readiness] /
+	// [child.shutdown] / [child.handoff], and HUSH_BIND_PORT is wired
+	// through env_passthrough. See reload.go for the field-level knobs
+	// (forced unreadiness, ignored SIGTERM, omitted sections, ...).
+	// Mutually exclusive with Child — supplying both is a programming
+	// error and the harness fatals at NewSupervisor.
+	Reload *ReloadOpts
 }
 
 // NewSupervisor builds a TestSupervisor against the supplied options.
@@ -148,9 +159,13 @@ func NewSupervisor(t *testing.T, opts SupervisorOpts) *TestSupervisor {
 	decryptKey := NewECDSAKey(t)
 	opts.Vault.RegisterClient(t, opts.MachineIndex, &signKey.PublicKey)
 
+	if opts.Reload != nil && opts.Child != nil {
+		t.Fatal("harness.NewSupervisor: SupervisorOpts.Reload is mutually exclusive with SupervisorOpts.Child")
+	}
+
 	// 2. Build a supervisor config TOML pointing at the test server URL
 	//    plus per-supervisor pidfile / status-socket / audit-log paths.
-	cfg := buildSupervisorConfig(t, opts)
+	cfg, cfgPath := buildSupervisorConfig(t, opts)
 
 	// 3. Acquire the pidfile via the standard helper (registers Cleanup).
 	pidfile := AcquirePidFile(t, cfg.PIDFile)
@@ -241,6 +256,7 @@ func NewSupervisor(t *testing.T, opts SupervisorOpts) *TestSupervisor {
 		tailscaleStub: tailscaleProbe,
 		vaultHzStub:   vaultHzProbe,
 		logCaptureRef: opts.Logger,
+		cfgPath:       cfgPath,
 	}
 	t.Cleanup(ts.Stop)
 	return ts
@@ -541,7 +557,7 @@ func AssertNoLeak(t *testing.T, preCount, maxIters int) {
 // audit log) live under the vault's state directory. The status socket
 // is placed in a short /tmp path to stay below the macOS 104-char Unix
 // socket path limit.
-func buildSupervisorConfig(t *testing.T, opts SupervisorOpts) *superviseconfig.Supervisor {
+func buildSupervisorConfig(t *testing.T, opts SupervisorOpts) (*superviseconfig.Supervisor, string) {
 	t.Helper()
 	dir := opts.Vault.Dir()
 	pidPath := filepath.Join(dir, fmt.Sprintf("%s.pid", opts.Name))
@@ -572,11 +588,21 @@ func buildSupervisorConfig(t *testing.T, opts SupervisorOpts) *superviseconfig.S
 		validatorsToml += fmt.Sprintf("%s = \"anthropic\"\n", s)
 	}
 
-	// Child command: the scripted TestChild's argv when supplied, else a
+	// Child command: the scripted TestChild's argv when supplied, the
+	// reload-child binary when reload-eligible mode is requested, else a
 	// long-lived no-op loop.
 	childCmd := []string{"/bin/sh", "-c", "while true; do sleep 1; done"}
+	envPassthrough := `["PATH"]`
+	var reloadFrag reloadTOMLFragments
 	if opts.Child != nil {
 		childCmd = opts.Child.Cmd().Command
+	}
+	if opts.Reload != nil {
+		reloadFrag = buildReloadTOMLFragments(t, opts.Reload)
+		childCmd = reloadFrag.commandArgv
+		// HUSH_BIND_PORT must be reachable inside the child so it can bind
+		// 127.0.0.1:<port>. Passing through PATH preserves binary lookup.
+		envPassthrough = `["PATH", "HUSH_BIND_PORT"]`
 	}
 	cmdToml := "["
 	for i, a := range childCmd {
@@ -617,8 +643,12 @@ scope = %s
 [child]
 command = %s
 working_dir = "/tmp"
-env_passthrough = ["PATH"]
+env_passthrough = %s
 
+%s
+%s
+%s
+%s
 %s
 `,
 		opts.Name,
@@ -632,6 +662,11 @@ env_passthrough = ["PATH"]
 		cacheToml,
 		scopesToml,
 		cmdToml,
+		envPassthrough,
+		reloadFrag.envBlock,
+		reloadFrag.readiness,
+		reloadFrag.shutdown,
+		reloadFrag.handoff,
 		validatorsToml,
 	)
 
@@ -643,7 +678,7 @@ env_passthrough = ["PATH"]
 	if err != nil {
 		t.Fatalf("harness.buildSupervisorConfig: Load: %v", err)
 	}
-	return cfg
+	return cfg, cfgPath
 }
 
 // defaultHzProbe issues GET <url>/hz and reports an error on non-2xx.
