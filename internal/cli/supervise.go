@@ -81,6 +81,7 @@ func newSuperviseCmd() *cobra.Command {
 		"Override cfg.CacheGraceTTL for this run (must be >0 and ≤4h)")
 	cmd.Flags().BoolVar(&flags.noCache, "no-cache", false,
 		"Force cfg.CacheSecretsForRestart=false for this run")
+	cmd.AddCommand(newSuperviseReloadCmd())
 	return cmd
 }
 
