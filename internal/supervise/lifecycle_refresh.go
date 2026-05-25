@@ -181,8 +181,9 @@ func (l *Lifecycle) dispatchRefreshVerb(ctx context.Context, verb refreshVerb) {
 		case verb.ack <- err:
 		default:
 		}
-	case StateFetching, StateStopped:
-		// Reject — preserves boot-retry / fetching natural flow.
+	case StateFetching, StateStopped, StateSwapping:
+		// Reject — preserves boot-retry / fetching natural flow and avoids
+		// overlapping refreshes while a hot swap is already in flight.
 		l.emitClientRefreshInvoked(ctx, string(state), "rejected")
 		select {
 		case verb.ack <- &rejectStateError{state: string(state)}:

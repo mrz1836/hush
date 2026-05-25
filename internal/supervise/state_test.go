@@ -603,7 +603,7 @@ func TestStore_ConcurrentTransitionAndSnapshot(t *testing.T) { //nolint:gocognit
 				}
 				snap := s.Snapshot()
 				switch snap.State {
-				case StateFetching, StateRunning, StateAwaitingApproval, StateGraceRestart, StateStopped:
+				case StateFetching, StateRunning, StateAwaitingApproval, StateGraceRestart, StateSwapping, StateStopped:
 					// observed value is in the closed vocabulary
 				default:
 					t.Errorf("snapshot State outside vocabulary: %q", snap.State)
