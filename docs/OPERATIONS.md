@@ -281,6 +281,35 @@ Intent:
 - tools inherit env vars from the wrapped shell
 - secrets do not persist after the shell exits
 
+### Agent-context flags (optional)
+
+`hush request` accepts five optional flags that populate the Discord
+approval embed with extra context — useful when AI agents call hush so
+the human approver can spot anomalies before clicking Approve:
+
+```bash
+hush request \
+  --agent claude-code/1.2.3 \
+  --model claude-opus-4-7 \
+  --tool Bash \
+  --command 'git push origin master' \
+  --summary 'Refactoring auth module' \
+  --scope GITHUB_TOKEN --ttl 10m --max-uses 1 \
+  --reason 'finish refactor' --exec true
+```
+
+The `--command` value is redacted client-side for common secret
+patterns (`sk-…`, `ghp_…`, `xoxb-…`, `AKIA…`, generic high-entropy
+base64) and re-redacted server-side before being shown to the
+approver and recorded in the signed audit log. Length caps:
+`--agent` ≤128, `--model` ≤64, `--tool` ≤64, `--command` ≤1024,
+`--summary` ≤256. Oversized values are rejected with 400 `bad_request`.
+
+> ⚠️ These fields are **operator-visible context, not authenticators**.
+> A compromised agent can lie in any of them; trust the cryptographic
+> identity (client signature, peer IP) for authorization. See
+> `docs/SECURITY.md` §6.
+
 ### Daemon work
 
 Run `hush supervise` under launchd/systemd.

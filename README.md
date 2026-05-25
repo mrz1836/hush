@@ -461,6 +461,94 @@ For the full architecture treatment, see [`docs/ARCHITECTURE.md`](docs/ARCHITECT
 
 <br/>
 
+### Programmatic integration
+
+AI agents that consume hush — Claude Code, Codex, custom Go daemons —
+can integrate in-process via the
+[`github.com/mrz1836/hush/pkg/client`](pkg/client/) SDK instead of
+exec'ing the CLI. The SDK gives agents typed access to two surfaces:
+
+**1. Supervisor freshness — `SupervisorStatus`** (read what the local
+supervisor knows; no Discord roundtrip):
+
+```go
+import "github.com/mrz1836/hush/pkg/client"
+
+sup := client.NewSupervisorStatus(os.Getenv("HUSH_STATUS_SOCKET"))
+status, err := sup.Snapshot(ctx)
+if len(status.ScopeStale) > 0 {
+    log.Fatal("refusing to run — stale scopes:", status.ScopeStale)
+}
+fmt.Println("session expires at:", status.SessionExpiresAt)
+```
+
+**2. Capability discovery — `Me()`** (ask the vault server *what
+scopes exist* and *what does my current session look like*, signed
+with the agent's enrolled client key, without burning a Discord
+approval):
+
+```go
+resp, err := client.Me(ctx, client.MeRequest{
+    ServerURL:   "http://100.64.0.1:7743/h/abcd1234",
+    ClientKey:   myEnrolledPrivKey,           // *ecdsa.PrivateKey
+    MachineName: "claude-code-laptop",
+    BearerJWT:   os.Getenv("HUSH_BEARER"),    // optional
+})
+if err != nil {
+    log.Fatal(err)
+}
+fmt.Println("scopes available:", resp.ScopesAvailable)
+if resp.CurrentSession != nil {
+    fmt.Println("current jti:", resp.CurrentSession.JTI,
+        "expires:", resp.CurrentSession.ExpiresAt)
+}
+```
+
+Together these let an agent plan: "do I already hold a fresh session
+for this scope? when does it expire? what *could* I request if I need
+more?" — all without touching the operator's phone.
+
+See [`pkg/client/README.md`](pkg/client/README.md) for the full v1
+surface. The SDK ships typed errors (`ErrSocketUnavailable`,
+`ErrInvalidResponse`, `ErrRefreshDenied`, `ErrUnauthenticated`) so
+callers can switch on them with `errors.Is`.
+
+**3. Lifecycle events — `Watch()`** (reactive notification so an
+agent can wind down BEFORE its credentials expire, instead of being
+killed mid-task):
+
+```go
+events, _ := sup.Watch(ctx, client.WatchOptions{
+    PollInterval:     30 * time.Second,
+    ExpiryThresholds: []time.Duration{15 * time.Minute, 5 * time.Minute, 1 * time.Minute},
+})
+for ev := range events {
+    switch ev.Type {
+    case client.EventExpiresSoon:
+        if ev.Threshold <= time.Minute {
+            checkpoint(); shutdownCleanly()
+        }
+    case client.EventStateChange:
+        log.Info("supervisor state →", ev.Status.State)
+    case client.EventSessionRenewed:
+        log.Info("fresh JTI", ev.Status.SessionJTI)
+    }
+}
+```
+
+`Watch()` emits `EventInitial`, `EventStateChange`,
+`EventScopeHealthChange`, `EventSessionRenewed`, `EventExpiresSoon`
+(once per configured threshold per session), and `EventError` for
+transient poll failures. The channel closes on context cancel.
+
+**Worked example**: a runnable program demonstrating all three SDK
+calls (Snapshot, Me, Watch) plus the agent-context flags on `/claim`
+lives at [`examples/agent/`](examples/agent/). See
+[`docs/AGENT-INTEGRATION.md`](docs/AGENT-INTEGRATION.md) for the
+complete agent integration guide.
+
+<br/>
+
 ### Tech stack
 
 - **[Go 1.26+](https://go.dev/)** — single static binary, `CGO_ENABLED=0`
@@ -499,6 +587,7 @@ View the comprehensive documentation for hush:
 | [`docs/OPERATIONS.md`](docs/OPERATIONS.md) | Setup, day-to-day modes, `--non-interactive`, Keychain recovery |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Component model, trust boundaries, supervisor lifecycle |
 | [`docs/SECURITY.md`](docs/SECURITY.md) | Threat model, 7 security layers, residual risks |
+| [`docs/AGENT-INTEGRATION.md`](docs/AGENT-INTEGRATION.md) | SDK guide for AI agents: `pkg/client` Snapshot / Me / Watch + agent-context flags on `/claim` |
 | [`docs/CONFIG-SCHEMA.md`](docs/CONFIG-SCHEMA.md) | Server + supervisor TOML schemas, defaults, validation |
 | [`docs/DAEMONS.md`](docs/DAEMONS.md) | Supervisor pattern, refresh tuning, validator authoring |
 | [`docs/API.md`](docs/API.md) | HTTP endpoint reference |
@@ -643,6 +732,8 @@ Run all tests with race detector (slower):
 magex test:race
 ```
 
+<br/>
+
 ### Test Coverage
 
 View coverage report:
@@ -653,6 +744,8 @@ magex test:coverage
 
 Coverage reports are automatically uploaded to [Codecov](https://codecov.io/gh/mrz1836/hush)
 on every commit.
+
+<br/>
 
 ### Benchmarks
 
@@ -678,6 +771,8 @@ Compare two runs:
 magex bench:compare old=before.txt new=after.txt
 ```
 
+<br>
+
 **Latest baseline** — Apple M1 Max · darwin/arm64 · Go 1.26 · `benchtime=2s`:
 
 | Benchmark                                        | ns/op   | B/op   | allocs/op | Path covered                                          |
@@ -691,7 +786,7 @@ magex bench:compare old=before.txt new=after.txt
 > ≥10% regressions on the same hardware after a code change. The CI
 > machine numbers will differ; track relative deltas, not absolutes.
 >
-> Last measured: 2026-05-24 at HEAD of [the optimization plan](./README.md#benchmarks).
+> Last measured: 2026-05-24
 
 <br/>
 

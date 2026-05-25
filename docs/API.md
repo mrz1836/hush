@@ -72,6 +72,87 @@ Expected status dimensions:
 - config valid
 - clock-sync status
 
+### `POST /h/<prefix>/claim` — optional agent-context fields (PR 4)
+
+In addition to the required fields documented above, `/claim` now
+accepts five OPTIONAL fields that an agent populates so the human
+approver can spot anomalies in the Discord prompt:
+
+| Field | Max length | Purpose |
+|---|---|---|
+| `agent_identity` | 128 | Agent name + version (e.g. `claude-code/1.2.3`) |
+| `agent_model` | 64 | Model identifier (e.g. `claude-opus-4-7`) |
+| `tool_name` | 64 | The tool the agent is about to invoke (e.g. `Bash`) |
+| `command_preview` | 1024 | First N chars of argv; client-side redacted for common secret patterns, server-side re-redacted as belt-and-braces |
+| `recent_summary` | 256 | One-line activity context |
+
+All fields are `omitempty` on the wire. They appear in the signed
+canonical payload as empty strings when unset, so clients that omit
+them produce signatures byte-identical to a pre-PR-4 client.
+
+The server enforces the length caps at shape-validation time
+(returning `400 bad_request` on violation) and re-runs
+`internal/redact.CommandPreview` on `command_preview` AFTER signature
+verification — redacting before verify would mutate the bytes the
+client signed over.
+
+**Security note**: these fields are operator-visible metadata for
+anomaly detection. They are NOT authenticators. A compromised agent
+could lie in any of them. Authorization decisions trust the
+cryptographic identity (client signature, `machine_name`, peer IP)
+only.
+
+### `POST /h/<prefix>/me`
+
+Purpose:
+- capability + freshness introspection for enrolled clients (agent planning)
+- **never** triggers a Discord approval
+
+Required request fields (signed body, same crypto as `/claim`):
+- `nonce`
+- `timestamp`
+- `signature`
+- `request_id`
+- `machine_name`
+- `client_key_fingerprint`
+
+Optional headers:
+- `Authorization: Bearer <jwt>` — when present and valid, the response
+  includes a `current_session` block. An invalid bearer is silently
+  ignored (the response simply omits `current_session`) — `/me` never
+  returns 401 for a bad bearer because the signed body already
+  authenticated the caller.
+
+Response (success, 200):
+- `schema_version` (int, currently `1`)
+- `server_version` (string, semantic version of the server binary)
+- `scopes_available` (array of string scope names; values never returned)
+- `current_session` (object, present only when bearer validates):
+  - `jti`
+  - `expires_at` (RFC3339)
+  - `scopes`
+  - `max_uses`
+  - `session_type` (`interactive` / `supervisor`)
+- `next_refresh_window` (omitted server-side — the refresh window is a
+  supervisor concept; fetch it from the supervisor's status socket)
+
+Failure outcomes:
+- 400 `bad_request` — malformed body
+- 403 `bad_signature` — signature invalid or fingerprint unknown
+- 403 `nonce_replay` — nonce already seen within `NonceTTL`
+- 403 `stale_timestamp` — timestamp outside `ClockSkew`
+- 403 `ip_not_allowed` — source IP not in Tailscale CIDR allow-list
+
+Audit:
+- emits exactly one `me_query` event per request, with
+  `detail.outcome` ∈ {`ok`, `bad-request`, `bad-signature`,
+  `nonce-replay`, `stale-timestamp`, `ip-not-allowed`}.
+
+Side-effect-free relative to session state:
+- never decrements the bearer JWT's remaining uses
+- never invokes the approver
+- consumes one nonce-cache slot (shared with `/claim`)
+
 ---
 
 ## Local supervisor socket endpoint
