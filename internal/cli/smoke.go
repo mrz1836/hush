@@ -148,30 +148,25 @@ func runSmoke(ctx context.Context, stdout, stderr *Stream, in *os.File, deps smo
 		}
 	}
 
-	pass, err := promptAndConfirmSecret(in, stderr.w, deps.promptSecret, promptVaultPassphrase, promptConfirmVault)
+	passphrase, err := promptAndConfirmSecret(in, stderr.w, deps.promptSecret, promptVaultPassphrase, promptConfirmVault)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = pass.Destroy() }()
-	passphrase, err := secureBytesString(pass)
-	if err != nil {
-		return err
-	}
-	defer zeroBytesString(&passphrase)
+	defer func() { _ = passphrase.Destroy() }()
 
-	botToken, hasEnvBotToken := os.LookupEnv("HUSH_DISCORD_BOT_TOKEN")
-	if !hasEnvBotToken || botToken == "" {
-		bot, botErr := deps.promptSecret(in, stderr.w, promptBotToken)
-		if botErr != nil {
-			return botErr
-		}
-		defer func() { _ = bot.Destroy() }()
-		botToken, err = secureBytesString(bot)
+	var botToken *securebytes.SecureBytes
+	if envTok, hasEnvBotToken := os.LookupEnv("HUSH_DISCORD_BOT_TOKEN"); hasEnvBotToken && envTok != "" {
+		botToken, err = securebytes.New([]byte(envTok))
 		if err != nil {
 			return err
 		}
-		defer zeroBytesString(&botToken)
+	} else {
+		botToken, err = deps.promptSecret(in, stderr.w, promptBotToken)
+		if err != nil {
+			return err
+		}
 	}
+	defer func() { _ = botToken.Destroy() }()
 
 	if opts.listenAddr == "" {
 		opts.listenAddr, err = promptRequired(deps.promptLine, in, stderr.w, promptListenAddr, "listen_addr")
@@ -226,7 +221,14 @@ func runSmoke(ctx context.Context, stdout, stderr *Stream, in *os.File, deps smo
 	defer cancelServe()
 	serveErrCh := make(chan error, 1)
 	oldToken, hadOldToken := os.LookupEnv("HUSH_DISCORD_BOT_TOKEN")
-	_ = os.Setenv("HUSH_DISCORD_BOT_TOKEN", botToken)
+	// The OS env table is the boundary documented as residual #2 (env
+	// vars in /proc/{pid}/environ); the only short-lived string copy is
+	// the os.Setenv argument inside this Use borrow.
+	if useErr := botToken.Use(func(b []byte) {
+		_ = os.Setenv("HUSH_DISCORD_BOT_TOKEN", string(b))
+	}); useErr != nil {
+		return useErr
+	}
 	defer restoreEnv("HUSH_DISCORD_BOT_TOKEN", oldToken, hadOldToken)
 
 	go func() {
@@ -296,13 +298,22 @@ func runSmoke(ctx context.Context, stdout, stderr *Stream, in *os.File, deps smo
 	return nil
 }
 
-func smokeInitServer(ctx context.Context, stderr *Stream, in *os.File, deps smokeDeps, opts smokeOptions, stateDir, passphrase string) error {
+func smokeInitServer(ctx context.Context, stderr *Stream, in *os.File, deps smokeDeps, opts smokeOptions, stateDir string, passphrase *securebytes.SecureBytes) error {
 	initDeps, err := deps.initDepsFactory()
 	if err != nil {
 		return err
 	}
+	// Clone the smoke-owned passphrase: runInitServer takes ownership of
+	// initDeps.serverPassphrase via the same Destroy-at-end pattern the
+	// non-interactive cobra RunE uses (and runInitServer itself clones
+	// again before its inner defer Destroy fires).
+	passClone, err := cloneSecureBytes(passphrase)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = passClone.Destroy() }()
 	initDeps.serverNonInteractive = true
-	initDeps.serverPassphrase = passphrase
+	initDeps.serverPassphrase = passClone
 	initDeps.stateDirRoot = stateDir
 	initDeps.serverInputs = serverInputs{
 		stateDir:          stateDir,
@@ -316,25 +327,40 @@ func smokeInitServer(ctx context.Context, stderr *Stream, in *os.File, deps smok
 	return runInitServer(ctx, newStream(io.Discard, false, true), stderr, in, initDeps)
 }
 
-func smokeAddSecret(ctx context.Context, stderr *Stream, in *os.File, deps smokeDeps, cfgPath, stateDir, passphrase string) error {
+func smokeAddSecret(ctx context.Context, stderr *Stream, in *os.File, deps smokeDeps, cfgPath, stateDir string, passphrase *securebytes.SecureBytes) error {
 	secretDeps := deps.secretDepsFactory()
 	secretDeps.configPath = cfgPath
 	secretDeps.stateDirRoot = stateDir
 	secretDeps.nonInteractive = true
-	secretDeps.passphrase = passphrase
-	secretDeps.secretValue = smokeSecretValue
+	passClone, err := cloneSecureBytes(passphrase)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = passClone.Destroy() }()
+	secretDeps.passphrase = passClone
+	val, err := securebytes.New([]byte(smokeSecretValue))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = val.Destroy() }()
+	secretDeps.secretValue = val
 	secretDeps.description = "hush built-in fake smoke-test secret"
 	return runSecretAdd(ctx, stderr, in, secretDeps, []string{smokeSecretName})
 }
 
-func smokeInitClient(ctx context.Context, stderr *Stream, in *os.File, deps smokeDeps, stateDir, passphrase string, machineIndex uint32) (string, error) {
+func smokeInitClient(ctx context.Context, stderr *Stream, in *os.File, deps smokeDeps, stateDir string, passphrase *securebytes.SecureBytes, machineIndex uint32) (string, error) {
 	initDeps, err := deps.initDepsFactory()
 	if err != nil {
 		return "", err
 	}
 	keyFile := filepath.Join(stateDir, fmt.Sprintf("client-machine-%d.key", machineIndex))
 	initDeps.clientNonInteractive = true
-	initDeps.clientPassphrase = passphrase
+	passClone, err := cloneSecureBytes(passphrase)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = passClone.Destroy() }()
+	initDeps.clientPassphrase = passClone
 	initDeps.clientRegistry = filepath.Join(stateDir, "clients.json")
 	initDeps.clientKeyFile = keyFile
 	cmd := newInitClientCmd()
@@ -369,19 +395,17 @@ func promptAndConfirmSecret(in *os.File, prompt io.Writer, reader func(*os.File,
 	return first, nil
 }
 
-func secureBytesString(sb *securebytes.SecureBytes) (string, error) {
-	var out string
-	if err := sb.Use(func(b []byte) { out = string(b) }); err != nil {
-		return "", err
-	}
-	return out, nil
-}
-
-func zeroBytesString(s *string) { *s = "" }
-
-func fixedPassphraseSource(passphrase string) passphraseSource {
+// fixedPassphraseSource returns a passphraseSource that yields a fresh
+// mlocked *SecureBytes copy of the supplied passphrase on every call.
+// The supplied passphrase is borrowed (not consumed); the caller retains
+// ownership and remains responsible for Destroy.
+//
+// This is the smoke-flow equivalent of the production resolvePassphrase
+// callback used by serve.go; threading *SecureBytes through avoids any
+// long-lived Go-string copy of the secret.
+func fixedPassphraseSource(passphrase *securebytes.SecureBytes) passphraseSource {
 	return func(context.Context, *os.File, io.Writer) (*securebytes.SecureBytes, error) {
-		return securebytes.New([]byte(passphrase))
+		return cloneSecureBytes(passphrase)
 	}
 }
 

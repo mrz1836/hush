@@ -304,8 +304,8 @@ func TestKeychainACL_NonInteractiveDenialFails(t *testing.T) {
 	t.Parallel()
 	fx, _ := newACLFixture(t, 1)
 	fx.deps.serverNonInteractive = true
-	fx.deps.serverPassphrase = testGoodPassphrase
-	fx.deps.serverBotToken = testBotTokenInput
+	fx.deps.serverPassphrase = mustSecureBytes(t, []byte(testGoodPassphrase))
+	fx.deps.serverBotToken = mustSecureBytes(t, []byte(testBotTokenInput))
 	fx.deps.serverInputs.listenAddr = testListenAddrInput
 	fx.deps.serverInputs.ownerID = testOwnerIDInput
 	fx.deps.serverInputs.applicationID = testApplicationIDIn

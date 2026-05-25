@@ -153,9 +153,17 @@ type secretDeps struct {
 	nowFn        func() time.Time
 
 	nonInteractive bool
-	passphrase     string
-	secretValue    string
-	description    string
+	// passphrase is the operator-supplied vault passphrase used when
+	// nonInteractive=true. Owned by the caller; the verb borrows the
+	// bytes inside a single Use callback to materialize a fresh mlocked
+	// working copy and never converts to a Go string.
+	passphrase *securebytes.SecureBytes
+	// secretValue is the operator-supplied secret payload used when
+	// nonInteractive=true. Same ownership/borrow contract as
+	// passphrase. nil means "not supplied" (legitimate for non-add
+	// verbs).
+	secretValue *securebytes.SecureBytes
+	description string
 }
 
 // productionSecretDeps wires the real seams. Tests construct a custom
@@ -214,6 +222,7 @@ func readSecretAddInput(path string) (secretAddInput, error) {
 	return input, nil
 }
 
+//nolint:gocognit // cobra RunE wires flag parsing + JSON-input boundary + Destroy defers
 func newSecretAddCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add NAME",
@@ -226,13 +235,21 @@ func newSecretAddCmd() *cobra.Command {
 			if nonInteractive, _ := cmd.Flags().GetBool("non-interactive"); nonInteractive {
 				deps.nonInteractive = true
 				inputFile, _ := cmd.Flags().GetString("input-file")
-				input, inputErr := readSecretAddInput(inputFile)
+				pass, val, desc, inputErr := readSecretAddSecrets(inputFile)
 				if inputErr != nil {
 					return inputErr
 				}
-				deps.passphrase = input.VaultPassphrase
-				deps.secretValue = input.Value
-				deps.description = input.Description
+				deps.passphrase = pass
+				deps.secretValue = val
+				deps.description = desc
+				defer func() {
+					if deps.passphrase != nil {
+						_ = deps.passphrase.Destroy()
+					}
+					if deps.secretValue != nil {
+						_ = deps.secretValue.Destroy()
+					}
+				}()
 			}
 			return runSecretAdd(cmd.Context(), out.stderr, os.Stdin, deps, args)
 		},
@@ -240,6 +257,35 @@ func newSecretAddCmd() *cobra.Command {
 	cmd.Flags().Bool("non-interactive", false, "Read add inputs from environment instead of TTY prompts")
 	cmd.Flags().String("input-file", "", "0600 JSON input for --non-interactive")
 	return cmd
+}
+
+// readSecretAddSecrets reads the --input-file JSON, converts the two secret
+// fields (vault passphrase + secret value) into fresh mlocked *SecureBytes,
+// zeroes the file body, and returns ownership of both SecureBytes pointers
+// plus the description (non-secret) to the caller.
+//
+// Residual exposure: json.Unmarshal allocates Go strings for the secret
+// fields during parse. Those strings cannot be zeroed (Go strings are
+// immutable); they become unreachable as soon as this function returns
+// and survive in heap until GC. The file body []byte IS zeroed before
+// return. See readServerBootstrapSecrets for the parallel rationale.
+func readSecretAddSecrets(path string) (pass, value *securebytes.SecureBytes, description string, err error) {
+	input, readErr := readSecretAddInput(path)
+	if readErr != nil {
+		return nil, nil, "", readErr
+	}
+	pass, err = securebytes.New([]byte(input.VaultPassphrase))
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("hush: secret: wrap vault passphrase: %w", err)
+	}
+	if input.Value != "" {
+		value, err = securebytes.New([]byte(input.Value))
+		if err != nil {
+			_ = pass.Destroy()
+			return nil, nil, "", fmt.Errorf("hush: secret: wrap value: %w", err)
+		}
+	}
+	return pass, value, input.Description, nil
 }
 
 func newSecretRemoveCmd() *cobra.Command {
@@ -430,7 +476,10 @@ func runSecretAdd(ctx context.Context, stderr *Stream, in *os.File, deps *secret
 
 	var passphrase *securebytes.SecureBytes
 	if deps.nonInteractive {
-		passphrase, err = securebytes.New([]byte(deps.passphrase))
+		if deps.passphrase == nil {
+			return fmt.Errorf("%w: passphrase", errMissingFlag)
+		}
+		passphrase, err = cloneSecureBytes(deps.passphrase)
 	} else {
 		passphrase, err = deps.promptPassphrase(in, stderr.w, promptVaultPassphrase)
 	}
@@ -462,7 +511,10 @@ func runSecretAdd(ctx context.Context, stderr *Stream, in *os.File, deps *secret
 	var value *securebytes.SecureBytes
 	var description string
 	if deps.nonInteractive {
-		value, err = securebytes.New([]byte(deps.secretValue))
+		if deps.secretValue == nil {
+			return fmt.Errorf("%w: secretValue", errMissingFlag)
+		}
+		value, err = cloneSecureBytes(deps.secretValue)
 		description = deps.description
 	} else {
 		value, err = deps.promptSecret(in, stderr.w, promptSecretValue)
@@ -541,7 +593,10 @@ func runSecretRemove(ctx context.Context, stderr *Stream, in *os.File, deps *sec
 
 	var passphrase *securebytes.SecureBytes
 	if deps.nonInteractive {
-		passphrase, err = securebytes.New([]byte(deps.passphrase))
+		if deps.passphrase == nil {
+			return fmt.Errorf("%w: passphrase", errMissingFlag)
+		}
+		passphrase, err = cloneSecureBytes(deps.passphrase)
 	} else {
 		passphrase, err = deps.promptPassphrase(in, stderr.w, promptVaultPassphrase)
 	}
@@ -620,7 +675,10 @@ func runSecretList(ctx context.Context, stdout, stderr *Stream, in, stdoutFile *
 
 	var passphrase *securebytes.SecureBytes
 	if deps.nonInteractive {
-		passphrase, err = securebytes.New([]byte(deps.passphrase))
+		if deps.passphrase == nil {
+			return fmt.Errorf("%w: passphrase", errMissingFlag)
+		}
+		passphrase, err = cloneSecureBytes(deps.passphrase)
 	} else {
 		passphrase, err = deps.promptPassphrase(in, stderr.w, promptVaultPassphrase)
 	}
@@ -716,7 +774,10 @@ func runSecretRotate(ctx context.Context, stderr *Stream, in *os.File, deps *sec
 
 	var passphrase *securebytes.SecureBytes
 	if deps.nonInteractive {
-		passphrase, err = securebytes.New([]byte(deps.passphrase))
+		if deps.passphrase == nil {
+			return fmt.Errorf("%w: passphrase", errMissingFlag)
+		}
+		passphrase, err = cloneSecureBytes(deps.passphrase)
 	} else {
 		passphrase, err = deps.promptPassphrase(in, stderr.w, promptVaultPassphrase)
 	}

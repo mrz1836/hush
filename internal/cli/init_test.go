@@ -86,6 +86,20 @@ type initFixture struct {
 	tempDir   string
 }
 
+// mustSecureBytes wraps the supplied bytes in a SecureBytes and
+// registers a t.Cleanup so the test fixture does not leak mlocked
+// memory across cases. Used by every test that populates initDeps or
+// secretDeps SecureBytes fields with literal credentials.
+func mustSecureBytes(t *testing.T, b []byte) *securebytes.SecureBytes {
+	t.Helper()
+	sb, err := securebytes.New(b)
+	if err != nil {
+		t.Fatalf("securebytes.New: %v", err)
+	}
+	t.Cleanup(func() { _ = sb.Destroy() })
+	return sb
+}
+
 func newInitFixture(t *testing.T) *initFixture {
 	t.Helper()
 	stdout := &bytes.Buffer{}
@@ -520,8 +534,8 @@ func TestInitServer_NonInteractiveKeychainDeniedFailsClearly(t *testing.T) {
 	t.Parallel()
 	fx := newInitFixture(t)
 	fx.deps.serverNonInteractive = true
-	fx.deps.serverPassphrase = testGoodPassphrase
-	fx.deps.serverBotToken = testBotTokenInput
+	fx.deps.serverPassphrase = mustSecureBytes(t, []byte(testGoodPassphrase))
+	fx.deps.serverBotToken = mustSecureBytes(t, []byte(testBotTokenInput))
 	fx.deps.serverInputs.listenAddr = testListenAddrInput
 	fx.deps.serverInputs.ownerID = testOwnerIDInput
 	fx.deps.serverInputs.applicationID = testApplicationIDIn
@@ -793,7 +807,7 @@ func TestInitClient_KeyFileFallbackWhenKeychainDenied(t *testing.T) {
 	t.Parallel()
 	fx := newInitFixture(t)
 	fx.deps.clientNonInteractive = true
-	fx.deps.clientPassphrase = testGoodPassphrase
+	fx.deps.clientPassphrase = mustSecureBytes(t, []byte(testGoodPassphrase))
 	fx.deps.keychain = denyStoreKeychain{}
 	keyFile := filepath.Join(fx.tempDir, "client-machine-1.key")
 	fx.deps.clientKeyFile = keyFile
@@ -811,7 +825,7 @@ func TestInitClient_NonInteractiveRegistersClient(t *testing.T) {
 	t.Parallel()
 	fx := newInitFixture(t)
 	fx.deps.clientNonInteractive = true
-	fx.deps.clientPassphrase = testGoodPassphrase
+	fx.deps.clientPassphrase = mustSecureBytes(t, []byte(testGoodPassphrase))
 	registry := filepath.Join(fx.tempDir, "clients.json")
 	fx.deps.clientRegistry = registry
 	keyFile := filepath.Join(fx.tempDir, "client-machine-1.key")
@@ -1250,8 +1264,8 @@ func TestInitServer_Recovery_NonInteractive_OnExistingArchive(t *testing.T) {
 	t.Parallel()
 	fx := newInitFixture(t)
 	fx.deps.serverNonInteractive = true
-	fx.deps.serverPassphrase = testGoodPassphrase
-	fx.deps.serverBotToken = testBotTokenInput
+	fx.deps.serverPassphrase = mustSecureBytes(t, []byte(testGoodPassphrase))
+	fx.deps.serverBotToken = mustSecureBytes(t, []byte(testBotTokenInput))
 	fx.deps.serverInputs.listenAddr = testListenAddrInput
 	fx.deps.serverInputs.ownerID = testOwnerIDInput
 	fx.deps.serverInputs.applicationID = testApplicationIDIn

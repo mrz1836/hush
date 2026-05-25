@@ -289,15 +289,28 @@ type initDeps struct {
 	platformACL  func() bool
 
 	serverNonInteractive bool
-	serverPassphrase     string
-	serverBotToken       string
+	// serverPassphrase is the operator-supplied vault passphrase used when
+	// serverNonInteractive=true. Owned by the caller that populates initDeps
+	// (see the JSON --input-file boundary in newInitServerCmd); runInitServer
+	// borrows the bytes inside a single Use callback to materialize a fresh
+	// mlocked working copy and never converts to a Go string.
+	serverPassphrase *securebytes.SecureBytes
+	// serverBotToken is the operator-supplied Discord bot token used when
+	// serverNonInteractive=true (and when token persistence is required).
+	// Same ownership/borrow contract as serverPassphrase. nil means "no
+	// token supplied" (legitimate when the caller sets an explicit state
+	// dir and the existing keychain item is reused).
+	serverBotToken       *securebytes.SecureBytes
 	serverInputs         serverInputs
 	serverAllowClockSkew bool
 	serverOnExisting     string
 	clientNonInteractive bool
-	clientPassphrase     string
-	clientRegistry       string
-	clientKeyFile        string
+	// clientPassphrase is the operator-supplied vault passphrase used when
+	// clientNonInteractive=true. Same ownership/borrow contract as
+	// serverPassphrase.
+	clientPassphrase *securebytes.SecureBytes
+	clientRegistry   string
+	clientKeyFile    string
 
 	// promptSecret reads a no-echo line from stdin in production;
 	// tests substitute a deterministic reader.
@@ -449,34 +462,100 @@ type clientBootstrapInput struct {
 	VaultPassphrase string `json:"vault_passphrase"`
 }
 
-func readServerBootstrapInput(path string) (serverBootstrapInput, error) {
+// readServerBootstrapSecrets reads the --input-file JSON, converts the two
+// secret fields into fresh mlocked *SecureBytes, zeroes the file body, and
+// returns ownership of both SecureBytes pointers to the caller.
+//
+// botTok is nil iff the JSON's discord_bot_token field was absent or empty
+// (the caller treats nil as "no token supplied").
+//
+// Residual exposure: json.Unmarshal allocates Go strings for the two fields
+// during parse. Those strings cannot be zeroed (Go strings are immutable);
+// they become unreachable as soon as this function returns and survive in
+// heap until GC. The file body []byte IS zeroed before return, so the only
+// non-erasable copies are the short-lived JSON struct strings — a strict
+// improvement over the previous design that threaded those strings through
+// initDeps for the whole runInitServer call.
+func readServerBootstrapSecrets(path string) (pass, botTok *securebytes.SecureBytes, err error) {
 	if strings.TrimSpace(path) == "" {
-		return serverBootstrapInput{}, fmt.Errorf("%w: --input-file", errMissingFlag)
+		return nil, nil, fmt.Errorf("%w: --input-file", errMissingFlag)
 	}
-	body, err := os.ReadFile(path) //nolint:gosec // operator-supplied bootstrap file path
-	if err != nil {
-		return serverBootstrapInput{}, fmt.Errorf("hush/cli: init: read input file: %w", err)
+	body, readErr := os.ReadFile(path) //nolint:gosec // operator-supplied bootstrap file path
+	if readErr != nil {
+		return nil, nil, fmt.Errorf("hush/cli: init: read input file: %w", readErr)
 	}
+	defer zeroByteSlice(body)
 	var input serverBootstrapInput
-	if err := json.Unmarshal(body, &input); err != nil {
-		return serverBootstrapInput{}, fmt.Errorf("hush/cli: init: decode input file: %w", err)
+	if jerr := json.Unmarshal(body, &input); jerr != nil {
+		return nil, nil, fmt.Errorf("hush/cli: init: decode input file: %w", jerr)
 	}
-	return input, nil
+	pass, err = securebytes.New([]byte(input.VaultPassphrase))
+	if err != nil {
+		return nil, nil, fmt.Errorf("hush/cli: init: wrap vault passphrase: %w", err)
+	}
+	if strings.TrimSpace(input.DiscordBotToken) != "" {
+		botTok, err = securebytes.New([]byte(input.DiscordBotToken))
+		if err != nil {
+			_ = pass.Destroy()
+			return nil, nil, fmt.Errorf("hush/cli: init: wrap bot token: %w", err)
+		}
+	}
+	return pass, botTok, nil
 }
 
-func readClientBootstrapInput(path string) (clientBootstrapInput, error) {
+// readClientBootstrapSecret mirrors readServerBootstrapSecrets for the client
+// bootstrap JSON (passphrase only).
+func readClientBootstrapSecret(path string) (*securebytes.SecureBytes, error) {
 	if strings.TrimSpace(path) == "" {
-		return clientBootstrapInput{}, fmt.Errorf("%w: --input-file", errMissingFlag)
+		return nil, fmt.Errorf("%w: --input-file", errMissingFlag)
 	}
 	body, err := os.ReadFile(path) //nolint:gosec // operator-supplied bootstrap file path
 	if err != nil {
-		return clientBootstrapInput{}, fmt.Errorf("hush/cli: init: read input file: %w", err)
+		return nil, fmt.Errorf("hush/cli: init: read input file: %w", err)
 	}
+	defer zeroByteSlice(body)
 	var input clientBootstrapInput
-	if err := json.Unmarshal(body, &input); err != nil {
-		return clientBootstrapInput{}, fmt.Errorf("hush/cli: init: decode input file: %w", err)
+	if jerr := json.Unmarshal(body, &input); jerr != nil {
+		return nil, fmt.Errorf("hush/cli: init: decode input file: %w", jerr)
 	}
-	return input, nil
+	pass, err := securebytes.New([]byte(input.VaultPassphrase))
+	if err != nil {
+		return nil, fmt.Errorf("hush/cli: init: wrap vault passphrase: %w", err)
+	}
+	return pass, nil
+}
+
+// zeroByteSlice overwrites every byte of b with 0. Used to scrub the
+// JSON input file's raw bytes before this function returns — the JSON
+// struct's string fields are the irreducible residual (see
+// readServerBootstrapSecrets).
+func zeroByteSlice(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
+}
+
+// cloneSecureBytes returns an independently-owned *SecureBytes carrying
+// a copy of src's payload. Both src and the returned copy are valid
+// after the call; the caller owns Destroy on the returned pointer.
+//
+// Used at API boundaries where a function that defers Destroy is
+// handed a SecureBytes owned by an outer scope (typical case: cobra
+// RunE owns deps.serverPassphrase, runInitServer wants its own copy
+// to manage lifetime locally).
+func cloneSecureBytes(src *securebytes.SecureBytes) (*securebytes.SecureBytes, error) {
+	var (
+		out    *securebytes.SecureBytes
+		newErr error
+	)
+	if useErr := src.Use(func(b []byte) {
+		buf := make([]byte, len(b))
+		copy(buf, b)
+		out, newErr = securebytes.New(buf)
+	}); useErr != nil {
+		return nil, useErr
+	}
+	return out, newErr
 }
 
 // newInitServerCmd builds the `hush init server` subcommand. The cobra
@@ -486,6 +565,8 @@ func readClientBootstrapInput(path string) (clientBootstrapInput, error) {
 // diagnostic-first preflight, then prompts the operator for every
 // required input. `--non-interactive` is the explicit opt-out for
 // scripted/test callers.
+//
+//nolint:gocognit // cobra RunE wires flag parsing + JSON-input boundary + Destroy defers
 func newInitServerCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "server",
@@ -539,12 +620,20 @@ Flags:
 			if nonInteractive, _ := cmd.Flags().GetBool("non-interactive"); nonInteractive {
 				deps.serverNonInteractive = true
 				inputFile, _ := cmd.Flags().GetString("input-file")
-				input, inputErr := readServerBootstrapInput(inputFile)
+				pass, botTok, inputErr := readServerBootstrapSecrets(inputFile)
 				if inputErr != nil {
 					return inputErr
 				}
-				deps.serverPassphrase = input.VaultPassphrase
-				deps.serverBotToken = input.DiscordBotToken
+				deps.serverPassphrase = pass
+				deps.serverBotToken = botTok
+				defer func() {
+					if deps.serverPassphrase != nil {
+						_ = deps.serverPassphrase.Destroy()
+					}
+					if deps.serverBotToken != nil {
+						_ = deps.serverBotToken.Destroy()
+					}
+				}()
 			}
 			out := outputFromCmd(cmd)
 			return runInitServer(cmd.Context(), out.stdout, out.stderr, os.Stdin, deps)
@@ -565,6 +654,8 @@ Flags:
 
 // newInitClientCmd builds the `hush init client` subcommand. The cobra
 // command tree is the contract; no exported symbols.
+//
+//nolint:gocognit // cobra RunE wires flag parsing + JSON-input boundary + Destroy defer
 func newInitClientCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "client",
@@ -577,11 +668,16 @@ func newInitClientCmd() *cobra.Command {
 			if nonInteractive, _ := cmd.Flags().GetBool("non-interactive"); nonInteractive {
 				deps.clientNonInteractive = true
 				inputFile, _ := cmd.Flags().GetString("input-file")
-				input, inputErr := readClientBootstrapInput(inputFile)
+				pass, inputErr := readClientBootstrapSecret(inputFile)
 				if inputErr != nil {
 					return inputErr
 				}
-				deps.clientPassphrase = input.VaultPassphrase
+				deps.clientPassphrase = pass
+				defer func() {
+					if deps.clientPassphrase != nil {
+						_ = deps.clientPassphrase.Destroy()
+					}
+				}()
 			}
 			deps.clientRegistry, _ = cmd.Flags().GetString("client-registry")
 			deps.clientKeyFile, _ = cmd.Flags().GetString("client-key-file")
@@ -648,12 +744,20 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 	existingCfg, _ := config.LoadServer(ctx, configPath)
 
 	if deps.serverNonInteractive {
-		pass, err = securebytes.New([]byte(deps.serverPassphrase))
+		if deps.serverPassphrase == nil {
+			return fmt.Errorf("%w: serverPassphrase", errMissingFlag)
+		}
+		pass, err = cloneSecureBytes(deps.serverPassphrase)
 		if err != nil {
 			return err
 		}
-		if !explicitStateDir || strings.TrimSpace(deps.serverBotToken) != "" {
-			botToken, err = securebytes.New([]byte(deps.serverBotToken))
+		botTokenPresent := deps.serverBotToken != nil && deps.serverBotToken.Len() > 0
+		if !explicitStateDir || botTokenPresent {
+			if !botTokenPresent {
+				_ = pass.Destroy()
+				return fmt.Errorf("%w: serverBotToken", errMissingFlag)
+			}
+			botToken, err = cloneSecureBytes(deps.serverBotToken)
 			if err != nil {
 				_ = pass.Destroy()
 				return err
@@ -1254,7 +1358,10 @@ func runInitClient(ctx context.Context, stdout, stderr *Stream, in *os.File, cmd
 
 	var pass *securebytes.SecureBytes
 	if deps.clientNonInteractive {
-		pass, err = securebytes.New([]byte(deps.clientPassphrase))
+		if deps.clientPassphrase == nil {
+			return fmt.Errorf("%w: clientPassphrase", errMissingFlag)
+		}
+		pass, err = cloneSecureBytes(deps.clientPassphrase)
 		if err != nil {
 			return err
 		}
