@@ -278,6 +278,20 @@ type Lifecycle struct {
 	// reload-eligible, or startChild has not yet run.
 	backendMu   sync.Mutex
 	backendPort uint16
+
+	// proxyMu guards proxy. proxy is the HTTP reverse proxy listener
+	// attached for reload-eligible supervisors (T-306 Phase 5). nil when
+	// the config does not opt into [child.handoff] mode = "http-proxy"
+	// or the orchestration layer has not yet attached one. Mutated only
+	// via AttachProxy; SwapChild reads it under proxyMu.
+	proxyMu sync.Mutex
+	proxy   *Proxy
+
+	// swapInFlight is the single-flight guard around SwapChild. true
+	// while a swap is in progress; concurrent SwapChild callers receive
+	// ErrSwapInFlight rather than colliding on backend pointer or
+	// child-slot writes.
+	swapInFlight atomic.Bool
 }
 
 // NewLifecycle constructs a Lifecycle. Validates required Deps fields and

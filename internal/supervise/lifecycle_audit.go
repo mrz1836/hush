@@ -161,6 +161,21 @@ func (l *Lifecycle) emitBootTimeout(ctx context.Context, lastErrClass string) {
 	})
 }
 
+// emitChildSwap appends supervisor_child_swap after a successful HTTP-proxy
+// reload swap. Data carries old_pid, new_pid, swap_completed_at,
+// readiness_duration_ms, strategy. By construction this event never
+// carries any secret/env value: only PIDs, an RFC3339 timestamp, a
+// duration in ms, and the swap strategy string.
+func (l *Lifecycle) emitChildSwap(ctx context.Context, oldPID, newPID int, readiness time.Duration, strategy string) {
+	l.appendAudit(ctx, audit.ActionSupervisorChildSwap, map[string]any{
+		"old_pid":               oldPID,
+		"new_pid":               newPID,
+		"swap_completed_at":     l.deps.NowFn().UTC().Format(time.RFC3339),
+		"readiness_duration_ms": readiness.Milliseconds(),
+		"strategy":              strategy,
+	})
+}
+
 // emitClientRefreshInvoked appends client_refresh_invoked when the
 // status-socket refresh verb is consumed.
 func (l *Lifecycle) emitClientRefreshInvoked(ctx context.Context, state, outcome string) {

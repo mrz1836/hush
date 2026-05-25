@@ -78,6 +78,7 @@ const (
 	ActionSupervisorGraceEntered     = "supervisor_grace_entered"
 	ActionSupervisorGraceExited      = "supervisor_grace_exited"
 	ActionSupervisorBootTimeout      = "supervisor_boot_timeout"
+	ActionSupervisorChildSwap        = "supervisor_child_swap"
 	ActionClientRefreshInvoked       = "client_refresh_invoked"
 )
 
