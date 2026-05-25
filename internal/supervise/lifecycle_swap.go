@@ -72,6 +72,12 @@ var (
 	// ErrSwapChildStart wraps any child Start failure during the swap
 	// path.
 	ErrSwapChildStart = errors.New("supervise: swap child start")
+
+	// ErrPromoteNoBackendPort indicates promoteFirstChildToProxy was
+	// invoked before the backend port was recorded. Defensive — backend
+	// allocation precedes promote in normal flow; this guards a future
+	// reorder.
+	ErrPromoteNoBackendPort = errors.New("supervise: promote child to proxy: no backend port allocated")
 )
 
 // SwapResult is the public outcome of a successful SwapChild call.
@@ -168,7 +174,7 @@ func (l *Lifecycle) promoteChildToProxy(ctx context.Context) error {
 	port := l.backendPort
 	l.backendMu.Unlock()
 	if port == 0 {
-		return errors.New("supervise: promote child to proxy: no backend port allocated")
+		return ErrPromoteNoBackendPort
 	}
 
 	readinessCfg := *l.config.Child.Readiness

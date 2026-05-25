@@ -70,7 +70,8 @@ func (s *stubAttacher) SwapChild(_ context.Context) (supervise.SwapResult, error
 // hold the port.
 func freeLoopbackAddr(t *testing.T) string {
 	t.Helper()
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	var lc net.ListenConfig
+	l, err := lc.Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("freeLoopbackAddr: %v", err)
 	}
@@ -163,7 +164,10 @@ func TestStartProxyIfHandoffConfigured_HTTPProxy_BindsListenerAndAttaches(t *tes
 
 	// A TCP dial to listen_addr should connect; without SetBackend it
 	// returns 503, but the listener must be present.
-	conn, dialErr := net.DialTimeout("tcp", addr, 2*time.Second)
+	dialer := &net.Dialer{Timeout: 2 * time.Second}
+	dialCtx, dialCancel := context.WithTimeout(t.Context(), 2*time.Second)
+	conn, dialErr := dialer.DialContext(dialCtx, "tcp", addr)
+	dialCancel()
 	if dialErr != nil {
 		t.Fatalf("dial bound listen_addr: %v", dialErr)
 	}
@@ -171,7 +175,11 @@ func TestStartProxyIfHandoffConfigured_HTTPProxy_BindsListenerAndAttaches(t *tes
 
 	// HTTP request returns 503 before any backend is set — proves the
 	// proxy is serving HTTP, not just an open TCP port.
-	resp, httpErr := http.Get("http://" + addr + "/")
+	req, reqErr := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://"+addr+"/", http.NoBody)
+	if reqErr != nil {
+		t.Fatalf("build HTTP request: %v", reqErr)
+	}
+	resp, httpErr := http.DefaultClient.Do(req)
 	if httpErr != nil {
 		t.Fatalf("HTTP GET against proxy: %v", httpErr)
 	}
@@ -188,7 +196,8 @@ func TestStartProxyIfHandoffConfigured_BindFailure_ReturnsError(t *testing.T) {
 	// an error that startProxyIfHandoffConfigured wraps and propagates.
 	// The caller never reaches lc.Run, which is exactly what we want —
 	// operator sees the bind failure at boot, not at first reload.
-	holdL, lErr := net.Listen("tcp", "127.0.0.1:0")
+	var lc net.ListenConfig
+	holdL, lErr := lc.Listen(t.Context(), "tcp", "127.0.0.1:0")
 	if lErr != nil {
 		t.Fatalf("hold listener: %v", lErr)
 	}

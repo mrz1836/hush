@@ -291,13 +291,13 @@ func startProxyIfHandoffConfigured(
 	logger *slog.Logger,
 ) (*supervise.Proxy, error) {
 	if cfg.Child.Handoff == nil {
-		return nil, nil
+		return nil, nil //nolint:nilnil // absent handoff is the expected "no proxy needed" signal
 	}
 	if cfg.Child.Handoff.Mode != superviseconfig.HandoffModeHTTPProxy {
 		// The config loader already rejects unknown modes; defensive guard
 		// for future modes (e.g. socket-activation) that don't route
 		// through the HTTP proxy.
-		return nil, nil
+		return nil, nil //nolint:nilnil // absent handoff is the expected "no proxy needed" signal
 	}
 	listenAddr := cfg.Child.Handoff.ListenAddr
 	proxy := supervise.NewProxy(listenAddr, logger)
