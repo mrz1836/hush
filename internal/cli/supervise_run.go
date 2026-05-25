@@ -194,7 +194,136 @@ func runLifecycle(rootCtx context.Context, cfg *superviseconfig.Supervisor, pidf
 	}
 
 	lc := supervise.NewLifecycle(rootCtx, cfg, deps)
+
+	// When the supervisor config opts into [child.handoff] (HTTP-proxy
+	// reload-eligibility), the CLI owns the proxy listener's lifetime: it
+	// binds the public listen_addr before the first child accepts traffic,
+	// stays bound across reloads, and is gracefully stopped when the
+	// supervisor exits. Without this, [child.handoff] config is inert at
+	// runtime: SwapChild has no proxy to swap, and the public port is
+	// served by nothing — which is exactly the trap the 2026-05-25 16:34
+	// cutover attempt fell into before this fix landed.
+	proxy, err := startProxyIfHandoffConfigured(rootCtx, cfg, lc, logger)
+	if err != nil {
+		// runLifecycle's caller (runSupervise) already logs at error
+		// level and maps the return to printSuperviseErr + non-zero exit.
+		// Returning here means the lifecycle is never run — operators see
+		// the bind failure at boot, not at first reload.
+		return err
+	}
+	if proxy != nil {
+		defer stopProxyGracefully(proxy, logger)
+	}
+
+	// Wire the reload handler so `hush supervise reload <toml>` from
+	// another process can actually trigger SwapChild. Without this the
+	// SDK request comes in over the status socket and the server
+	// returns `reload handler not wired` — exactly the trap the
+	// 2026-05-25 17:02 reload test hit before this wiring landed.
+	wireReloadHandlerIfHandoffConfigured(cfg, lc, logger)
+
 	return lc.Run(rootCtx)
+}
+
+// wireReloadHandlerIfHandoffConfigured registers a handler on the
+// Lifecycle's status socket that dispatches the SDK's Reload SDK call
+// to SwapChild. The handler ignores ReloadRequest.ConfigPath in v1 —
+// the supervisor uses its already-loaded config for the actual swap;
+// the operator-supplied path is for audit attribution only.
+//
+// No-op when [child.handoff] is not http-proxy: SwapChild itself would
+// return ErrSwapNotEligible for non-handoff configs, but wiring the
+// handler at all is misleading (it implies reload is supported).
+//
+// Safe to call exactly once per Lifecycle. AttachReloadHandler panics
+// on a second call; this helper is invoked from runLifecycle which
+// runs once per supervisor process.
+func wireReloadHandlerIfHandoffConfigured(
+	cfg *superviseconfig.Supervisor,
+	attacher handoffAttacher,
+	logger *slog.Logger,
+) {
+	if cfg.Child.Handoff == nil || cfg.Child.Handoff.Mode != superviseconfig.HandoffModeHTTPProxy {
+		return
+	}
+	attacher.AttachReloadHandler(func(ctx context.Context, _ supervise.ReloadRequest) (supervise.SwapResult, error) {
+		return attacher.SwapChild(ctx)
+	})
+	logger.Info("supervise: reload handler wired")
+}
+
+// proxyShutdownTimeout bounds the post-Run graceful Stop on the reload
+// proxy. 5s is comfortable for in-flight requests to drain — the proxy's
+// reverse-proxy transport already has its own per-request timeouts and the
+// public listener is dropped immediately on Stop, so subsequent dials get
+// connect-refused (the cleanest signal to upstream load balancers that
+// the supervisor has exited).
+const proxyShutdownTimeout = 5 * time.Second
+
+// handoffAttacher is the narrow seam the reload-wiring helpers use
+// against the Lifecycle. *supervise.Lifecycle satisfies it; tests can
+// substitute an in-memory stub without instantiating a full Lifecycle
+// (which requires many non-nil deps unrelated to proxy + reload wiring).
+type handoffAttacher interface {
+	AttachProxy(p *supervise.Proxy)
+	AttachReloadHandler(handler func(ctx context.Context, req supervise.ReloadRequest) (supervise.SwapResult, error))
+	SwapChild(ctx context.Context) (supervise.SwapResult, error)
+}
+
+// startProxyIfHandoffConfigured is the CLI-side wiring that closes the
+// gap left by hush PR #48 (zero-downtime reload): the Lifecycle exposes
+// AttachProxy + the SwapChild verb consumes an attached proxy, but the
+// CLI runSupervise path never instantiated one. Returns (nil, nil) when
+// the config has not opted into handoff — non-reload-eligible configs
+// see the exact runtime shape they always did. When handoff IS opted
+// into, this constructs the Proxy, calls Start (binding listen_addr),
+// and attaches it to the Lifecycle so SwapChild can find it.
+//
+// On any error this path returns wrapped error (caller maps to
+// printSuperviseErr + the standard non-zero exit). The Lifecycle is
+// never run when proxy startup fails — the CLI exits before the child
+// is spawned so an operator-fixable error (e.g. listen_addr port in use)
+// surfaces immediately at boot rather than at first reload.
+func startProxyIfHandoffConfigured(
+	ctx context.Context,
+	cfg *superviseconfig.Supervisor,
+	attacher handoffAttacher,
+	logger *slog.Logger,
+) (*supervise.Proxy, error) {
+	if cfg.Child.Handoff == nil {
+		return nil, nil
+	}
+	if cfg.Child.Handoff.Mode != superviseconfig.HandoffModeHTTPProxy {
+		// The config loader already rejects unknown modes; defensive guard
+		// for future modes (e.g. socket-activation) that don't route
+		// through the HTTP proxy.
+		return nil, nil
+	}
+	listenAddr := cfg.Child.Handoff.ListenAddr
+	proxy := supervise.NewProxy(listenAddr, logger)
+	if err := proxy.Start(ctx); err != nil {
+		return nil, fmt.Errorf("supervise: proxy start at %s: %w", listenAddr, err)
+	}
+	attacher.AttachProxy(proxy)
+	logger.Info(
+		"supervise: reload proxy bound",
+		slog.String("listen_addr", listenAddr),
+		slog.String("mode", cfg.Child.Handoff.Mode),
+	)
+	return proxy, nil
+}
+
+// stopProxyGracefully is the runSupervise defer body that idempotently
+// stops the reload proxy after lc.Run returns (success, error, signal,
+// or panic-unwind). The shutdown context is decoupled from rootCtx
+// because rootCtx is already cancelled when lc.Run returns on a signal
+// — using it for the shutdown would skip the graceful drain.
+func stopProxyGracefully(proxy *supervise.Proxy, logger *slog.Logger) {
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), proxyShutdownTimeout)
+	defer cancel()
+	if err := proxy.Stop(shutdownCtx); err != nil {
+		logger.Warn("supervise: reload proxy stop", slog.Any("err", err))
+	}
 }
 
 // loggingAlerts is the production supervise.Alerts sink. Each alert is

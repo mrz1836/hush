@@ -67,12 +67,7 @@ func (l *Lifecycle) BackendPortForTest() uint16 {
 	return l.backendPort
 }
 
-// AttachReloadHandler wires the supplied handler onto the lifecycle's
-// status server so the reload verb routes to SwapChild. The production
-// CLI wiring layer will eventually expose an equivalent seam; until then
-// the integration harness uses this to install the bridge.
-//
-// Single-shot — calling twice panics (mirrors StatusServer.AttachReloadHandler).
-func (l *Lifecycle) AttachReloadHandler(handler func(ctx context.Context, req ReloadRequest) (SwapResult, error)) {
-	l.statusServer.AttachReloadHandler(handler)
-}
+// AttachReloadHandler migrated into the production Lifecycle API in
+// lifecycle_swap.go now that the CLI wires reload natively. The
+// integration build no longer needs its own copy — both production
+// CLI wiring and the integration harness use the same method.

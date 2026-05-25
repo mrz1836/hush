@@ -73,6 +73,15 @@ func (l *Lifecycle) initialRefillAndStart(ctx context.Context) error {
 		destroySecrets(secrets)
 		return err
 	}
+	// When [child.handoff] is configured and a proxy is attached, the
+	// freshly spawned child is bound on a private port — the public
+	// listener is the proxy. Probe readiness + point the proxy at the
+	// new backend; on failure the child is terminated to avoid an
+	// orphan behind a dead-but-bound public socket.
+	if err := l.promoteChildToProxy(ctx); err != nil {
+		destroySecrets(secrets)
+		return err
+	}
 	l.retainSecrets(secrets)
 	l.transition(ctx, EventFetchOK)
 	return nil
@@ -543,6 +552,16 @@ func (l *Lifecycle) silentRefillAndRestart(ctx context.Context) error {
 		l.deps.Logger.Warn("supervise: child restart failed", slog.Any("err", serr))
 		l.transition(ctx, EventClaimUnavailable)
 		return serr
+	}
+	// Re-point the reload proxy at the freshly restarted child's new
+	// backend port (every startChild allocates a fresh port via the
+	// overlay). Without this the proxy keeps serving 503 against a
+	// dead backend after every crash recovery.
+	if perr := l.promoteChildToProxy(ctx); perr != nil {
+		destroySecrets(secrets)
+		l.deps.Logger.Warn("supervise: child restart promote failed", slog.Any("err", perr))
+		l.transition(ctx, EventClaimUnavailable)
+		return perr
 	}
 	l.retainSecrets(secrets)
 	l.inputs.restartCount.Add(1)

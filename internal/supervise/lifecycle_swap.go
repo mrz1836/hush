@@ -104,6 +104,116 @@ func (l *Lifecycle) proxyHandle() *Proxy {
 	return l.proxy
 }
 
+// AttachReloadHandler registers handler as the status-socket reload
+// dispatcher. The handler is invoked once per `hush supervise reload`
+// SDK call against this supervisor's status socket; it MUST return a
+// SwapResult (or error) — typically by delegating to
+// (*Lifecycle).SwapChild for HTTP-proxy handoff supervisors.
+//
+// Without this wiring, `hush supervise reload <toml>` calls the SDK,
+// the SDK reaches the status socket, and the server responds with
+// `reload handler not wired` (see internal/supervise/socket.go).
+//
+// Single-shot: a second call panics, matching the StatusServer's
+// AttachReloadHandler contract. Callers should invoke exactly once
+// during supervisor boot, ideally after AttachProxy + Proxy.Start.
+//
+// This mirrors the integration-only export at
+// export_for_integration.go but is available in production builds so
+// the CLI can wire reload without an `integration` build tag. The
+// thin delegate keeps the StatusServer surface as the single source
+// of truth for handler semantics.
+func (l *Lifecycle) AttachReloadHandler(handler func(ctx context.Context, req ReloadRequest) (SwapResult, error)) {
+	l.statusServer.AttachReloadHandler(handler)
+}
+
+// promoteChildToProxy is the post-startChild step that probes the freshly
+// spawned child's readiness URL against its allocated backend port and,
+// on success, points the attached reload proxy at that backend so the
+// public listener routes traffic to the live child. Without this, the
+// proxy keeps responding `503 no-backend` after initial boot (and after
+// every non-swap restart, e.g. a crash recovery) — exactly the trap the
+// 2026-05-25 16:45 cutover hit before this method existed.
+//
+// No-op on three branches so callers can invoke unconditionally:
+//   - [child.handoff] is not configured at all
+//   - [child.handoff].mode is not "http-proxy" (defensive against
+//     future strategies that don't route through this proxy)
+//   - no proxy has been attached (embedded pkg/client users manage the
+//     proxy lifetime themselves and may set the backend out-of-band)
+//
+// On failure the just-spawned child is SIGTERM'd via the configured
+// shutdown grace so the caller's rollback (destroy secrets, return
+// error) leaves no orphaned process behind the dead-but-bound public
+// listener. The pattern mirrors SwapChild's readiness-failure path.
+func (l *Lifecycle) promoteChildToProxy(ctx context.Context) error {
+	if l.config.Child.Handoff == nil {
+		return nil
+	}
+	if l.config.Child.Handoff.Mode != config.HandoffModeHTTPProxy {
+		return nil
+	}
+	proxy := l.proxyHandle()
+	if proxy == nil {
+		return nil
+	}
+	if l.config.Child.Readiness == nil {
+		// Config loader rejects handoff without readiness; defensive
+		// guard so a programmatic constructor can't smuggle a partial
+		// config past validate().
+		return fmt.Errorf("supervise: %w: handoff requires [child.readiness]", ErrSwapNotEligible)
+	}
+
+	l.backendMu.Lock()
+	port := l.backendPort
+	l.backendMu.Unlock()
+	if port == 0 {
+		return errors.New("supervise: promote child to proxy: no backend port allocated")
+	}
+
+	readinessCfg := *l.config.Child.Readiness
+	readinessCfg.HTTPURL = swapReadinessURL(readinessCfg.HTTPURL, port)
+
+	if _, probeErr := ProbeHTTPReady(ctx, l.deps.HTTPClient, readinessCfg); probeErr != nil {
+		l.deps.Logger.Warn(
+			"supervise: promote readiness failed; terminating child",
+			slog.Int("port", int(port)),
+			slog.Any("err", probeErr),
+		)
+		l.terminateCurrentChild(ctx)
+		return fmt.Errorf("supervise: promote child readiness: %w", probeErr)
+	}
+
+	if setErr := proxy.SetBackend(port); setErr != nil {
+		l.deps.Logger.Warn(
+			"supervise: promote backend swap failed; terminating child",
+			slog.Int("port", int(port)),
+			slog.Any("err", setErr),
+		)
+		l.terminateCurrentChild(ctx)
+		return fmt.Errorf("supervise: promote backend pointer: %w", setErr)
+	}
+
+	l.deps.Logger.Info(
+		"supervise: child promoted to proxy backend",
+		slog.Int("port", int(port)),
+	)
+	return nil
+}
+
+// terminateCurrentChild reads the live child reference and applies
+// terminateChildWithGrace so promoteChildToProxy's failure paths leave
+// no orphaned process behind. No-op when no child is currently held.
+func (l *Lifecycle) terminateCurrentChild(ctx context.Context) {
+	l.childMu.Lock()
+	child := l.child
+	l.childMu.Unlock()
+	if child == nil {
+		return
+	}
+	l.terminateChildWithGrace(ctx, child, l.config.Child.Shutdown.Grace)
+}
+
 // SwapChild orchestrates an HTTP-proxy reload: starts a new child on a
 // fresh private backend port, probes readiness, atomically points the
 // proxy at the new backend, audits the swap, and terminates the old
