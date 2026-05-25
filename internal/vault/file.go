@@ -167,6 +167,12 @@ func decryptWires(data []byte, vaultKey *securebytes.SecureBytes) ([]wireSecret,
 	if err != nil {
 		return nil, fmt.Errorf("vault: %w", ErrAuthFailed)
 	}
+	// Layer 5: zero the decrypted aggregate before return. wireValue.UnmarshalJSON
+	// has already copied each secret value into mlocked storage; Name/Description
+	// land in fresh Go-string allocations. After this point nothing in `wires`
+	// aliases plaintext, so wiping the backing array is safe and prevents the
+	// JSON-encoded secret table from floating in unreferenced heap memory until GC.
+	defer secureZero(plaintext)
 	_ = salt // salt is carried verbatim; consumed by KDF at higher layer
 
 	var wires []wireSecret
@@ -228,6 +234,13 @@ func SaveWithSalt(ctx context.Context, path string, vaultKey *securebytes.Secure
 	if err != nil {
 		return fmt.Errorf("vault: marshal: %w", err)
 	}
+	// Layer 5: zero the marshaled aggregate before return. aeadSeal consumes
+	// plaintext synchronously, so by the time defer runs the buffer is no
+	// longer needed. Note: per-secret intermediates inside wireValue.MarshalJSON
+	// (the base64 Go string and json.Marshal byte slice) are not addressed here;
+	// they require a custom encoder to eliminate and remain a known limitation
+	// of the marshal path beyond C1's scope.
+	defer secureZero(plaintext)
 
 	nonce := make([]byte, nonceLen)
 	if _, err = randRead(nonce); err != nil {
@@ -362,4 +375,14 @@ func validateDescription(desc string) error {
 // parentDir is a filepath.Dir wrapper used internally and in permissions.go.
 func parentDir(path string) string {
 	return filepath.Dir(path)
+}
+
+// secureZero overwrites every byte of buf with 0. Mirrors the same-named
+// helper in internal/transport/ecies; kept as a tiny per-package primitive
+// so the simple loop pattern is preserved across Go compiler versions for
+// slices reachable through a defer registration.
+func secureZero(buf []byte) {
+	for i := range buf {
+		buf[i] = 0
+	}
 }
