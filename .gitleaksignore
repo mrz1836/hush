@@ -87,6 +87,7 @@ internal/chain/eth/crypto/crypto_test.go:generic-api-key:512
 internal/cli/balance_test.go:generic-api-key:379
 internal/cli/config_test.go:generic-api-key:527
 internal/cli/config_test.go:generic-api-key:594
+internal/cli/secret_lifecycle_test.go:generic-api-key:107
 internal/cli/wallet_restore_test.go:generic-api-key:209
 internal/cli/wallet_test.go:generic-api-key:603
 
