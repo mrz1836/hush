@@ -61,10 +61,33 @@ type StatusServer struct {
 	mu             sync.Mutex
 	inputs         StatusInputs
 	refreshHandler func(ctx context.Context) error
+	reloadHandler  func(ctx context.Context, req ReloadRequest) (SwapResult, error)
 	started        bool
 	conns          map[net.Conn]struct{}
 	wg             sync.WaitGroup
 }
+
+// ReloadRequest is the parsed reload-request payload from the status
+// socket. ConfigPath echoes the operator-supplied target config so the
+// supervisor and audit observers can record which file the operator
+// asked to swap to. The supervisor itself uses its already-loaded
+// config for the actual swap — the path is informational here
+// (client-side load+validate happens before the request is sent).
+type ReloadRequest struct {
+	ConfigPath string `json:"config_path"`
+}
+
+// Reload result-code constants. These strings are wire-stable: the
+// pkg/client SDK switches on them to translate into typed errors.
+// `supervisor-unreachable` is a client-side code only and is never
+// emitted by the server.
+const (
+	ReloadResultOK              = "ok"
+	ReloadResultReadinessFailed = "readiness-failed"
+	ReloadResultConfigInvalid   = "config-invalid"
+	ReloadResultSwapInFlight    = "swap-in-flight"
+	ReloadResultError           = "error"
+)
 
 // NewStatusServer constructs a fresh StatusServer. Pure value constructor
 // — performs ZERO syscalls. Panics if logger is nil. store may be nil for
@@ -150,6 +173,30 @@ func (s *StatusServer) AttachRefreshHandler(handler func(ctx context.Context) er
 		panic("supervise: AttachRefreshHandler called twice on same StatusServer")
 	}
 	s.refreshHandler = handler
+}
+
+// AttachReloadHandler wires the orchestrator's reload (HTTP-proxy
+// swap) callback into the status server. The handler is invoked for
+// every `reload[ <json-body>]\n` verb received on the status socket.
+// Wired once post-construction by `internal/cli/supervise.go`. Until
+// called, the reload path returns a stable
+// `{"ok":false,"result":"error","error":"reload handler not wired"}`
+// response rather than panicking.
+//
+// The handler may return any error wrapping ErrSwapNotEligible,
+// ErrSwapReadinessFailed, ErrSwapInFlight, ErrSwapProxyMissing, or
+// any other sentinel; the status server maps them onto the wire-stable
+// result codes via classifyReloadError.
+//
+// Single-shot: a second call panics (matches the one-shot `Run`
+// semantics).
+func (s *StatusServer) AttachReloadHandler(handler func(ctx context.Context, req ReloadRequest) (SwapResult, error)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.reloadHandler != nil {
+		panic("supervise: AttachReloadHandler called twice on same StatusServer")
+	}
+	s.reloadHandler = handler
 }
 
 // attach wires inputs into the status server. Package-private; called by
@@ -249,6 +296,12 @@ func (s *StatusServer) handle(ctx context.Context, conn net.Conn) {
 		return
 	}
 
+	if verb == "reload" || strings.HasPrefix(verb, "reload ") {
+		args := strings.TrimSpace(strings.TrimPrefix(verb, "reload"))
+		s.writeReloadAck(ctx, conn, args)
+		return
+	}
+
 	body, encErr := s.renderStatus(s.snapshotForResponse())
 	if encErr != nil {
 		s.logger.Error("supervise: status encode error", "err", encErr)
@@ -327,6 +380,112 @@ func (s *StatusServer) writeRefreshAck(ctx context.Context, conn net.Conn) {
 	}
 	body = append(body, '\n')
 	s.writeOrLog(conn, body, "supervise: refresh ack")
+}
+
+// reloadAckWire is the unified success/failure response shape for the
+// `reload` verb. OK + Result together encode outcome; the remaining
+// fields are populated only on success. Error carries a one-line
+// diagnostic string on failure — never an env/secret value because
+// the upstream SwapChild error chain is constructed from sentinels +
+// stable wrappers (no secret material).
+type reloadAckWire struct {
+	OK                  bool   `json:"ok"`
+	Result              string `json:"result"`
+	OldPID              int    `json:"old_pid,omitempty"`
+	NewPID              int    `json:"new_pid,omitempty"`
+	ReadinessDurationMS int64  `json:"readiness_ms,omitempty"`
+	Strategy            string `json:"strategy,omitempty"`
+	Error               string `json:"error,omitempty"`
+	ConfigPath          string `json:"config_path,omitempty"`
+}
+
+// writeReloadAck dispatches the reload verb to the attached handler
+// and writes the terminal ack to conn. args is the (possibly empty)
+// JSON body that followed the `reload` verb token on the request
+// line. ctx is the per-connection derived ctx propagated from
+// acceptLoop / handle so the handler's in-flight swap aborts on
+// supervisor SIGTERM. When no handler is attached, writes a stable
+// error response without panicking.
+//
+//nolint:cyclop // sequential error-classification branches mirror the result-code table
+func (s *StatusServer) writeReloadAck(ctx context.Context, conn net.Conn, args string) {
+	s.mu.Lock()
+	handler := s.reloadHandler
+	s.mu.Unlock()
+
+	if handler == nil {
+		body := marshalReloadAck(reloadAckWire{
+			Result: ReloadResultError,
+			Error:  "reload handler not wired",
+		})
+		s.writeOrLog(conn, body, "supervise: reload ack")
+		return
+	}
+
+	var req ReloadRequest
+	if args != "" {
+		if jerr := json.Unmarshal([]byte(args), &req); jerr != nil {
+			body := marshalReloadAck(reloadAckWire{
+				Result: ReloadResultError,
+				Error:  "invalid reload request body",
+			})
+			s.writeOrLog(conn, body, "supervise: reload ack")
+			return
+		}
+	}
+
+	res, handlerErr := handler(ctx, req)
+	if handlerErr == nil {
+		body := marshalReloadAck(reloadAckWire{
+			OK:                  true,
+			Result:              ReloadResultOK,
+			OldPID:              res.OldPID,
+			NewPID:              res.NewPID,
+			ReadinessDurationMS: res.ReadinessDuration.Milliseconds(),
+			Strategy:            res.Strategy,
+			ConfigPath:          req.ConfigPath,
+		})
+		s.writeOrLog(conn, body, "supervise: reload ack")
+		return
+	}
+
+	msg := strings.ReplaceAll(handlerErr.Error(), "\n", " ")
+	body := marshalReloadAck(reloadAckWire{
+		Result:     classifyReloadError(handlerErr),
+		Error:      msg,
+		ConfigPath: req.ConfigPath,
+	})
+	s.writeOrLog(conn, body, "supervise: reload ack")
+}
+
+// classifyReloadError maps a SwapChild error onto the wire-stable
+// reload result code. Unknown errors fall through to ReloadResultError
+// so the operator still receives a non-zero outcome with the wrapped
+// message rather than a silent success.
+func classifyReloadError(err error) string {
+	switch {
+	case errors.Is(err, ErrSwapNotEligible):
+		return ReloadResultConfigInvalid
+	case errors.Is(err, ErrSwapReadinessFailed):
+		return ReloadResultReadinessFailed
+	case errors.Is(err, ErrSwapInFlight):
+		return ReloadResultSwapInFlight
+	case errors.Is(err, ErrSwapProxyMissing):
+		return ReloadResultConfigInvalid
+	}
+	return ReloadResultError
+}
+
+// marshalReloadAck encodes a reloadAckWire and appends a single
+// trailing newline. Falls back to a hand-built one-liner when
+// json.Marshal returns an error (effectively impossible for this
+// fixed-shape struct, but kept for parity with writeRefreshAck).
+func marshalReloadAck(ack reloadAckWire) []byte {
+	body, err := json.Marshal(ack)
+	if err != nil {
+		return []byte(`{"ok":false,"result":"error","error":"reload ack serialization failed"}` + "\n")
+	}
+	return append(body, '\n')
 }
 
 // snapshotForResponse takes ONE Store.Snapshot() per request.

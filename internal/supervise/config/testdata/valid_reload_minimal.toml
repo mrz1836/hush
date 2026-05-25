@@ -1,0 +1,33 @@
+name = "reload-daemon"
+reason = "Reload-eligible HTTP daemon under proxy handoff"
+server_url = "http://100.96.10.4:7743/h/a8k2f9"
+client_machine_index = 2
+session_type = "supervisor"
+requested_ttl = "20h"
+refresh_window = "09:00-10:00"
+status_socket = "/tmp/hush/supervise-reload-daemon.sock"
+pid_file = "/tmp/hush/supervise-reload-daemon.pid"
+
+scope = [
+  "ANTHROPIC_API_KEY",
+]
+
+[child]
+command = ["/usr/local/bin/your-daemon-binary", "start", "--port=$HUSH_BIND_PORT"]
+working_dir = "/tmp"
+env_passthrough = ["PATH"]
+
+[child.readiness]
+http_url = "http://127.0.0.1:0/health"
+timeout = "30s"
+interval = "200ms"
+
+[child.shutdown]
+grace = "30s"
+
+[child.handoff]
+mode = "http-proxy"
+listen_addr = "127.0.0.1:8080"
+
+[validators]
+ANTHROPIC_API_KEY = "anthropic"

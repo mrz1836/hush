@@ -40,6 +40,17 @@ var (
 	ErrBootRetryTimeoutTooLong   = errors.New("hush/supervise/config: boot_retry_timeout exceeds 1h cap")
 	ErrRefreshNudgeBeforeTooLong = errors.New("hush/supervise/config: refresh_nudge_before exceeds 6h cap")
 
+	// Reload eligibility errors. The reload-eligible config shape is
+	// [child.readiness] + [child.handoff] mode = "http-proxy" with a
+	// child command/env that consumes HUSH_BIND_PORT. Each rejection
+	// category has exactly one sentinel; AC-3 / AC-7 / AC-8 in T-306.
+	ErrReadinessURLInvalid        = errors.New("hush/supervise/config: child.readiness.http_url must parse with http/https scheme and non-empty host")
+	ErrReadinessDurationInvalid   = errors.New("hush/supervise/config: child.readiness timeout/interval must be > 0")
+	ErrShutdownGraceInvalid       = errors.New("hush/supervise/config: child.shutdown.grace must be > 0")
+	ErrHandoffModeInvalid         = errors.New(`hush/supervise/config: child.handoff.mode must be "http-proxy"`)
+	ErrHandoffRequiresReadiness   = errors.New("hush/supervise/config: child.handoff requires [child.readiness] for zero-downtime reload")
+	ErrHandoffRequiresBindPortRef = errors.New("hush/supervise/config: child.handoff requires child.command or child.env to reference HUSH_BIND_PORT so the child binds the hush-allocated backend port")
+
 	// errNilSupervisor is returned by Supervisor.Validate when called on a
 	// nil receiver. Wraps ErrMissingRequiredField so the existing
 	// errors.Is gate keeps working.

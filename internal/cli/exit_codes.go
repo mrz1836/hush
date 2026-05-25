@@ -16,6 +16,7 @@ import (
 	"github.com/mrz1836/hush/internal/transport/sign"
 	"github.com/mrz1836/hush/internal/upgrade"
 	"github.com/mrz1836/hush/internal/vault"
+	"github.com/mrz1836/hush/pkg/client"
 )
 
 // Exit codes form the public CLI contract. Operators script against
@@ -154,6 +155,27 @@ var errInvalidGraceWindow = errors.New("invalid --grace-window")
 // Mapped to [ExitInputErr] by [mapErr].
 var errSocketAmbiguous = errors.New("supervisor socket ambiguous")
 
+// errReloadConfigInvalid surfaces the supervisor's refusal to reload
+// because the running configuration is not zero-downtime eligible
+// (missing [child.readiness] or [child.handoff] mode = "http-proxy",
+// or the proxy listener is not attached). Mapped to [ExitInputErr] by
+// [mapErr] so operators see operator-correctable feedback.
+var errReloadConfigInvalid = errors.New("supervisor rejected reload: config not zero-downtime eligible")
+
+// errReloadReadinessFailed surfaces a reload where the replacement
+// child failed the HTTP readiness probe; the old child remains the
+// active backend. Mapped to [ExitErr] by [mapErr].
+var errReloadReadinessFailed = errors.New("supervisor reload failed: new child did not pass readiness")
+
+// errReloadInFlight surfaces a reload refused because another reload
+// is already running against the same supervisor. Mapped to [ExitErr].
+var errReloadInFlight = errors.New("supervisor reload already in flight")
+
+// errReloadFailed surfaces any other supervisor-side reload failure
+// (child start failure, backend port allocation failure, supervisor
+// not running, etc.). Mapped to [ExitErr].
+var errReloadFailed = errors.New("supervisor reload failed")
+
 // errSocketUnreachable surfaces dial / read / write / parse failures
 // against the supervisor's status socket.
 // Mapped to [ExitErr] by [mapErr].
@@ -237,6 +259,8 @@ func mapErr(err error) int {
 		errors.Is(err, config.ErrClaimApprovalTimeoutOutOfRange),
 		errors.Is(err, errInvalidGraceWindow),
 		errors.Is(err, errSocketAmbiguous),
+		errors.Is(err, errReloadConfigInvalid),
+		errors.Is(err, client.ErrReloadConfigInvalid),
 		errors.Is(err, supcfg.ErrTOMLDecode),
 		errors.Is(err, supcfg.ErrUnknownField),
 		errors.Is(err, supcfg.ErrMissingRequiredField),
@@ -268,6 +292,12 @@ func mapErr(err error) int {
 	case errors.Is(err, errSocketUnreachable),
 		errors.Is(err, errSupervisorRefused),
 		errors.Is(err, errDuplicateSupervisor),
+		errors.Is(err, errReloadReadinessFailed),
+		errors.Is(err, errReloadInFlight),
+		errors.Is(err, errReloadFailed),
+		errors.Is(err, client.ErrReloadReadinessFailed),
+		errors.Is(err, client.ErrReloadInFlight),
+		errors.Is(err, client.ErrReloadFailed),
 		errors.Is(err, supervise.ErrPidLocked):
 		return ExitErr
 	}

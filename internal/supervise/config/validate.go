@@ -192,5 +192,64 @@ func (s *Supervisor) Validate() error {
 		errs = append(errs, fmt.Errorf("%w: got %d", ErrWatchdogRateInvalid, s.Watchdog.MaxAlertsPerHour))
 	}
 
+	// [child.readiness] — when present, validate URL + positive durations.
+	errs = append(errs, validateReadiness(s.Child.Readiness)...)
+
+	// [child.shutdown] — Grace must be > 0 (defaulted by Load but
+	// programmatic constructors may leave it zero).
+	if s.Child.Shutdown.Grace <= 0 {
+		errs = append(errs, fmt.Errorf("%w: got %s", ErrShutdownGraceInvalid, s.Child.Shutdown.Grace))
+	}
+
+	// [child.handoff] — when present, enforce reload eligibility contract:
+	// mode in allow-list, listen_addr non-empty, readiness present, and
+	// child references HUSH_BIND_PORT.
+	errs = append(errs, validateHandoff(s.Child)...)
+
 	return errors.Join(errs...)
+}
+
+// validateReadiness returns the set of validation errors for the optional
+// [child.readiness] section. Returns nil when rd is nil.
+func validateReadiness(rd *ChildReadiness) []error {
+	if rd == nil {
+		return nil
+	}
+	var errs []error
+	httpURL := strings.TrimSpace(rd.HTTPURL)
+	if httpURL == "" {
+		errs = append(errs, fmt.Errorf("%w: child.readiness.http_url", ErrMissingRequiredField))
+	} else if err := validateReadinessURL(httpURL); err != nil {
+		errs = append(errs, err)
+	}
+	if rd.Timeout <= 0 {
+		errs = append(errs, fmt.Errorf("%w: child.readiness.timeout=%s", ErrReadinessDurationInvalid, rd.Timeout))
+	}
+	if rd.Interval <= 0 {
+		errs = append(errs, fmt.Errorf("%w: child.readiness.interval=%s", ErrReadinessDurationInvalid, rd.Interval))
+	}
+	return errs
+}
+
+// validateHandoff returns the set of validation errors for the optional
+// [child.handoff] section. Returns nil when child.Handoff is nil.
+func validateHandoff(child Child) []error {
+	handoff := child.Handoff
+	if handoff == nil {
+		return nil
+	}
+	var errs []error
+	if _, ok := handoffModeAllowList[handoff.Mode]; !ok {
+		errs = append(errs, fmt.Errorf("%w: got %q", ErrHandoffModeInvalid, handoff.Mode))
+	}
+	if strings.TrimSpace(handoff.ListenAddr) == "" {
+		errs = append(errs, fmt.Errorf("%w: child.handoff.listen_addr", ErrMissingRequiredField))
+	}
+	if child.Readiness == nil {
+		errs = append(errs, fmt.Errorf("%w", ErrHandoffRequiresReadiness))
+	}
+	if !childReferencesBindPort(child) {
+		errs = append(errs, fmt.Errorf("%w", ErrHandoffRequiresBindPortRef))
+	}
+	return errs
 }

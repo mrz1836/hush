@@ -55,3 +55,24 @@ func (l *Lifecycle) TriggerWindowRefreshForTest(_ context.Context) {
 func (l *Lifecycle) ConfigForTest() any {
 	return l.config
 }
+
+// BackendPortForTest returns the lifecycle's allocated private backend
+// port (set by the child startup path when [child.handoff] mode =
+// "http-proxy" is configured). Returns 0 when the lifecycle is not
+// reload-eligible or the boot-time child has not yet started.
+// Concurrent-safe: reads under the same mutex SwapChild writes through.
+func (l *Lifecycle) BackendPortForTest() uint16 {
+	l.backendMu.Lock()
+	defer l.backendMu.Unlock()
+	return l.backendPort
+}
+
+// AttachReloadHandler wires the supplied handler onto the lifecycle's
+// status server so the reload verb routes to SwapChild. The production
+// CLI wiring layer will eventually expose an equivalent seam; until then
+// the integration harness uses this to install the bridge.
+//
+// Single-shot — calling twice panics (mirrors StatusServer.AttachReloadHandler).
+func (l *Lifecycle) AttachReloadHandler(handler func(ctx context.Context, req ReloadRequest) (SwapResult, error)) {
+	l.statusServer.AttachReloadHandler(handler)
+}

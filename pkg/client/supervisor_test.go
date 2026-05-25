@@ -250,6 +250,151 @@ func TestRefresh_SocketMissing(t *testing.T) {
 }
 
 // =============================================================
+// Reload — T-306 Phase 6 SDK coverage
+// =============================================================
+
+// fakeSocketCapturing accepts a single connection, captures the first
+// up-to-512-byte request, and writes the supplied reply. The captured
+// bytes are returned via the *[]byte argument once the handler has
+// finished. Used by Reload tests that need to assert the wire format
+// the SDK actually sends.
+func fakeSocketCapturing(t *testing.T, reply []byte, captured *[]byte) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "h23r-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	path := filepath.Join(dir, "s")
+
+	var lc net.ListenConfig
+	listener, err := lc.Listen(context.Background(), "unix", path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+
+	go func() {
+		conn, aerr := listener.Accept()
+		if aerr != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		buf := make([]byte, 512)
+		n, _ := conn.Read(buf)
+		*captured = append((*captured)[:0], buf[:n]...)
+		_, _ = conn.Write(reply)
+	}()
+	return path
+}
+
+func TestReload_HappyPath(t *testing.T) {
+	body := []byte(`{"ok":true,"result":"ok","old_pid":4242,"new_pid":4243,"readiness_ms":150,"strategy":"http-proxy","config_path":"/etc/hush/sup.toml"}` + "\n")
+	var captured []byte
+	path := fakeSocketCapturing(t, body, &captured)
+	sup := client.NewSupervisorStatus(path)
+
+	res, err := sup.Reload(context.Background(), "/etc/hush/sup.toml")
+	require.NoError(t, err)
+	assert.Equal(t, 4242, res.OldPID)
+	assert.Equal(t, 4243, res.NewPID)
+	assert.Equal(t, 150*time.Millisecond, res.ReadinessDuration)
+	assert.Equal(t, "http-proxy", res.Strategy)
+
+	// Wait for the goroutine to record the captured request.
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && len(captured) == 0 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	require.NotEmpty(t, captured, "server did not capture a request")
+	assert.True(t, strings.HasPrefix(string(captured), "reload "), "wire frame must start with reload verb: %q", captured)
+	assert.True(t, strings.HasSuffix(string(captured), "\n"), "wire frame must end with newline")
+	// JSON body carries the operator config path.
+	jsonPart := strings.TrimSuffix(strings.TrimPrefix(string(captured), "reload "), "\n")
+	var sent map[string]string
+	require.NoError(t, json.Unmarshal([]byte(jsonPart), &sent))
+	assert.Equal(t, "/etc/hush/sup.toml", sent["config_path"])
+}
+
+func TestReload_ConfigInvalid(t *testing.T) {
+	body := []byte(`{"ok":false,"result":"config-invalid","error":"swap requires [child.handoff] mode = http-proxy"}` + "\n")
+	path := fakeSocket(t, body)
+	sup := client.NewSupervisorStatus(path)
+
+	_, err := sup.Reload(context.Background(), "/etc/hush/sup.toml")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, client.ErrReloadConfigInvalid), "got %v", err)
+	assert.Contains(t, err.Error(), "swap requires")
+}
+
+func TestReload_ReadinessFailed(t *testing.T) {
+	body := []byte(`{"ok":false,"result":"readiness-failed","error":"probe timeout"}` + "\n")
+	path := fakeSocket(t, body)
+	sup := client.NewSupervisorStatus(path)
+
+	_, err := sup.Reload(context.Background(), "/etc/hush/sup.toml")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, client.ErrReloadReadinessFailed), "got %v", err)
+	assert.Contains(t, err.Error(), "probe timeout")
+}
+
+func TestReload_SwapInFlight(t *testing.T) {
+	body := []byte(`{"ok":false,"result":"swap-in-flight","error":"already in flight"}` + "\n")
+	path := fakeSocket(t, body)
+	sup := client.NewSupervisorStatus(path)
+
+	_, err := sup.Reload(context.Background(), "/etc/hush/sup.toml")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, client.ErrReloadInFlight), "got %v", err)
+}
+
+func TestReload_UnknownResultMapsToErrReloadFailed(t *testing.T) {
+	body := []byte(`{"ok":false,"result":"error","error":"backend port allocate failed"}` + "\n")
+	path := fakeSocket(t, body)
+	sup := client.NewSupervisorStatus(path)
+
+	_, err := sup.Reload(context.Background(), "/etc/hush/sup.toml")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, client.ErrReloadFailed), "got %v", err)
+	assert.Contains(t, err.Error(), "backend port allocate failed")
+	// Must NOT match any of the specific sentinels.
+	assert.False(t, errors.Is(err, client.ErrReloadConfigInvalid))
+	assert.False(t, errors.Is(err, client.ErrReloadReadinessFailed))
+	assert.False(t, errors.Is(err, client.ErrReloadInFlight))
+}
+
+func TestReload_SocketMissingMapsToUnreachable(t *testing.T) {
+	sup := client.NewSupervisorStatus("/tmp/hush-pkg-client-nope-reload.sock")
+	_, err := sup.Reload(context.Background(), "/etc/hush/sup.toml")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, client.ErrSocketUnavailable), "got %v", err)
+}
+
+func TestReload_MalformedResponseIsInvalid(t *testing.T) {
+	path := fakeSocket(t, []byte("not json\n"))
+	sup := client.NewSupervisorStatus(path)
+	_, err := sup.Reload(context.Background(), "/etc/hush/sup.toml")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, client.ErrInvalidResponse), "got %v", err)
+}
+
+func TestReload_EmptyConfigPathStillSendsValidJSON(t *testing.T) {
+	body := []byte(`{"ok":true,"result":"ok","old_pid":1,"new_pid":2,"strategy":"http-proxy"}` + "\n")
+	var captured []byte
+	path := fakeSocketCapturing(t, body, &captured)
+	sup := client.NewSupervisorStatus(path)
+
+	_, err := sup.Reload(context.Background(), "")
+	require.NoError(t, err)
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && len(captured) == 0 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	require.NotEmpty(t, captured)
+	jsonPart := strings.TrimSuffix(strings.TrimPrefix(string(captured), "reload "), "\n")
+	var sent map[string]string
+	require.NoError(t, json.Unmarshal([]byte(jsonPart), &sent))
+	assert.Empty(t, sent["config_path"])
+}
+
+// =============================================================
 // Misc
 // =============================================================
 

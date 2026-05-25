@@ -10,7 +10,7 @@ import (
 	"github.com/mrz1836/hush/internal/vault/securebytes"
 )
 
-// State is the supervisor's lifecycle state. Exactly five values
+// State is the supervisor's lifecycle state. Exactly six values
 // are valid; see the constants below. The string forms
 // are part of the operator-visible contract (status socket JSON,
 // audit log) and MUST NOT be renamed without a SPEC amendment.
@@ -21,6 +21,7 @@ const (
 	StateRunning          State = "running"
 	StateAwaitingApproval State = "awaiting-approval"
 	StateGraceRestart     State = "grace-restart"
+	StateSwapping         State = "swapping"
 	StateStopped          State = "stopped"
 )
 
@@ -44,6 +45,9 @@ const (
 	EventGraceRestartOK        Event = "grace-restart-ok"
 	EventGraceExpired          Event = "grace-expired"
 	EventApprovalGranted       Event = "approval-granted"
+	EventReloadRequested       Event = "reload-requested"
+	EventSwapOK                Event = "swap-ok"
+	EventSwapFailed            Event = "swap-failed"
 	EventStopRequested         Event = "stop-requested"
 )
 
@@ -79,11 +83,14 @@ var reasons = map[Event]string{ //nolint:gochecknoglobals // sentinel-class read
 	EventGraceRestartOK:        "grace restart succeeded",
 	EventGraceExpired:          "grace window expired",
 	EventApprovalGranted:       "operator approved",
+	EventReloadRequested:       "reload requested",
+	EventSwapOK:                "child swap succeeded",
+	EventSwapFailed:            "child swap failed; rolled back to prior child",
 	EventStopRequested:         "stop requested",
 }
 
 // transitions encodes every legal (State, Event) -> State edge.
-// 19 cells; outer keys are the 5 states and inner-map values are
+// 23 cells; outer keys are the 6 states and inner-map values are
 // drawn from the same closed set. Read-only post-init.
 var transitions = map[State]map[Event]State{ //nolint:gochecknoglobals // sentinel-class read-only state-table; locked at package init
 	StateFetching: {
@@ -101,6 +108,7 @@ var transitions = map[State]map[Event]State{ //nolint:gochecknoglobals // sentin
 		EventChildExit78Stale:      StateAwaitingApproval,
 		EventRefreshRequested:      StateFetching,
 		EventGraceRestartTriggered: StateGraceRestart,
+		EventReloadRequested:       StateSwapping,
 		EventStopRequested:         StateStopped,
 	},
 	StateAwaitingApproval: {
@@ -111,6 +119,11 @@ var transitions = map[State]map[Event]State{ //nolint:gochecknoglobals // sentin
 		EventGraceRestartOK: StateRunning,
 		EventGraceExpired:   StateAwaitingApproval,
 		EventStopRequested:  StateStopped,
+	},
+	StateSwapping: {
+		EventSwapOK:        StateRunning,
+		EventSwapFailed:    StateRunning,
+		EventStopRequested: StateStopped,
 	},
 	StateStopped: {
 		EventStopRequested: StateStopped,

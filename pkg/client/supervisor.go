@@ -92,6 +92,84 @@ func (s *SupervisorStatus) Refresh(ctx context.Context) error {
 	return fmt.Errorf("%w: %s", ErrRefreshDenied, ack.Error)
 }
 
+// ReloadResult is the success outcome of (*SupervisorStatus).Reload.
+// All fields are non-secret kernel/wall-clock identifiers. Strategy is
+// the wire-stable handoff strategy string — "http-proxy" in v1.
+type ReloadResult struct {
+	OldPID            int
+	NewPID            int
+	ReadinessDuration time.Duration
+	Strategy          string
+}
+
+// Reload asks the supervisor to perform a zero-downtime HTTP-proxy
+// handoff against its currently-loaded config. configPath is the path
+// the operator validated locally before triggering the reload; the
+// supervisor uses its already-loaded config for the actual swap, but
+// the path is forwarded so the supervisor's audit log records which
+// file the operator associated the request with.
+//
+// Returns the populated ReloadResult and nil on success. On failure,
+// the error wraps one of:
+//
+//   - ErrReloadConfigInvalid — the supervisor's config is not
+//     reload-eligible (missing [child.readiness] or [child.handoff]
+//     mode = "http-proxy", or proxy listener not attached).
+//   - ErrReloadReadinessFailed — replacement child failed the HTTP
+//     readiness probe; old child is still serving.
+//   - ErrReloadInFlight — another reload is already running.
+//   - ErrReloadFailed — any other supervisor-side failure.
+//   - ErrSocketUnavailable — the supervisor socket could not be
+//     reached (maps to the "supervisor-unreachable" CLI result code).
+//   - ErrInvalidResponse — the supervisor responded but the payload
+//     could not be parsed (version skew or corruption).
+//
+// Compare with errors.Is.
+func (s *SupervisorStatus) Reload(ctx context.Context, configPath string) (ReloadResult, error) {
+	reqBody, mErr := json.Marshal(reloadReqWire{ConfigPath: configPath})
+	if mErr != nil {
+		return ReloadResult{}, fmt.Errorf("%w: marshal reload request: %w", ErrInvalidResponse, mErr)
+	}
+	verb := "reload " + string(reqBody) + "\n"
+	body, err := s.roundTrip(ctx, verb)
+	if err != nil {
+		return ReloadResult{}, err
+	}
+	var ack reloadAckWire
+	if jerr := json.Unmarshal(bytes.TrimSpace(body), &ack); jerr != nil {
+		return ReloadResult{}, fmt.Errorf("%w: %w", ErrInvalidResponse, jerr)
+	}
+	if ack.OK {
+		return ReloadResult{
+			OldPID:            ack.OldPID,
+			NewPID:            ack.NewPID,
+			ReadinessDuration: time.Duration(ack.ReadinessDurationMS) * time.Millisecond,
+			Strategy:          ack.Strategy,
+		}, nil
+	}
+	return ReloadResult{}, classifyReloadAck(ack)
+}
+
+// classifyReloadAck maps a failure ack onto the typed reload error.
+// Unknown result strings fall through to ErrReloadFailed so the
+// caller still receives a non-nil error with the supervisor's
+// reason string.
+func classifyReloadAck(ack reloadAckWire) error {
+	reason := ack.Error
+	if reason == "" {
+		reason = ack.Result
+	}
+	switch ack.Result {
+	case reloadResultConfigInvalid:
+		return fmt.Errorf("%w: %s", ErrReloadConfigInvalid, reason)
+	case reloadResultReadinessFailed:
+		return fmt.Errorf("%w: %s", ErrReloadReadinessFailed, reason)
+	case reloadResultSwapInFlight:
+		return fmt.Errorf("%w: %s", ErrReloadInFlight, reason)
+	}
+	return fmt.Errorf("%w: %s", ErrReloadFailed, reason)
+}
+
 // roundTrip dials the socket, sends verb, reads to EOF or context
 // deadline, and returns the bytes. Single attempt; never retries.
 // Any dial / write / read failure wraps ErrSocketUnavailable.
@@ -180,6 +258,35 @@ type refreshAckWire struct {
 	OK    bool   `json:"ok"`
 	Error string `json:"error,omitempty"`
 }
+
+// reloadReqWire mirrors supervise.ReloadRequest — the JSON body that
+// follows the `reload` verb on the request line.
+type reloadReqWire struct {
+	ConfigPath string `json:"config_path"`
+}
+
+// reloadAckWire mirrors supervise.reloadAckWire — the unified
+// success/failure response shape for the `reload` verb.
+type reloadAckWire struct {
+	OK                  bool   `json:"ok"`
+	Result              string `json:"result"`
+	OldPID              int    `json:"old_pid,omitempty"`
+	NewPID              int    `json:"new_pid,omitempty"`
+	ReadinessDurationMS int64  `json:"readiness_ms,omitempty"`
+	Strategy            string `json:"strategy,omitempty"`
+	Error               string `json:"error,omitempty"`
+	ConfigPath          string `json:"config_path,omitempty"`
+}
+
+// Reload result code constants (mirrored from the server's
+// wire-stable strings). Kept package-private because callers compare
+// against the typed sentinels (ErrReloadConfigInvalid, ...) rather
+// than the raw codes.
+const (
+	reloadResultConfigInvalid   = "config-invalid"
+	reloadResultReadinessFailed = "readiness-failed"
+	reloadResultSwapInFlight    = "swap-in-flight"
+)
 
 // parseRFC3339OrZero accepts either an RFC3339 string or an empty
 // string (returning zero time). The supervisor always emits a string

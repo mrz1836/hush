@@ -821,6 +821,273 @@ func TestSocket_AttachRefreshHandlerCalledTwicePanics(t *testing.T) {
 }
 
 // ============================================================
+// T-306 Phase 6 — Reload verb dispatch
+// ============================================================
+
+// dialAndDriveRaw sends raw bytes (no trailing newline added) and reads
+// the full response. Lets reload tests assert exact wire framing.
+func dialAndDriveRaw(t *testing.T, path string, payload []byte) []byte {
+	t.Helper()
+	var d net.Dialer
+	conn, err := d.DialContext(context.Background(), "unix", path)
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+	if _, werr := conn.Write(payload); werr != nil {
+		t.Fatalf("write payload: %v", werr)
+	}
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(2*time.Second)))
+	body, err := io.ReadAll(conn)
+	require.NoError(t, err)
+	return body
+}
+
+// TestSocket_StatusSocketReloadOK — bare `reload\n` verb invokes the
+// attached handler, returns a success response with the SwapResult
+// fields and `result:"ok"`.
+func TestStatusSocketReloadOK(t *testing.T) {
+	path := tempSocketPath(t)
+	srv := NewStatusServer(path, nil, silentLogger())
+	srv.AttachReloadHandler(func(_ context.Context, _ ReloadRequest) (SwapResult, error) {
+		return SwapResult{
+			OldPID:            1234,
+			NewPID:            5678,
+			ReadinessDuration: 150 * time.Millisecond,
+			Strategy:          HandoffStrategyHTTPProxy,
+		}, nil
+	})
+
+	stop := startServer(t, srv)
+	body := dialAndDriveVerb(t, path, "reload")
+	require.NoError(t, stop())
+
+	var ack map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(body), &ack))
+	assert.JSONEq(t, "true", string(ack["ok"]))
+	assert.JSONEq(t, `"ok"`, string(ack["result"]))
+	assert.JSONEq(t, "1234", string(ack["old_pid"]))
+	assert.JSONEq(t, "5678", string(ack["new_pid"]))
+	assert.JSONEq(t, "150", string(ack["readiness_ms"]))
+	assert.JSONEq(t, `"http-proxy"`, string(ack["strategy"]))
+}
+
+// TestSocket_StatusSocketReloadWithConfigPath — `reload <json>\n`
+// passes ConfigPath through to the handler and echoes it on the
+// response so the operator can confirm which file the supervisor
+// associated the reload attempt with.
+func TestStatusSocketReloadWithConfigPath(t *testing.T) {
+	path := tempSocketPath(t)
+	srv := NewStatusServer(path, nil, silentLogger())
+	var gotPath string
+	srv.AttachReloadHandler(func(_ context.Context, req ReloadRequest) (SwapResult, error) {
+		gotPath = req.ConfigPath
+		return SwapResult{OldPID: 1, NewPID: 2, Strategy: HandoffStrategyHTTPProxy}, nil
+	})
+
+	stop := startServer(t, srv)
+	payload := []byte(`reload {"config_path":"/etc/hush/supervise.toml"}` + "\n")
+	body := dialAndDriveRaw(t, path, payload)
+	require.NoError(t, stop())
+
+	assert.Equal(t, "/etc/hush/supervise.toml", gotPath)
+	var ack map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(body), &ack))
+	assert.JSONEq(t, `"/etc/hush/supervise.toml"`, string(ack["config_path"]))
+}
+
+// TestSocket_StatusSocketReloadConfigInvalid — handler returns
+// ErrSwapNotEligible; response carries result:"config-invalid".
+func TestStatusSocketReloadConfigInvalid(t *testing.T) {
+	path := tempSocketPath(t)
+	srv := NewStatusServer(path, nil, silentLogger())
+	srv.AttachReloadHandler(func(_ context.Context, _ ReloadRequest) (SwapResult, error) {
+		return SwapResult{}, fmt.Errorf("wrap: %w", ErrSwapNotEligible)
+	})
+
+	stop := startServer(t, srv)
+	body := dialAndDriveVerb(t, path, "reload")
+	require.NoError(t, stop())
+
+	var ack reloadAckWire
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(body), &ack))
+	assert.False(t, ack.OK)
+	assert.Equal(t, ReloadResultConfigInvalid, ack.Result)
+	assert.Contains(t, ack.Error, "swap requires")
+}
+
+// TestSocket_StatusSocketReloadProxyMissing — proxy-missing also maps
+// to "config-invalid" (the supervisor is not set up for reload).
+func TestStatusSocketReloadProxyMissing(t *testing.T) {
+	path := tempSocketPath(t)
+	srv := NewStatusServer(path, nil, silentLogger())
+	srv.AttachReloadHandler(func(_ context.Context, _ ReloadRequest) (SwapResult, error) {
+		return SwapResult{}, fmt.Errorf("wrap: %w", ErrSwapProxyMissing)
+	})
+
+	stop := startServer(t, srv)
+	body := dialAndDriveVerb(t, path, "reload")
+	require.NoError(t, stop())
+
+	var ack reloadAckWire
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(body), &ack))
+	assert.False(t, ack.OK)
+	assert.Equal(t, ReloadResultConfigInvalid, ack.Result)
+}
+
+// TestSocket_StatusSocketReloadReadinessFailed — handler returns
+// ErrSwapReadinessFailed; response carries result:"readiness-failed".
+func TestStatusSocketReloadReadinessFailed(t *testing.T) {
+	path := tempSocketPath(t)
+	srv := NewStatusServer(path, nil, silentLogger())
+	srv.AttachReloadHandler(func(_ context.Context, _ ReloadRequest) (SwapResult, error) {
+		return SwapResult{}, fmt.Errorf("%w: timeout", ErrSwapReadinessFailed)
+	})
+
+	stop := startServer(t, srv)
+	body := dialAndDriveVerb(t, path, "reload")
+	require.NoError(t, stop())
+
+	var ack reloadAckWire
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(body), &ack))
+	assert.False(t, ack.OK)
+	assert.Equal(t, ReloadResultReadinessFailed, ack.Result)
+}
+
+// TestSocket_StatusSocketReloadInFlight — handler returns
+// ErrSwapInFlight; response carries result:"swap-in-flight".
+func TestStatusSocketReloadInFlight(t *testing.T) {
+	path := tempSocketPath(t)
+	srv := NewStatusServer(path, nil, silentLogger())
+	srv.AttachReloadHandler(func(_ context.Context, _ ReloadRequest) (SwapResult, error) {
+		return SwapResult{}, fmt.Errorf("%w", ErrSwapInFlight)
+	})
+
+	stop := startServer(t, srv)
+	body := dialAndDriveVerb(t, path, "reload")
+	require.NoError(t, stop())
+
+	var ack reloadAckWire
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(body), &ack))
+	assert.False(t, ack.OK)
+	assert.Equal(t, ReloadResultSwapInFlight, ack.Result)
+}
+
+// TestSocket_StatusSocketReloadUnknownErrorClassifiedAsError — handler
+// returns an unrelated error; response uses the generic
+// result:"error" code so operators still see the diagnostic message
+// without colliding with the stable codes.
+func TestStatusSocketReloadUnknownErrorClassifiedAsError(t *testing.T) {
+	path := tempSocketPath(t)
+	srv := NewStatusServer(path, nil, silentLogger())
+	srv.AttachReloadHandler(func(_ context.Context, _ ReloadRequest) (SwapResult, error) {
+		return SwapResult{}, errors.New("disk full")
+	})
+
+	stop := startServer(t, srv)
+	body := dialAndDriveVerb(t, path, "reload")
+	require.NoError(t, stop())
+
+	var ack reloadAckWire
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(body), &ack))
+	assert.False(t, ack.OK)
+	assert.Equal(t, ReloadResultError, ack.Result)
+	assert.Contains(t, ack.Error, "disk full")
+}
+
+// TestSocket_StatusSocketReloadHandlerUnwired — no handler attached,
+// reload path returns a stable error ack rather than panicking.
+func TestStatusSocketReloadHandlerUnwired(t *testing.T) {
+	path := tempSocketPath(t)
+	srv := NewStatusServer(path, nil, silentLogger())
+
+	stop := startServer(t, srv)
+	body := dialAndDriveVerb(t, path, "reload")
+	require.NoError(t, stop())
+
+	var ack reloadAckWire
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(body), &ack))
+	assert.False(t, ack.OK)
+	assert.Equal(t, ReloadResultError, ack.Result)
+	assert.Equal(t, "reload handler not wired", ack.Error)
+}
+
+// TestSocket_StatusSocketReloadMalformedArgsRejected — `reload <bad>`
+// where the args are not valid JSON returns a stable error without
+// invoking the handler.
+func TestStatusSocketReloadMalformedArgsRejected(t *testing.T) {
+	path := tempSocketPath(t)
+	srv := NewStatusServer(path, nil, silentLogger())
+	called := false
+	srv.AttachReloadHandler(func(_ context.Context, _ ReloadRequest) (SwapResult, error) {
+		called = true
+		return SwapResult{}, nil
+	})
+
+	stop := startServer(t, srv)
+	payload := []byte("reload {not-json}\n")
+	body := dialAndDriveRaw(t, path, payload)
+	require.NoError(t, stop())
+
+	assert.False(t, called, "handler must not be invoked on malformed args")
+	var ack reloadAckWire
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(body), &ack))
+	assert.False(t, ack.OK)
+	assert.Equal(t, ReloadResultError, ack.Result)
+	assert.Contains(t, ack.Error, "invalid reload request body")
+}
+
+// TestSocket_StatusSocketReloadMultilineErrorOneLine — handler error
+// containing newlines is collapsed to a single line on the wire.
+func TestStatusSocketReloadMultilineErrorOneLine(t *testing.T) {
+	path := tempSocketPath(t)
+	srv := NewStatusServer(path, nil, silentLogger())
+	srv.AttachReloadHandler(func(_ context.Context, _ ReloadRequest) (SwapResult, error) {
+		return SwapResult{}, errors.New("line1\nline2")
+	})
+
+	stop := startServer(t, srv)
+	body := dialAndDriveVerb(t, path, "reload")
+	require.NoError(t, stop())
+
+	assert.NotContains(t, string(body), "\nline2")
+	assert.Contains(t, string(body), "line1 line2")
+}
+
+// TestSocket_StatusSocketReloadAttachTwicePanics — single-shot
+// contract mirrors AttachRefreshHandler.
+func TestStatusSocketReloadAttachTwicePanics(t *testing.T) {
+	srv := NewStatusServer("/dev/null/ignored", nil, silentLogger())
+	srv.AttachReloadHandler(func(_ context.Context, _ ReloadRequest) (SwapResult, error) { return SwapResult{}, nil })
+	assert.Panics(t, func() {
+		srv.AttachReloadHandler(func(_ context.Context, _ ReloadRequest) (SwapResult, error) { return SwapResult{}, nil })
+	})
+}
+
+// TestStatusSocketStatusAndRefreshUnchanged — existing verbs continue
+// to behave identically after the reload addition (regression guard
+// for preserve-compatibility requirement).
+func TestStatusSocketStatusAndRefreshUnchanged(t *testing.T) {
+	path := tempSocketPath(t)
+	srv := NewStatusServer(path, nil, silentLogger())
+	srv.AttachStatusInputs(&stubStatusInputs{name: "compat"})
+	srv.AttachRefreshHandler(func(_ context.Context) error { return nil })
+
+	stop := startServer(t, srv)
+	t.Cleanup(func() { _ = stop() })
+
+	// status verb still returns the status document with `supervisor`.
+	statusBody := dialAndDriveVerb(t, path, "status")
+	var doc map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(statusBody), &doc))
+	assert.Equal(t, `"compat"`, string(doc["supervisor"]))
+	assert.NotContains(t, doc, "result")
+
+	// refresh verb still returns the bare {"ok":true} shape — no
+	// `result` field leaked from the reload ack.
+	refreshBody := dialAndDriveVerb(t, path, "refresh")
+	assert.Equal(t, "{\"ok\":true}\n", string(refreshBody))
+}
+
+// ============================================================
 // Path-derivation helpers (per-OS)
 // ============================================================
 

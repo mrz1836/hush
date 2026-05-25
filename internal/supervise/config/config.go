@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
@@ -56,6 +58,12 @@ type Supervisor struct {
 // inherits the supervisor process's stdout / stderr — under launchd this
 // surfaces in StandardOutPath / StandardErrorPath. Watchdog patterns are
 // still evaluated regardless of which sink is in use.
+//
+// Readiness and Handoff are pointers to preserve "absent in TOML" semantics:
+// a nil Readiness means the operator did not configure an HTTP readiness
+// probe; a nil Handoff means the supervisor is in plain-supervisor mode and
+// the child owns the public listener directly. Shutdown is always populated
+// (default grace 30s) because SIGTERM/SIGKILL timing applies on any stop.
 type Child struct {
 	Command            []string
 	WorkingDir         string
@@ -65,6 +73,34 @@ type Child struct {
 	StderrPath         string
 	RestartOnCleanExit bool
 	RestartOnExit78    bool
+	Readiness          *ChildReadiness
+	Shutdown           ChildShutdown
+	Handoff            *ChildHandoff
+}
+
+// ChildReadiness is the [child.readiness] section. v1 supports HTTP probes
+// only; HTTPURL is required when the section is present. Timeout is the
+// total budget (e.g. 30s) and Interval is the poll period (e.g. 200ms).
+type ChildReadiness struct {
+	HTTPURL  string
+	Timeout  time.Duration
+	Interval time.Duration
+}
+
+// ChildShutdown is the [child.shutdown] section. Grace is the post-SIGTERM
+// window before the supervisor sends SIGKILL to the old child after a
+// successful swap (or any stop). Default 30s, configurable.
+type ChildShutdown struct {
+	Grace time.Duration
+}
+
+// ChildHandoff is the [child.handoff] section. Presence opts the supervisor
+// into reload-eligibility (T-306). v1 accepts Mode = "http-proxy" only;
+// ListenAddr is the public address hush binds (the child binds a private
+// hush-allocated port supplied via HUSH_BIND_PORT).
+type ChildHandoff struct {
+	Mode       string
+	ListenAddr string
 }
 
 // DiscordRouting is the [discord] section of the supervisor config. Both
@@ -121,14 +157,32 @@ type supervisorDecoded struct {
 }
 
 type childDecoded struct {
-	Command            []string          `toml:"command"`
-	WorkingDir         string            `toml:"working_dir"`
-	EnvPassthrough     []string          `toml:"env_passthrough"`
-	Env                map[string]string `toml:"env"`
-	StdoutPath         string            `toml:"stdout_path"`
-	StderrPath         string            `toml:"stderr_path"`
-	RestartOnCleanExit *bool             `toml:"restart_on_clean_exit"`
-	RestartOnExit78    *bool             `toml:"restart_on_exit_78"`
+	Command            []string               `toml:"command"`
+	WorkingDir         string                 `toml:"working_dir"`
+	EnvPassthrough     []string               `toml:"env_passthrough"`
+	Env                map[string]string      `toml:"env"`
+	StdoutPath         string                 `toml:"stdout_path"`
+	StderrPath         string                 `toml:"stderr_path"`
+	RestartOnCleanExit *bool                  `toml:"restart_on_clean_exit"`
+	RestartOnExit78    *bool                  `toml:"restart_on_exit_78"`
+	Readiness          *childReadinessDecoded `toml:"readiness"`
+	Shutdown           *childShutdownDecoded  `toml:"shutdown"`
+	Handoff            *childHandoffDecoded   `toml:"handoff"`
+}
+
+type childReadinessDecoded struct {
+	HTTPURL  string `toml:"http_url"`
+	Timeout  string `toml:"timeout"`
+	Interval string `toml:"interval"`
+}
+
+type childShutdownDecoded struct {
+	Grace string `toml:"grace"`
+}
+
+type childHandoffDecoded struct {
+	Mode       string `toml:"mode"`
+	ListenAddr string `toml:"listen_addr"`
 }
 
 type discordDecoded struct {
@@ -380,6 +434,50 @@ func materialize(d supervisorDecoded) (*Supervisor, error) {
 		s.Child.RestartOnExit78 = DefaultRestartOnExit78
 	}
 
+	// [child.readiness] — pointer preserves absence; HTTPURL required when
+	// present. Timeout/Interval default when absent.
+	if d.Child.Readiness != nil {
+		r, rdErr := materializeReadiness(d.Child.Readiness)
+		if rdErr != nil {
+			return nil, rdErr
+		}
+		s.Child.Readiness = r
+	}
+
+	// [child.shutdown] — always populated; defaults to DefaultShutdownGrace
+	// even when the section is absent so SIGTERM/SIGKILL timing is well-defined
+	// for every supervisor config.
+	shutdownGrace := DefaultShutdownGrace
+	if d.Child.Shutdown != nil {
+		g, gErr := parseDuration(d.Child.Shutdown.Grace, DefaultShutdownGrace, "child.shutdown.grace")
+		if gErr != nil {
+			return nil, gErr
+		}
+		if g <= 0 {
+			return nil, fmt.Errorf("%w: got %s", ErrShutdownGraceInvalid, g)
+		}
+		shutdownGrace = g
+	}
+	s.Child.Shutdown = ChildShutdown{Grace: shutdownGrace}
+
+	// [child.handoff] — pointer preserves absence. When present, the config
+	// opts into reload eligibility: mode must be http-proxy, listen_addr must
+	// be non-empty, [child.readiness] must exist, and the child must reference
+	// HUSH_BIND_PORT in command or env.
+	if d.Child.Handoff != nil {
+		h, hErr := materializeHandoff(d.Child.Handoff)
+		if hErr != nil {
+			return nil, hErr
+		}
+		s.Child.Handoff = h
+		if s.Child.Readiness == nil {
+			return nil, fmt.Errorf("%w", ErrHandoffRequiresReadiness)
+		}
+		if !childReferencesBindPort(s.Child) {
+			return nil, fmt.Errorf("%w", ErrHandoffRequiresBindPortRef)
+		}
+	}
+
 	// [discord]
 	s.Discord.DaemonLabel = d.Discord.DaemonLabel
 	s.Discord.AlertChannelID = d.Discord.AlertChannelID
@@ -418,4 +516,92 @@ func materialize(d supervisorDecoded) (*Supervisor, error) {
 	}
 
 	return s, nil
+}
+
+// materializeReadiness applies defaults and validates the [child.readiness]
+// section. HTTPURL is mandatory when the section is present; the rest fall
+// back to package defaults.
+func materializeReadiness(d *childReadinessDecoded) (*ChildReadiness, error) {
+	if strings.TrimSpace(d.HTTPURL) == "" {
+		return nil, fmt.Errorf("%w: child.readiness.http_url", ErrMissingRequiredField)
+	}
+	if err := validateReadinessURL(d.HTTPURL); err != nil {
+		return nil, err
+	}
+	timeout, err := parseDuration(d.Timeout, DefaultReadinessTimeout, "child.readiness.timeout")
+	if err != nil {
+		return nil, err
+	}
+	if timeout <= 0 {
+		return nil, fmt.Errorf("%w: child.readiness.timeout=%s", ErrReadinessDurationInvalid, timeout)
+	}
+	interval, err := parseDuration(d.Interval, DefaultReadinessInterval, "child.readiness.interval")
+	if err != nil {
+		return nil, err
+	}
+	if interval <= 0 {
+		return nil, fmt.Errorf("%w: child.readiness.interval=%s", ErrReadinessDurationInvalid, interval)
+	}
+	return &ChildReadiness{HTTPURL: d.HTTPURL, Timeout: timeout, Interval: interval}, nil
+}
+
+// materializeHandoff validates the [child.handoff] section. Mode must be in
+// handoffModeAllowList; ListenAddr must be non-empty. Cross-validation
+// against [child.readiness] and HUSH_BIND_PORT reference happens in the
+// caller because it needs the full Child value.
+func materializeHandoff(d *childHandoffDecoded) (*ChildHandoff, error) {
+	if strings.TrimSpace(d.Mode) == "" {
+		return nil, fmt.Errorf("%w: child.handoff.mode", ErrMissingRequiredField)
+	}
+	if _, ok := handoffModeAllowList[d.Mode]; !ok {
+		return nil, fmt.Errorf("%w: got %q", ErrHandoffModeInvalid, d.Mode)
+	}
+	if strings.TrimSpace(d.ListenAddr) == "" {
+		return nil, fmt.Errorf("%w: child.handoff.listen_addr", ErrMissingRequiredField)
+	}
+	return &ChildHandoff{Mode: d.Mode, ListenAddr: d.ListenAddr}, nil
+}
+
+// validateReadinessURL parses raw via net/url. Empty / parse-error /
+// empty-host / non-http(s) scheme all map to ErrReadinessURLInvalid.
+func validateReadinessURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("%w: parse error", ErrReadinessURLInvalid)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("%w: missing host", ErrReadinessURLInvalid)
+	}
+	if !strings.EqualFold(u.Scheme, "http") && !strings.EqualFold(u.Scheme, "https") {
+		return fmt.Errorf("%w: unsupported scheme %q", ErrReadinessURLInvalid, u.Scheme)
+	}
+	return nil
+}
+
+// childReferencesBindPort returns true when the child contract mentions
+// EnvVarBindPort (HUSH_BIND_PORT) in any of:
+//   - command args (e.g. "--port=$HUSH_BIND_PORT")
+//   - explicit [child.env] values (e.g. PORT = "$HUSH_BIND_PORT")
+//   - env_passthrough entries (operator declaring the name as expected)
+//
+// This is the operator's signal that the child binary will actually bind
+// the hush-allocated backend port; without it, a reload-eligible config
+// would silently route proxy traffic to a child that never opened that port.
+func childReferencesBindPort(c Child) bool {
+	for _, arg := range c.Command {
+		if strings.Contains(arg, EnvVarBindPort) {
+			return true
+		}
+	}
+	for _, v := range c.Env {
+		if strings.Contains(v, EnvVarBindPort) {
+			return true
+		}
+	}
+	for _, name := range c.EnvPassthrough {
+		if name == EnvVarBindPort {
+			return true
+		}
+	}
+	return false
 }

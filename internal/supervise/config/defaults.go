@@ -21,7 +21,35 @@ var (
 	DefaultWatchdogMaxAlertsPerHour = 6
 	DefaultWatchdogPatterns         = []string{}
 	DefaultDMRateLimit              = 5 * time.Minute
+
+	// T-306 reload-eligibility defaults. Readiness defaults are tuned for
+	// HTTP /health probes on local-loopback/Tailscale: a 30s budget covers a
+	// cold-starting daemon while a 200ms interval keeps swap latency low.
+	// Shutdown grace is a hard answer to Q4 (configurable, default 30s).
+	DefaultReadinessTimeout  = 30 * time.Second
+	DefaultReadinessInterval = 200 * time.Millisecond
+	DefaultShutdownGrace     = 30 * time.Second
 )
+
+// HandoffModeHTTPProxy is the only v1 reload handoff strategy. Socket
+// activation is the planned generic follow-up but is intentionally not in
+// the allow-list yet.
+const HandoffModeHTTPProxy = "http-proxy"
+
+// EnvVarBindPort is the env var hush sets on a reload-eligible child so the
+// child binds to the hush-allocated private backend port. Validation
+// requires child.command or child.env to mention this name verbatim, which
+// is the operator's signal that the child knows about HUSH_BIND_PORT.
+const EnvVarBindPort = "HUSH_BIND_PORT"
+
+// handoffModeAllowList is the set of accepted child.handoff.mode values.
+// Single-entry today; kept as a map so adding socket-activation later is a
+// one-line change without restructuring validation.
+//
+//nolint:gochecknoglobals // sentinel-class: set-once at package load, never mutated
+var handoffModeAllowList = map[string]struct{}{
+	HandoffModeHTTPProxy: {},
+}
 
 // Constitutional bounds — encoded as typed vars so downstream consumers and
 // tests reference the exact constitutional values.
