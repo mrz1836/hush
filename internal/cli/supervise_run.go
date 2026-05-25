@@ -165,6 +165,11 @@ func runLifecycle(rootCtx context.Context, cfg *superviseconfig.Supervisor, pidf
 	auditDone := make(chan struct{})
 	go func() {
 		defer close(auditDone)
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("hush: supervise: audit drain goroutine panic", slog.Any("recover", r))
+			}
+		}()
 		_ = auditWriter.Run(auditCtx)
 	}()
 	defer func() {
@@ -267,8 +272,22 @@ func startSuperviseWatchdog(ctx context.Context, cfg *superviseconfig.Supervisor
 		logger.Warn("hush: supervise: watchdog disabled (construction failed)", slog.Any("err", err))
 		return nil
 	}
-	go func() { _ = wd.Run(ctx) }()
-	go watchdog.DrainToAlerts(ctx, events, alerts)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("hush: supervise: watchdog goroutine panic", slog.Any("recover", r))
+			}
+		}()
+		_ = wd.Run(ctx)
+	}()
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("hush: supervise: watchdog drain goroutine panic", slog.Any("recover", r))
+			}
+		}()
+		watchdog.DrainToAlerts(ctx, events, alerts)
+	}()
 	return wd
 }
 
