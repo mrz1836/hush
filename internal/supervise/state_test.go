@@ -33,6 +33,9 @@ var allEvents = []Event{ //nolint:gochecknoglobals // test fixture: closed-vocab
 	EventGraceRestartOK,
 	EventGraceExpired,
 	EventApprovalGranted,
+	EventReloadRequested,
+	EventSwapOK,
+	EventSwapFailed,
 	EventStopRequested,
 }
 
@@ -42,6 +45,7 @@ var allStates = []State{ //nolint:gochecknoglobals // test fixture: closed-vocab
 	StateRunning,
 	StateAwaitingApproval,
 	StateGraceRestart,
+	StateSwapping,
 	StateStopped,
 }
 
@@ -59,6 +63,8 @@ func prefixFor(src State) []Event {
 		return []Event{EventFetchAuthRequired}
 	case StateGraceRestart:
 		return []Event{EventFetchOK, EventGraceRestartTriggered}
+	case StateSwapping:
+		return []Event{EventFetchOK, EventReloadRequested}
 	case StateStopped:
 		return []Event{EventStopRequested}
 	default:
@@ -172,7 +178,7 @@ type legalCell struct {
 	name string
 }
 
-var legalCells = []legalCell{ //nolint:gochecknoglobals // test fixture: 19 legal-cell slice transcribed from contracts/state-table.md
+var legalCells = []legalCell{ //nolint:gochecknoglobals // test fixture: 23 legal-cell slice transcribed from contracts/state-table.md
 	{StateFetching, EventFetchOK, StateRunning, "fetching+fetch-ok"},
 	{StateFetching, EventFetchAuthRequired, StateAwaitingApproval, "fetching+fetch-auth-required"},
 	{StateFetching, EventClaimDenied, StateAwaitingApproval, "fetching+claim-denied"},
@@ -185,12 +191,16 @@ var legalCells = []legalCell{ //nolint:gochecknoglobals // test fixture: 19 lega
 	{StateRunning, EventChildExit78Stale, StateAwaitingApproval, "running+child-exit-78-stale"},
 	{StateRunning, EventRefreshRequested, StateFetching, "running+refresh-requested"},
 	{StateRunning, EventGraceRestartTriggered, StateGraceRestart, "running+grace-restart-triggered"},
+	{StateRunning, EventReloadRequested, StateSwapping, "running+reload-requested"},
 	{StateRunning, EventStopRequested, StateStopped, "running+stop-requested"},
 	{StateAwaitingApproval, EventApprovalGranted, StateFetching, "awaiting-approval+approval-granted"},
 	{StateAwaitingApproval, EventStopRequested, StateStopped, "awaiting-approval+stop-requested"},
 	{StateGraceRestart, EventGraceRestartOK, StateRunning, "grace-restart+grace-restart-ok"},
 	{StateGraceRestart, EventGraceExpired, StateAwaitingApproval, "grace-restart+grace-expired"},
 	{StateGraceRestart, EventStopRequested, StateStopped, "grace-restart+stop-requested"},
+	{StateSwapping, EventSwapOK, StateRunning, "swapping+swap-ok"},
+	{StateSwapping, EventSwapFailed, StateRunning, "swapping+swap-failed"},
+	{StateSwapping, EventStopRequested, StateStopped, "swapping+stop-requested"},
 	{StateStopped, EventStopRequested, StateStopped, "stopped+stop-requested"},
 }
 
@@ -198,8 +208,8 @@ var legalCells = []legalCell{ //nolint:gochecknoglobals // test fixture: 19 lega
 
 func TestStore_LegalTransitions(t *testing.T) { //nolint:gocognit // structural complexity: table-driven over 19 legal cells with prefix-replay + post-state assertions
 	t.Parallel()
-	if got, want := len(legalCells), 19; got != want {
-		t.Fatalf("legalCells size = %d, want 19 (matrix is locked)", got)
+	if got, want := len(legalCells), 23; got != want {
+		t.Fatalf("legalCells size = %d, want 23 (matrix is locked)", got)
 	}
 	t0 := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
 	for _, tc := range legalCells {
@@ -236,7 +246,7 @@ func TestStore_LegalTransitions(t *testing.T) { //nolint:gocognit // structural 
 
 // ---------- T-04: TestStore_IllegalTransitionErr ----------
 
-func TestStore_IllegalTransitionErr(t *testing.T) { //nolint:gocognit,gocyclo // structural complexity: table-driven over 56 illegal cells with pre/post snapshot equality
+func TestStore_IllegalTransitionErr(t *testing.T) { //nolint:gocognit,gocyclo // structural complexity: table-driven over 85 illegal cells with pre/post snapshot equality
 	t.Parallel()
 	legal := make(map[State]map[Event]struct{}, len(allStates))
 	for _, s := range allStates {
@@ -259,8 +269,8 @@ func TestStore_IllegalTransitionErr(t *testing.T) { //nolint:gocognit,gocyclo //
 			illegal = append(illegal, illegalCell{src, ev})
 		}
 	}
-	if got, want := len(illegal), 56; got != want {
-		t.Fatalf("illegal-cell count = %d, want 56", got)
+	if got, want := len(illegal), 85; got != want {
+		t.Fatalf("illegal-cell count = %d, want 85", got)
 	}
 
 	t0 := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
@@ -316,7 +326,7 @@ func TestStore_IllegalTransitionErr(t *testing.T) { //nolint:gocognit,gocyclo //
 
 // ---------- T-05: TestStore_StopIsIdempotent ----------
 
-func TestStore_StopIsIdempotent(t *testing.T) { //nolint:gocognit,gocyclo // structural complexity: idempotency test plus rejection sweep across 14 non-stop events
+func TestStore_StopIsIdempotent(t *testing.T) { //nolint:gocognit,gocyclo // structural complexity: idempotency test plus rejection sweep across 17 non-stop events
 	t.Parallel()
 	t0 := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
 	clk := testutil.NewFakeClock(t0)
@@ -382,6 +392,25 @@ func mustTransition(t *testing.T, s *Store, ev Event, want State) {
 	if got := s.Snapshot().State; got != want {
 		t.Fatalf("after Transition(%q), state = %q, want %q", ev, got, want)
 	}
+}
+
+// TestStore_SwappingReentry exercises the running↔swapping reload edges.
+// Swap success and swap failure both return to running so subsequent
+// reload attempts can re-enter swapping; the failure path explicitly
+// models the "old child kept, new child killed" rollback that AC-5 calls
+// for at the state-machine level.
+func TestStore_SwappingReentry(t *testing.T) {
+	t.Parallel()
+	t0 := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+	clk := testutil.NewFakeClock(t0)
+	s := NewStore(context.Background(), clk)
+	mustTransition(t, s, EventFetchOK, StateRunning)
+	mustTransition(t, s, EventReloadRequested, StateSwapping)
+	mustTransition(t, s, EventSwapOK, StateRunning)
+	mustTransition(t, s, EventReloadRequested, StateSwapping)
+	mustTransition(t, s, EventSwapFailed, StateRunning)
+	mustTransition(t, s, EventReloadRequested, StateSwapping)
+	mustTransition(t, s, EventStopRequested, StateStopped)
 }
 
 // ---------- T-07: TestStore_TwoStepRecoveryFromAwaitingApproval ----------
@@ -621,6 +650,12 @@ func TestStore_NoSideEffects(t *testing.T) {
 		// running -> grace-restart -> running (Scenario 9)
 		EventGraceRestartTriggered,
 		EventGraceRestartOK,
+		// running -> swapping -> running (Scenario 16, swap success)
+		EventReloadRequested,
+		EventSwapOK,
+		// running -> swapping -> running (swap failure rolls back)
+		EventReloadRequested,
+		EventSwapFailed,
 		// running -> grace-restart -> awaiting-approval
 		EventGraceRestartTriggered,
 		EventGraceExpired,
