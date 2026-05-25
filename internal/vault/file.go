@@ -349,7 +349,7 @@ func validateName(name string) error {
 	if len(name) > 256 {
 		return fmt.Errorf("vault: name too long: %w", ErrInvalidName)
 	}
-	for i := 0; i < len(name); i++ {
+	for i := range len(name) {
 		b := name[i]
 		if b < 0x20 || b > 0x7E {
 			return fmt.Errorf("vault: name contains invalid byte 0x%02x: %w", b, ErrInvalidName)
@@ -363,7 +363,7 @@ func validateDescription(desc string) error {
 	if len(desc) > 4096 {
 		return fmt.Errorf("vault: description too long: %w", ErrInvalidName)
 	}
-	for i := 0; i < len(desc); i++ {
+	for i := range len(desc) {
 		b := desc[i]
 		if b <= 0x1F || b == 0x7F {
 			return fmt.Errorf("vault: description contains invalid byte 0x%02x: %w", b, ErrInvalidName)

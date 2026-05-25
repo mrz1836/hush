@@ -167,7 +167,7 @@ func splitCommas(s string) []string {
 	}
 	out := []string{}
 	start := 0
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		if s[i] == ',' {
 			out = append(out, s[start:i])
 			start = i + 1

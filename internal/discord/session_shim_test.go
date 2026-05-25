@@ -158,7 +158,7 @@ func (s *sessionShim) InteractionRespond(interaction *discordgo.Interaction, res
 	return nil
 }
 
-func (s *sessionShim) AddHandler(handler interface{}) func() {
+func (s *sessionShim) AddHandler(handler any) func() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	switch h := handler.(type) {

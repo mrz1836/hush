@@ -33,7 +33,7 @@ func BenchmarkLoad(b *testing.B) {
 	// Populate a representative vault: 16 secrets of ~64 bytes each.
 	const secretCount = 16
 	secrets := make([]Secret, 0, secretCount)
-	for i := 0; i < secretCount; i++ {
+	for i := range secretCount {
 		val := make([]byte, 64)
 		for j := range val {
 			val[j] = byte(i*7 + j)

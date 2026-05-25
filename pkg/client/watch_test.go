@@ -121,7 +121,7 @@ func statusBytes(t *testing.T, m map[string]any) []byte {
 func drain(t *testing.T, ch <-chan client.Event, maxEvents int, timeout time.Duration) []client.Event {
 	t.Helper()
 	out := make([]client.Event, 0, maxEvents)
-	for i := 0; i < maxEvents; i++ {
+	for range maxEvents {
 		select {
 		case ev, ok := <-ch:
 			if !ok {

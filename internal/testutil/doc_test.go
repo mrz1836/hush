@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -25,11 +26,11 @@ func TestNoProductionImport(t *testing.T) {
 
 	const forbidden = "github.com/mrz1836/hush/internal/testutil"
 
-	err := filepath.Walk(internalDir, func(path string, info os.FileInfo, err error) error {
+	err := filepath.WalkDir(internalDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if info.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
 		fset := token.NewFileSet()

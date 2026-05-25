@@ -114,8 +114,8 @@ func TestLoadServer_AppliesEveryDocumentedDefault(t *testing.T) {
 
 	tests := []struct {
 		name string
-		got  interface{}
-		want interface{}
+		got  any
+		want any
 	}{
 		{"ArgonTime", s.Crypto.ArgonTime, DefaultArgonTime},
 		{"ArgonMemoryMB", s.Crypto.ArgonMemoryMB, DefaultArgonMemoryMB},

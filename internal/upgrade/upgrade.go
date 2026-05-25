@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -340,14 +341,14 @@ func downloadAndVerify(ctx context.Context, client *http.Client, info *Info, dst
 // an enclosing `bin/` directory keep working.
 func locateBinary(extractDir string) (string, error) {
 	var found string
-	walkErr := filepath.Walk(extractDir, func(path string, fi os.FileInfo, err error) error {
+	walkErr := filepath.WalkDir(extractDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if fi.IsDir() {
+		if d.IsDir() {
 			return nil
 		}
-		if fi.Name() == binaryName {
+		if d.Name() == binaryName {
 			found = path
 			return io.EOF // sentinel to short-circuit Walk
 		}

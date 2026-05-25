@@ -58,7 +58,7 @@ func FuzzVaultDecode(f *testing.F) {
 	// Seed 3: 5-secret vault.
 	seed3Path := filepath.Join(seedDir, "seed3.hush")
 	var seed3Secrets []Secret
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		v, _ := securebytes.New([]byte{byte(i), byte(i + 1)})
 		if v != nil {
 			seed3Secrets = append(seed3Secrets, Secret{

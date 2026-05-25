@@ -25,7 +25,7 @@ type sessionAPI interface {
 	UserChannelCreate(recipientID string, options ...discordgo.RequestOption) (*discordgo.Channel, error)
 	ChannelMessageSendComplex(channelID string, data *discordgo.MessageSend, options ...discordgo.RequestOption) (*discordgo.Message, error)
 	InteractionRespond(interaction *discordgo.Interaction, resp *discordgo.InteractionResponse, options ...discordgo.RequestOption) error
-	AddHandler(handler interface{}) func()
+	AddHandler(handler any) func()
 }
 
 // decisionKind enumerates the three terminal events that can land on

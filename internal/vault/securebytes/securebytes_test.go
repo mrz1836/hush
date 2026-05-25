@@ -129,7 +129,7 @@ func TestSecureBytes_Use_DeliversPayload(t *testing.T) { //nolint:gocognit // mu
 		ready.Add(1)
 		var failed atomic.Int64
 
-		for i := 0; i < n; i++ {
+		for range n {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
@@ -386,11 +386,11 @@ func TestSecureBytes_ConcurrentUse(t *testing.T) { //nolint:gocognit // goroutin
 	var counter atomic.Int64
 	var failed atomic.Bool
 
-	for i := 0; i < n; i++ {
+	for range n {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for j := 0; j < iterations; j++ {
+			for range iterations {
 				if err := sb.Use(func(b []byte) {
 					if !bytes.Equal(b, payload) {
 						failed.Store(true)

@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -277,8 +278,8 @@ func TestRequest_FullFlowWithDiscordStubApproveAll(t *testing.T) {
 
 	// JWT leak-free in tempdir.
 	tmpdir := t.TempDir()
-	_ = filepath.Walk(tmpdir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
+	_ = filepath.WalkDir(tmpdir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
 			return nil
 		}
 		body, _ := os.ReadFile(path)
@@ -362,8 +363,8 @@ func TestRequest_FullFlowFormatEvalIntegration(t *testing.T) {
 
 	// JWT not on disk.
 	tmpdir := t.TempDir()
-	_ = filepath.Walk(tmpdir, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
+	_ = filepath.WalkDir(tmpdir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
 			return nil
 		}
 		body, _ := os.ReadFile(path)

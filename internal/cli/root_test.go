@@ -6,7 +6,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
+	"io/fs"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -58,11 +58,11 @@ func TestNoViperImport(t *testing.T) {
 	t.Parallel()
 	roots := []string{".", "../../cmd/hush"}
 	for _, root := range roots {
-		err := filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
+		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				return walkErr
 			}
-			if info.IsDir() {
+			if d.IsDir() {
 				return nil
 			}
 			if !strings.HasSuffix(path, ".go") {
@@ -105,11 +105,11 @@ func TestExecute_PropagatesContextCancellation(t *testing.T) {
 //nolint:gocognit,gocyclo // recursive AST walk; branches are straightforward shape checks
 func TestServe_NeverReadsEnv(t *testing.T) {
 	t.Parallel()
-	err := filepath.Walk(".", func(path string, info os.FileInfo, walkErr error) error {
+	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		if info.IsDir() {
+		if d.IsDir() {
 			return nil
 		}
 		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {

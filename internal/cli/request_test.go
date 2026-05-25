@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -908,11 +909,11 @@ func TestRequest_NeverWritesJWTToDisk(t *testing.T) {
 		t.Fatalf("run: %v", err)
 	}
 	// Walk t.TempDir() and verify JWT not present in any file.
-	_ = filepath.Walk(tmpdir, func(path string, info os.FileInfo, err error) error {
+	_ = filepath.WalkDir(tmpdir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if info.IsDir() {
+		if d.IsDir() {
 			return nil
 		}
 		body, _ := os.ReadFile(path)
@@ -931,11 +932,11 @@ func TestRequest_NeverWritesSecretToDisk(t *testing.T) {
 	if err := r.run(t.Context()); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	_ = filepath.Walk(tmpdir, func(path string, info os.FileInfo, err error) error {
+	_ = filepath.WalkDir(tmpdir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if info.IsDir() {
+		if d.IsDir() {
 			return nil
 		}
 		body, _ := os.ReadFile(path)
@@ -1249,11 +1250,11 @@ func TestRequest_ExecOnlyChildHasSecret(t *testing.T) {
 	testutil.AssertSentinelAbsent(t, requestSentinel, r.stderrBuf.String())
 	// (e) Walk t.TempDir() and confirm no file contains the sentinel.
 	tmpdir := t.TempDir()
-	_ = filepath.Walk(tmpdir, func(path string, info os.FileInfo, err error) error {
+	_ = filepath.WalkDir(tmpdir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if info.IsDir() {
+		if d.IsDir() {
 			return nil
 		}
 		body, _ := os.ReadFile(path)

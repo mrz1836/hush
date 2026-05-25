@@ -72,7 +72,7 @@ func TestStore_SupervisorIgnoresMaxUses(t *testing.T) {
 		t.Fatalf("Add: %v", err)
 	}
 
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		if err := store.ConsumeUse(tok.JTI); err != nil {
 			t.Fatalf("ConsumeUse iter %d: got %v", i, err)
 		}
@@ -209,7 +209,7 @@ func TestStore_CleanupConcurrentWithValidate(t *testing.T) {
 	store := NewStoreWithTick(time.Millisecond)
 	tokens := make([]*Token, 0, 5)
 	priv := freshKey(t)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		params := defaultIssueParams(time.Now())
 		params.MaxUses = 10000
 		tok, err := Issue(t.Context(), priv, params)
@@ -232,7 +232,7 @@ func TestStore_CleanupConcurrentWithValidate(t *testing.T) {
 
 	deadline := time.Now().Add(100 * time.Millisecond)
 	var wg sync.WaitGroup
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()

@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -76,7 +77,7 @@ func runInstall(t *testing.T, paths testPaths, extraEnv []string) installRun {
 func snapshotTree(t *testing.T, root string) string {
 	t.Helper()
 	var lines []string
-	err := filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -86,6 +87,10 @@ func snapshotTree(t *testing.T, root string) string {
 		}
 		if rel == "." {
 			return nil
+		}
+		info, infoErr := d.Info()
+		if infoErr != nil {
+			return infoErr
 		}
 		mode := info.Mode()
 		switch {

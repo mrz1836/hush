@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/xml"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -235,14 +236,14 @@ func TestDeploy_NoOperatorSpecificNames(t *testing.T) {
 func TestDeploy_AllShellFilesParse(t *testing.T) {
 	dir := deployDir(t)
 	var shellFiles []string
-	err := filepath.Walk(dir, func(path string, info os.FileInfo, walkErr error) error {
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		if info.IsDir() {
+		if d.IsDir() {
 			return nil
 		}
-		name := info.Name()
+		name := d.Name()
 		if strings.HasSuffix(name, ".sh") || strings.HasSuffix(name, ".template") {
 			shellFiles = append(shellFiles, path)
 		}
