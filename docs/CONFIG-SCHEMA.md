@@ -417,6 +417,76 @@ Required fields:
   - rules:
     - should remain false; exit 78 means await approval / refresh
 
+### `[child.readiness]`
+
+Optional. Present iff the supervisor should HTTP-probe the child before
+considering it ready (and required when `[child.handoff]` is set — see below).
+
+- `http_url`
+  - type: string
+  - required when the section is present
+  - rules:
+    - must parse as `http://` or `https://` with a non-empty host
+    - typically points at the private backend port the child binds via `HUSH_BIND_PORT`
+
+- `timeout`
+  - type: duration string
+  - default: `30s`
+  - rules:
+    - total budget for the readiness probe; must be > 0
+
+- `interval`
+  - type: duration string
+  - default: `200ms`
+  - rules:
+    - poll interval between probes; must be > 0
+
+### `[child.shutdown]`
+
+Optional. Controls SIGTERM/SIGKILL timing on any stop, including the
+post-swap termination of the old child during a successful reload.
+
+- `grace`
+  - type: duration string
+  - default: `30s`
+  - rules:
+    - must be > 0
+    - supervisor sends SIGTERM, waits up to `grace`, then SIGKILL if the
+      process has not exited
+
+### `[child.handoff]`
+
+Optional. Presence opts the supervisor into **reload eligibility** for
+zero-downtime HTTP reload (`hush supervise reload <config-path>`). Plain
+non-reload supervisor configs must omit this section.
+
+- `mode`
+  - type: string
+  - allowed values (v1): `http-proxy`
+  - notes:
+    - `http-proxy` means hush owns the public `listen_addr` and forwards
+      to the active child via an atomic backend pointer; child binds a
+      private hush-allocated port supplied as `HUSH_BIND_PORT`
+    - socket-activation remains the planned generic follow-up and is not
+      yet accepted
+
+- `listen_addr`
+  - type: string
+  - required when the section is present
+  - example: `"127.0.0.1:8080"` or `"100.96.10.4:8080"`
+  - purpose:
+    - the public address hush binds and serves through the reverse proxy
+
+When `[child.handoff]` is present, the loader additionally requires:
+
+- `[child.readiness]` must be present (zero-downtime swap is unsafe
+  without a readiness probe)
+- `child.command` or `[child.env]` (or `env_passthrough`) must reference
+  `HUSH_BIND_PORT` so the child actually binds the hush-allocated backend
+  port (e.g. `command = [".../daemon", "--port=$HUSH_BIND_PORT"]`)
+
+Operator runbook for HTTP proxy handoff lands in `docs/SUPERVISE-RELOAD.md`.
+
 ### `[discord]`
 
 Optional but recommended:

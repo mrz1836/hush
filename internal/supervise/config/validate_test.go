@@ -509,9 +509,12 @@ func TestSupervisor_Validate_DetectsAllRulesIndependently(t *testing.T) {
 			PIDFile:            "/tmp/x.pid",
 			LogLevel:           "info",
 			Scope:              []string{"X"},
-			Child:              Child{Command: []string{"/bin/x"}},
-			Validators:         map[string]Validator{"X": "anthropic"},
-			Watchdog:           Watchdog{MaxAlertsPerHour: 6},
+			Child: Child{
+				Command:  []string{"/bin/x"},
+				Shutdown: ChildShutdown{Grace: DefaultShutdownGrace},
+			},
+			Validators: map[string]Validator{"X": "anthropic"},
+			Watchdog:   Watchdog{MaxAlertsPerHour: 6},
 		}
 	}
 	require.NoError(t, base().Validate())

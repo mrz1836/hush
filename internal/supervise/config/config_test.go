@@ -355,7 +355,7 @@ func TestSchema_HasNoSecretFields(t *testing.T) {
 			assert.False(t, strings.Contains(f.Name, w), "field %s contains secret-shaped name %q", f.Name, w)
 		}
 	}
-	for _, sub := range []reflect.Type{reflect.TypeOf(Child{}), reflect.TypeOf(DiscordRouting{}), reflect.TypeOf(Watchdog{})} {
+	for _, sub := range []reflect.Type{reflect.TypeOf(Child{}), reflect.TypeOf(DiscordRouting{}), reflect.TypeOf(Watchdog{}), reflect.TypeOf(ChildReadiness{}), reflect.TypeOf(ChildShutdown{}), reflect.TypeOf(ChildHandoff{})} {
 		for i := 0; i < sub.NumField(); i++ {
 			f := sub.Field(i)
 			for _, w := range guard {

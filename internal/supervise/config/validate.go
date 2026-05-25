@@ -192,5 +192,44 @@ func (s *Supervisor) Validate() error {
 		errs = append(errs, fmt.Errorf("%w: got %d", ErrWatchdogRateInvalid, s.Watchdog.MaxAlertsPerHour))
 	}
 
+	// [child.readiness] — when present, validate URL + positive durations.
+	if s.Child.Readiness != nil {
+		if strings.TrimSpace(s.Child.Readiness.HTTPURL) == "" {
+			errs = append(errs, fmt.Errorf("%w: child.readiness.http_url", ErrMissingRequiredField))
+		} else if err := validateReadinessURL(s.Child.Readiness.HTTPURL); err != nil {
+			errs = append(errs, err)
+		}
+		if s.Child.Readiness.Timeout <= 0 {
+			errs = append(errs, fmt.Errorf("%w: child.readiness.timeout=%s", ErrReadinessDurationInvalid, s.Child.Readiness.Timeout))
+		}
+		if s.Child.Readiness.Interval <= 0 {
+			errs = append(errs, fmt.Errorf("%w: child.readiness.interval=%s", ErrReadinessDurationInvalid, s.Child.Readiness.Interval))
+		}
+	}
+
+	// [child.shutdown] — Grace must be > 0 (defaulted by Load but
+	// programmatic constructors may leave it zero).
+	if s.Child.Shutdown.Grace <= 0 {
+		errs = append(errs, fmt.Errorf("%w: got %s", ErrShutdownGraceInvalid, s.Child.Shutdown.Grace))
+	}
+
+	// [child.handoff] — when present, enforce reload eligibility contract:
+	// mode in allow-list, listen_addr non-empty, readiness present, and
+	// child references HUSH_BIND_PORT.
+	if s.Child.Handoff != nil {
+		if _, ok := handoffModeAllowList[s.Child.Handoff.Mode]; !ok {
+			errs = append(errs, fmt.Errorf("%w: got %q", ErrHandoffModeInvalid, s.Child.Handoff.Mode))
+		}
+		if strings.TrimSpace(s.Child.Handoff.ListenAddr) == "" {
+			errs = append(errs, fmt.Errorf("%w: child.handoff.listen_addr", ErrMissingRequiredField))
+		}
+		if s.Child.Readiness == nil {
+			errs = append(errs, fmt.Errorf("%w", ErrHandoffRequiresReadiness))
+		}
+		if !childReferencesBindPort(s.Child) {
+			errs = append(errs, fmt.Errorf("%w", ErrHandoffRequiresBindPortRef))
+		}
+	}
+
 	return errors.Join(errs...)
 }
