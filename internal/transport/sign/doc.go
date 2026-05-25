@@ -10,7 +10,8 @@
 //   - [CanonicalJSON] — deterministic JSON encoding (sorted keys at every depth)
 //   - [Sign] — ECDSA over SHA-256(payload) via stdlib crypto/ecdsa
 //   - [Verify] — mirrors Sign; returns [ErrSignatureInvalid] for every failure
-//   - [NonceCache] — sync.Map-backed nonce store; sweep started by [NonceCache.Run]
+//   - [NonceCache] — sync.Map-backed nonce store, capped at
+//     [DefaultNonceCacheMaxEntries]; sweep started by [NonceCache.Run]
 //   - [IsFreshTimestamp] — symmetric ±skew freshness check
 //
 // Composition recipe (anti-burn ordering):

@@ -40,7 +40,21 @@ func generateFuzzKey(tb testing.TB) *ecdsa.PrivateKey {
 }
 
 // newNonceCacheForTest returns a nonceCache with a configurable sweep interval
-// for lifecycle and sweep tests.
+// and the production cap, for lifecycle and sweep tests.
 func newNonceCacheForTest(sweepInterval time.Duration) *nonceCache {
-	return &nonceCache{sweepInterval: sweepInterval}
+	return &nonceCache{
+		sweepInterval: sweepInterval,
+		maxEntries:    DefaultNonceCacheMaxEntries,
+	}
+}
+
+// newCappedNonceCacheForTest returns a nonceCache with a custom hard cap
+// for the bounded-cache regression tests. Sweep interval is set absurdly
+// high so timer-driven sweeps never fire during the test — only explicit
+// cache.sweep() calls advance state.
+func newCappedNonceCacheForTest(maxEntries int) *nonceCache {
+	return &nonceCache{
+		sweepInterval: time.Hour,
+		maxEntries:    int64(maxEntries),
+	}
 }

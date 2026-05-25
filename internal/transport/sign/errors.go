@@ -18,6 +18,14 @@ var (
 	// ErrNonceTTLInvalid is returned by [NonceCache.Add] when ttl <= 0.
 	ErrNonceTTLInvalid = errors.New("hush/transport/sign: nonce ttl must be positive")
 
+	// ErrNonceCacheFull is returned by [NonceCache.Add] when the cache has
+	// reached its hard entry cap and the candidate nonce was not already
+	// present. The loud sentinel — distinct from [ErrNonceReplay] — exists so
+	// callers map the outcome to a dedicated 503 + saturation audit event
+	// (Constitution VI: silent OOM is unacceptable; the cap must surface as
+	// a real signal before the kernel reaps the process).
+	ErrNonceCacheFull = errors.New("hush/transport/sign: nonce cache full")
+
 	// ErrTimestampStale is exposed so consumers can errors.Is-match it; the
 	// package itself does not return it — [IsFreshTimestamp] returns bool and
 	// consumers map false to this sentinel.
