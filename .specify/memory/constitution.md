@@ -1,20 +1,31 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version Change: 1.1.1 → 1.2.0 (MINOR amendment — accuracy pass for open-source release)
+Version Change: 1.2.0 → 2.0.0 (MAJOR amendment — principles restructured for clarity)
 Modified Principles:
-  - VII (CLI Design Standards) — subcommand list corrected to match the
-    shipped binary: added `server-url`, `keychain`, and `smoke`.
-  - VIII (Testing Discipline) — removed the obsolete acceptance-criteria
-    table and references to deleted spec docs; corrected the coverage
-    floor (90%) and the fuzz-target list (eight targets) to match the
-    `.github/scripts/coverage-threshold` tool and the repo's fuzz tests.
+  - 11 principles consolidated to 8.
+  - I, II, III retained; II renamed "Human-in-the-Loop Approval".
+  - IV (was VI) Tailscale-Only Network Perimeter promoted.
+  - V (was IV) Access Patterns: Supervisor for Daemons, Shell-Wrap for Humans.
+  - VI merges old V (staleness/failure) + old X (observability/redaction).
+  - VII merges old VII (CLI) + VIII (testing) + IX (idiomatic Go) into Engineering Discipline.
+  - VIII (was XI) Minimal Dependencies & Ephemeral Vault.
+  - Per-principle Rationale paragraphs, exhaustive enumerations (subcommands,
+    validator services, fuzz target names), version-tag anchors, and proper-noun
+    references removed.
 Added Principles: N/A
 Added Sections: N/A
-Removed Sections: "Acceptance Criteria → required test types" table — the
-  acceptance-criteria vocabulary was retired project-wide.
-Templates Requiring Updates: N/A
-Follow-up TODOs: N/A
+Removed Sections:
+  - Per-principle "Authoritative references" blocks.
+  - Old VIII "Test Priority" table.
+  - Old VIII enumerated fuzz target list (replaced by category description).
+  - Governance "Public release" criteria block.
+Templates Requiring Updates:
+  - .claude/commands/hush-audit.md — re-aligned to 8-principle structure in this
+    same change.
+Follow-up TODOs:
+  - Sibling docs (ARCHITECTURE.md, SECURITY.md, OPERATIONS.md) may cite old
+    principle numbers; fix lazily on next touch.
 -->
 
 # hush Constitution
@@ -24,220 +35,187 @@ Follow-up TODOs: N/A
 **hush is a Discord-gated secrets broker for AI agents.**
 
 Every API key, OAuth token, and credential lives encrypted in a single vault file on a
-trusted host. Agents fetch secrets only after Z approves the request from his phone via
-Discord. Approved secrets are delivered over Tailscale, injected into process memory, and
-never written to disk on agent machines.
+trusted host. Agents fetch secrets only after an operator approves the request via
+Discord. Approved secrets are delivered over Tailscale, injected into process memory,
+and never written to disk on agent machines.
 
 The threat we are eliminating: **commodity malware that scans dotfiles for secrets.**
 `~/.zshrc`, `~/.config/gh/hosts.yml`, `~/.aws/credentials`, `.env` files — these are the
 first targets when untrusted code runs on a developer machine. With AI agents executing
-LLM-generated scripts and npm/pip packages from across the internet, this attack surface
-is unacceptable. hush makes it disappear.
+LLM-generated scripts and packages from across the internet, this attack surface is
+unacceptable. hush makes it disappear.
 
 ## Core Principles
 
 ### I. Zero Files at Rest on Agent Machines
 
 Agent machines MUST have zero secrets on disk. No dotfiles. No `.env`. No keychains.
-No tool-specific credential stores (`gh auth login`, `aws configure`, etc.). The only
-acceptable form of a secret on an agent machine is an environment variable in a
-process started by hush.
+No tool-specific credential stores. The only acceptable form of a secret on an agent
+machine is an environment variable in a process started by hush.
 
-**Non-negotiables:**
-- The clean machine setup checklist MUST remove all known secret stores from agents
-- `gh` CLI MUST work via `GITHUB_TOKEN` env var only — no `gh auth login` on agents
-- Tool config files (`~/.aws/credentials`, etc.) MUST NOT exist on agent machines
-- Vault host is the ONLY place where any encrypted secret material persists
+- The clean machine setup checklist MUST remove all known secret stores from agents.
+- Tool config files (e.g. `~/.aws/credentials`) MUST NOT exist on agent machines.
+- The `gh` CLI MUST work via `GITHUB_TOKEN` env var only — no persistent on-disk auth.
+- The vault host is the ONLY place where any encrypted secret material persists.
 
-**Rationale:** This is the entire reason hush exists. If we leave any file-based
-secret on an agent machine, commodity malware wins the moment it lands.
+### II. Human-in-the-Loop Approval
 
-### II. Approval is Human, Approval is Phone
+Every fresh secret request MUST require explicit approval from a human via Discord
+interactive buttons. There is no auto-approve mode. There is no "trusted host"
+exception. There is no service account that bypasses approval.
 
-Every fresh secret request MUST require explicit approval from Z via Discord DM with
-interactive buttons. There is no auto-approve mode. There is no "trusted host" exception.
-There is no service account that bypasses approval.
-
-**Non-negotiables:**
-- Discord DM MUST display: requester host, requested scopes, session type, TTL/use limit
-- Approval MUST be an interactive button click (Approve / Deny / Approve & Mute)
-- A denied request MUST be logged and MUST NOT be retried automatically
-- Discord bot unavailability MUST return HTTP 503 to the client; the server MUST NOT
-  fall back to auto-approve under any circumstances
-- Supervisor sessions get ONE approval that covers crashes, updates, and restarts within
-  the session TTL — but the original Discord approval is still required
-
-**Rationale:** A human in the loop is the only defense against a compromised agent
-silently exfiltrating tokens. The phone is the safest interface — segregated from the
-attacked machine, biometric-locked, with rich UI for context.
+- The approval DM MUST display: requester host, requested scopes, session type,
+  TTL/use limit.
+- Approval MUST be an interactive button click (Approve / Deny / Approve & Mute).
+- A denied request MUST be logged and MUST NOT be retried automatically.
+- Discord bot unavailability MUST return HTTP 503; the server MUST NOT fall back to
+  auto-approve under any circumstance.
+- Supervisor sessions get ONE approval that covers crashes, updates, and restarts
+  within the session TTL — the original Discord approval is still required.
 
 ### III. Defense in Depth Through Crypto Layering
 
-hush stacks seven independent security layers. The compromise of any single layer MUST
-NOT enable secret extraction.
+hush stacks seven independent security layers. The compromise of any single layer
+MUST NOT enable secret extraction.
 
 **Required layers:**
 1. **BIP32 HD key hierarchy** — all signing/encryption keys derived at runtime from a
    passphrase + salt. NO key files on disk.
-2. **ES256K JWT signing** — asymmetric session tokens via secp256k1 (decred/dcrd)
-3. **ECIES transport encryption** — secret values encrypted end-to-end client→server
+2. **ES256K JWT signing** — asymmetric session tokens via secp256k1.
+3. **ECIES transport encryption** — secret values encrypted end-to-end client→server.
 4. **ECDSA client request signing** — every client request MUST be signed with a
-   registered client key
+   registered client key.
 5. **mlocked secure memory** — sensitive material held in `SecureBytes` (mlock + zero
-   on free), heap-copy hazards documented and avoided
-6. **Signed audit chain** — append-only audit log with hash-chained ECDSA signatures
-7. **Obscurity layers** — random API path prefix, custom vault file format, no advertised
-   endpoints — additive only, never load-bearing
+   on free); heap-copy hazards documented and avoided.
+6. **Signed audit chain** — append-only audit log with hash-chained ECDSA signatures.
+7. **Obscurity layers** — random API path prefix, custom vault file format, no
+   advertised endpoints — additive only, never load-bearing.
 
-**Non-negotiables:**
-- No new layer added until existing layers have ≥95% test coverage and fuzz tests
-- A future layer MAY be deferred but MAY NOT be silently weakened
-- Cryptographic operations MUST use `crypto/rand` for entropy — never `math/rand`
-- The vault file format is not a standard — its security depends on Argon2id + AES-GCM,
-  not on the file layout being secret
+- A future layer MAY be deferred but MAY NOT be silently weakened.
+- Cryptographic operations MUST use `crypto/rand` for entropy — never `math/rand`.
+- The vault file format is not a standard — its security depends on Argon2id +
+  AES-GCM, not on the file layout being secret.
 
-**Rationale:** Bitcoin keys protect billions of dollars by stacking layers. We use the
-same primitives for the same reason: any single mistake in our code MUST NOT be enough
-to leak a secret.
-
-### IV. Supervisor for Daemons, Wrap-Shell for Humans
-
-Two access patterns, one binary:
-
-**Daemons (OpenClaw, Hermes, future agents):** `hush supervise <name>` runs a state
-machine that holds a JWT + ephemeral ECIES key across child crashes/restarts within
-a single Discord approval. Daily refresh anchored to waking hours (default 09:00–10:00
-local). A 3am crash MUST NOT page Z.
-
-**Humans (Z's interactive sessions):** `hush request --exec "zsh"` wraps the SHELL,
-not the app. One approval per day; Claude/cursor/etc. crashes do not trigger re-approval.
-
-**Non-negotiables:**
-- Supervisor JWTs MUST carry `session_type: "supervisor"` claim
-- Supervisor TTL MUST be capped at `max_supervisor_session_ttl` (default 20h)
-- Supervisor sessions MUST NOT be use-count-limited (TTL-only)
-- Interactive sessions MUST be use-count-limited (default 50)
-- A child exit MUST NOT cause the supervisor to exit; the supervisor MUST hold state
-  across the child's lifecycle within the session TTL
-- The supervisor MUST zero secret material from its memory after handoff to the child,
-  EXCEPT during the optional grace-window cache for restart resilience
-
-**Rationale:** The wrong access pattern is worse than no access pattern. Daemons crashing
-at 3am and waking Z is a self-inflicted DoS. Humans being forced to re-approve every
-Claude restart trains them to auto-approve, defeating the whole point.
-
-### V. Staleness is Visible, Failure is Loud
-
-Stale credentials MUST be detectable by the validator (before the child sees them),
-by the child (exit code 78 = `EX_CONFIG`), and by Z (Discord alerts via watchdog).
-Silent stale-credential failures are unacceptable.
-
-**Non-negotiables:**
-- Pluggable client-side validators MUST run on the supervisor (not the vault server,
-  to keep the vault isolated from outbound internet)
-- Validators MUST exist for: anthropic, anthropic-oauth, openai, google-ai, github
-- Exit code 78 MUST be the contract between child and supervisor for "my creds are stale"
-- A per-supervisor local Unix status socket (`0600`, OS-specific path) MUST
-  expose freshness state to `hush client status`
-- Log-pattern auth-failure tailing is alert-only — it MUST NOT control supervisor state
-- Vault server unreachability, Discord unavailability, and validator failures MUST all
-  produce distinct, actionable alerts in Discord
-
-**Rationale:** The Mini-Zai 2026-04-04 incident — 114 MB of logs in hours from a stale
-token — is the canonical failure mode we are designing against. Silent failure is the
-worst failure.
-
-### VI. Tailscale-Only, Never Public
+### IV. Tailscale-Only Network Perimeter
 
 The vault server MUST NOT be reachable outside the Tailscale mesh. Ever. There is no
 "localhost-only" fallback, no "trusted IP" allowlist, no public TLS endpoint.
 
-**Non-negotiables:**
-- Vault server MUST bind to the Tailscale interface only
-- Tailscale ACLs MUST restrict port 7743 to `tag:trusted → tag:sandbox` grants
-- Startup validation MUST verify the bind address resolves to a Tailscale interface
-- TLS within Tailscale is OUT OF SCOPE for v0.1.0 — Tailscale provides transport security
-- A future TLS layer MAY be added but MUST NOT relax the Tailscale-only constraint
+- The vault server MUST bind to a Tailscale interface only.
+- Tailscale ACLs MUST restrict the vault port to trusted-tag → sandbox-tag grants.
+- Startup validation MUST verify the bind address resolves to a Tailscale interface.
+- TLS within Tailscale is out of scope — Tailscale provides transport security.
+- A future TLS layer MAY be added but MUST NOT relax the Tailscale-only constraint.
 
-**Rationale:** Tailscale is our perimeter. A public vault server is an attractive target
-that defeats the entire model. Closing this door at the network layer is non-negotiable.
+### V. Access Patterns: Supervisor for Daemons, Shell-Wrap for Humans
 
-### VII. CLI Design Standards
+Two access patterns, one binary:
 
-Commands follow the noun-verb pattern: `hush <noun> <verb> [args] [flags]`.
-The binary is small, single-file, with cobra subcommands.
+- **Daemons:** `hush supervise <name>` runs a state machine that holds a JWT +
+  ephemeral ECIES key across child crashes/restarts within a single Discord approval.
+  Daily refresh is anchored to waking hours; a crash in the middle of the night MUST
+  NOT page the operator.
+- **Humans:** `hush request --exec "zsh"` wraps the SHELL, not the app. One approval
+  per day; downstream tool restarts (editors, agents) do not trigger re-approval.
 
-**Subcommands (v0.1.0):**
-- `serve` — start the vault server
-- `server-url` — print the configured server URL from `--config`
-- `health` — server health check
-- `version` — print version + build info
-- `revoke` — revoke an active token by jti
-- `init` — bootstrap the vault host or enroll an agent machine
-- `keychain` — inspect or repair the Discord bot-token Keychain item
-- `request` — interactive client request (use --exec to wrap shell or app)
-- `secret` — manage secrets in the vault (add/remove/list/rotate)
-- `smoke` — run the guided fake-secret end-to-end smoke test
-- `supervise` — run a child process under supervisor lifecycle
-- `client` — client-side helpers (status, refresh)
+- Supervisor JWTs MUST carry `session_type: "supervisor"` claim.
+- Supervisor sessions MUST be TTL-only (not use-count-limited).
+- Interactive sessions MUST be use-count-limited.
+- A child exit MUST NOT cause the supervisor to exit; the supervisor MUST hold state
+  across the child's lifecycle within the session TTL.
+- The supervisor MUST zero secret material from its memory after handoff to the child,
+  EXCEPT during the optional grace-window cache for restart resilience.
 
-**Non-negotiables:**
-- Global flags: `--config/-c`, `--verbose/-v`, `--quiet/-q`, `--no-color`
-- Output: text for TTY, JSON for pipes/redirects (auto-detect)
-- Exit codes: 0 success, 1 error, 2 input error, 3 auth error, 4 not found, 5 permission,
-  78 (`EX_CONFIG`) stale credentials (child→supervisor contract)
-- `--format eval` MUST require explicit flag and emit a stderr warning (it prints export
-  statements that bypass process injection)
+### VI. Failure Visibility & Observability
 
-**Rationale:** Predictable CLI design enables scripting, integrates with launchd/systemd,
-and reduces the chance of misuse via wrong invocation.
+Stale credentials MUST be detectable by the validator, by the child (exit code 78 =
+`EX_CONFIG`), and by the operator (Discord alerts via watchdog). Operational logs
+MUST NOT leak secret material. Silent failures and logged plaintext are both
+unacceptable.
 
-### VIII. Testing Discipline
+- Pluggable client-side validators MUST run on the supervisor (not the vault server,
+  to keep the vault isolated from outbound internet). Validators exist for the
+  credential types currently in use.
+- Exit code 78 is the contract between child and supervisor for "my creds are stale."
+- A per-supervisor local Unix status socket MUST expose freshness state to status
+  queries.
+- Log-pattern auth-failure tailing is alert-only — it MUST NOT control supervisor
+  state.
+- Vault unreachability, Discord unavailability, and validator failures MUST produce
+  distinct, actionable alerts.
+- Structured logging via `log/slog` only; JSON for non-TTY, text for TTYs.
+- Secret-bearing types MUST implement `LogValue() slog.Value` returning
+  `slog.StringValue("[redacted]")`. Plain `[]byte` carrying secret material MUST be
+  wrapped before any code path can log it.
+- Error messages return failure mode + identifier (secret name, jti, scope) — never
+  the secret value, never a partial of it.
+- The hash-chained, ECDSA-signed audit chain is the source of truth for "who fetched
+  what, when." Operational logs MUST NOT duplicate audit entries.
+- Discord alert tiers:
+  - **Critical (page):** vault unreachable, NTP drift over threshold on startup,
+    audit-chain signature break, repeated denied requests from a single client.
+  - **Warning (channel, no page):** validator failure, single denied request,
+    log-pattern watchdog detection, supervisor grace-cache hit.
+  - **Info (audit only):** routine approve/deny, JWT issuance, secret rotation.
 
-Security-critical code requires 100% test coverage. Fuzz testing is mandatory for all
-parsers and crypto entry points. Every behavioral scenario in
-`docs/LIFECYCLE-SCENARIOS.md` must map to a concrete, runnable test.
+### VII. Engineering Discipline
 
-**Non-negotiables:**
-- Table-driven unit tests for all core functions, named per
-  `.github/tech-conventions/testing-standards.md`
-  (`TestFunctionName_Scenario`, PascalCase)
-- Integration tests gated by `//go:build integration`
-- Pre-commit MUST run `golangci-lint` + `go test -race`
-- Coverage is tracked by `codecov.yml`. No PR may regress overall coverage by
-  more than 2%
-- v0.1.0 tag requires **≥90% overall coverage** AND **100% on security-critical
-  packages** (vault, keys, token, transport — the crypto/key/JWT/ECIES/signing
-  surface enumerated in the machine-readable block below)
+hush is a Go project. Every line of Go in this repo MUST follow the patterns encoded
+in `.github/tech-conventions/go-essentials.md` and enforced by `.golangci.json`. CLI
+design, testing depth, and idiomatic-Go conventions are non-negotiable.
 
-**Mandatory fuzz targets** (required to run clean for ≥60s each in CI before
-the v0.1.0 tag):
+**CLI:**
+- Commands follow the noun-verb pattern: `hush <noun> <verb> [args] [flags]`. Small,
+  single-file binary with cobra subcommands.
+- Global flags: `--config/-c`, `--verbose/-v`, `--quiet/-q`, `--no-color`.
+- Output: text for TTY, JSON for pipes/redirects (auto-detect).
+- Exit codes: 0 success, 1 error, 2 input error, 3 auth error, 4 not found, 5
+  permission, 78 (`EX_CONFIG`) stale credentials.
+- `--format eval` MUST require an explicit flag and emit a stderr warning (it prints
+  export statements that bypass process injection).
 
-1. Vault file decode (`FuzzVaultDecode`)
-2. JWT parse/validate (`FuzzJWTValidate`)
-3. ECIES decrypt input handling (`FuzzECIESDecrypt`)
-4. Request signature payload parsing (`FuzzVerifyRequest`)
-5. Server config TOML parsing (`FuzzServerTOML`)
-6. Supervisor config TOML parsing (`FuzzSuperviseTOML`)
-7. Key derivation (`FuzzDeriveMaster`)
-8. Status socket JSON encoding (`FuzzStatusJSON_Encode`)
+**Testing:**
+- Table-driven unit tests for all core functions; `TestFunctionName_Scenario`,
+  PascalCase.
+- Integration tests gated by `//go:build integration`.
+- Pre-commit MUST run `golangci-lint` + `go test -race`.
+- Coverage tracked by `codecov.yml`; no PR may regress overall coverage by more than
+  2%.
+- Release tags require **≥90% overall coverage** AND **100% on security-critical
+  packages** (enumerated in the machine-readable block below).
+- Fuzz targets cover all parsers and crypto entry points (vault decode, JWT
+  validate, ECIES decrypt, request signature, config TOML parsing, key derivation,
+  status JSON); each MUST run clean for ≥60s in CI.
+- Fuzz goals: no panics, no unbounded memory growth, malformed input returns
+  explicit errors, no partial secret exposure in error messages.
 
-Fuzz goals: no panics, no unbounded memory growth, malformed input returns
-explicit errors, no partial secret exposure in error messages.
-
-**Test Priority:**
-| Priority | Scope | Coverage |
-|----------|-------|----------|
-| Critical | Vault crypto, key derivation, JWT, ECIES, request signing | 100% |
-| High | Server handlers, supervisor state machine, validators | 95% |
-| Medium | Discord bot logic, CLI flags, config parsing | 85% |
-| Low | Help text, log formatting | 70% |
-
-**Authoritative references:** `.github/tech-conventions/testing-standards.md`.
+**Idiomatic Go:**
+- **Context propagation:** `context.Context` is the first parameter of any function
+  that does I/O, can be cancelled, or has a timeout. Never store a `Context` in a
+  struct field.
+- **Error handling:** wrap with `%w`, compare with `errors.Is` / `errors.As`, declare
+  sentinel errors as exported package-level `var Err... = errors.New(...)`. Never
+  compare error strings.
+- **No globals, no `init()`:** mutable package-level state is forbidden;
+  side-effectful `init` functions are forbidden. Pass dependencies explicitly.
+- **Panic policy:** panics are reserved for `main` startup wiring and unrecoverable
+  invariant violations. Library code returns errors. Every spawned goroutine MUST
+  `recover()` at its top frame.
+- **Goroutine discipline:** every goroutine has a clear owner, an explicit
+  cancellation path (context), and a documented termination condition. No
+  fire-and-forget goroutines.
+- **Interfaces:** accept interfaces, return concrete types. Define interfaces at the
+  consumer, not the producer. Prefer single-method interfaces.
+- **Package layout:** non-`main` code lives under `internal/`. Public surface area is
+  `cmd/hush` only.
+- **Modules-only:** Go modules are the single dependency manager. `/vendor` is
+  forbidden. `go.mod` and `go.sum` are authoritative.
+- **CGO disabled:** all release binaries are pure Go (`CGO_ENABLED=0`). Adding a CGO
+  dependency requires a constitutional amendment.
 
 **Security-critical packages** (byte-equality anchor — the
-`.github/scripts/coverage-threshold` tool reads the block below verbatim
-and fails CI on divergence):
+`.github/scripts/coverage-threshold` tool reads the block below verbatim and fails
+CI on divergence):
 
 <!-- security-critical-packages: BEGIN (DO NOT EDIT without amending .github/scripts/coverage-threshold/compute.go) -->
 internal/keys
@@ -249,154 +227,35 @@ internal/transport/ecies
 internal/audit
 <!-- security-critical-packages: END -->
 
-**Rationale:** Bugs in a secrets broker leak secrets. Testing is not optional.
-Coverage gates are aligned with `codecov.yml` so the policy and the tooling
-agree — a green CI must mean the constitutional bar was met, not a softer one.
+### VIII. Minimal Dependencies & Ephemeral Vault
 
-### IX. Idiomatic Go Discipline
+The smallest dependency surface is the strongest dependency surface. The vault file
+is treated as ephemeral, not as a backed-up artifact, because the secrets it holds
+are rebuildable from upstream sources.
 
-hush is a Go project. Every line of Go in this repo MUST follow the patterns
-encoded in `.github/tech-conventions/go-essentials.md` and enforced by
-`.golangci.json`. The constitution makes the rules explicit so deviations
-require a written justification, not a silent override.
-
-**Non-negotiables:**
-- **Context propagation:** `context.Context` is the first parameter of any
-  function that does I/O, can be cancelled, or has a timeout. Never store a
-  `Context` in a struct field. (Linters: `contextcheck`, `containedctx`,
-  `noctx`.)
-- **Error handling:** wrap with `%w`, compare with `errors.Is` /
-  `errors.As`, declare sentinel errors as exported package-level
-  `var Err... = errors.New(...)`. Never compare error strings.
-- **No globals, no `init()`:** mutable package-level state is forbidden;
-  side-effectful `init` functions are forbidden. Pass dependencies explicitly.
-  (Linters: `gochecknoglobals`, `gochecknoinits`.)
-- **Panic policy:** panics are reserved for `main` startup wiring and for
-  unrecoverable invariant violations. Library code returns errors. Every
-  spawned goroutine MUST `recover()` at its top frame.
-- **Goroutine discipline:** every goroutine has a clear owner, an explicit
-  cancellation path (context), and a documented termination condition. No
-  fire-and-forget goroutines.
-- **Interfaces:** accept interfaces, return concrete types. Define interfaces
-  at the consumer, not the producer. Prefer single-method interfaces.
-- **Package layout:** all non-`main` code lives under `internal/`. The public
-  surface area is `cmd/hush` only; nothing under `internal/` is part of any
-  external API contract.
-- **Modules-only:** Go modules are the single dependency manager. The repo
-  does NOT vendor (`/vendor` is forbidden). `go.mod` and `go.sum` are
-  authoritative.
-- **CGO disabled:** all release binaries are pure Go (`CGO_ENABLED=0`,
-  enforced by `.goreleaser.yml`). Adding a CGO dependency requires a
-  constitutional amendment.
-- **Go version:** the version pinned in `go.mod` is the floor. Do not use
-  language features newer than that toolchain supports.
-- **Generics:** use generics for type-safe containers and small utilities
-  where they remove duplication. Do not reach for generics in business
-  logic when a concrete type is clearer.
-
-**Authoritative references:** `.github/tech-conventions/go-essentials.md`,
-`.github/tech-conventions/testing-standards.md`, `.golangci.json`.
-
-**Rationale:** Idiomatic Go is a force-multiplier for correctness. The
-linters can catch most of these mechanically; codifying them here means the
-human reviewer is not the last line of defence and the AI agent contributing
-code knows exactly which patterns are non-negotiable.
-
-### X. Observability & Redaction
-
-A secrets broker that logs the secrets it brokers is worse than no logging
-at all. Observability is mandatory; secret leakage in logs is unforgivable.
-
-**Non-negotiables:**
-- **Structured logging via `log/slog`** (Go stdlib). No third-party logger.
-  Output is JSON for non-TTY destinations, text for TTYs.
-- **Secret redaction is type-driven.** `SecureBytes` and any type holding
-  secret material MUST implement `LogValue() slog.Value` returning
-  `slog.StringValue("[redacted]")`. Plain `[]byte` carrying secret material
-  MUST be wrapped before any code path can log it.
-- **No secret values in errors.** Error messages return failure mode and
-  identifier (e.g. secret name, jti, scope) — never the secret value, never
-  a partial of it. Fuzz tests assert this (Principle VIII).
-- **Audit log is separate from operational log.** The hash-chained,
-  ECDSA-signed audit chain (Principle III, layer 6) is the source of truth
-  for "who fetched what, when". Operational logs are for debugging and MUST
-  NOT duplicate audit entries.
-- **Discord alert tiers:**
-  - **Critical (page Z):** vault server unreachable, NTP drift > 60s on
-    startup, audit-chain signature break, repeated denied requests from a
-    single client.
-  - **Warning (Discord channel, no page):** validator failure, single denied
-    request, log-pattern watchdog auth-failure detection, supervisor
-    grace-cache hit.
-  - **Info (audit log only, no Discord):** routine approve/deny, JWT
-    issuance, secret rotation.
-- **Metrics:** processes expose minimal counters/gauges only over the local
-  Unix status socket (per Principle V) — no Prometheus endpoint, no remote
-  metrics in v0.1.0.
-
-**Authoritative references:** `docs/OPERATIONS.md`,
-`.github/tech-conventions/security-practices.md`.
-
-**Rationale:** Logs are the most common accidental secret leak. Type-driven
-redaction means a developer cannot forget to redact a value because the type
-itself refuses to render in plaintext. Tiered alerts mean Z's phone only
-rings when the system actually needs a human — anything noisier trains the
-operator to ignore it (Principle V).
-
-### XI. Native-First, Minimal Dependencies, Ephemeral Vault
-
-The smallest dependency surface is the strongest dependency surface. The
-vault file is treated as ephemeral, not as a backed-up artifact, because the
-secrets it holds are rebuildable from upstream sources.
-
-**Native-first / minimal dependencies:**
-- Prefer the Go standard library. Reach for a third-party package only when
-  the stdlib equivalent is missing or materially worse for security.
-- Every NEW direct dependency requires a written justification in the PR
-  covering: maintainer activity, supply-chain provenance, transitive
-  dependency footprint, and why no stdlib option suffices.
-- New direct dependencies MUST follow the trusted-sources hierarchy: stdlib
-  first, then the sigil baseline (`github.com/mrz1836/sigil`), then the
-  `bsv-blockchain` GitHub organization, and only then the wider ecosystem.
-  See `dependency-management.md` for the full rule.
-- The crypto stack pinned in Principle III (BIP32, secp256k1, ECIES) is the
-  ONLY cryptographic dependency surface — adding another crypto library
-  requires a constitutional amendment.
-- `govulncheck` runs in CI on every PR; any reported vulnerability blocks
-  merge until upgraded, patched, or explicitly waived in the PR description.
-- `gitleaks` runs pre-commit and in CI; zero findings are required to merge.
-- Dependabot updates direct dependencies weekly; transitive-only updates are
-  grouped. Direct-dep PRs require maintainer review.
+**Minimal dependencies:**
+- Prefer the Go standard library. Reach for a third-party package only when the
+  stdlib equivalent is missing or materially worse for security.
+- Every new direct dependency requires a written justification in the PR covering
+  maintainer activity, supply-chain provenance, transitive footprint, and why no
+  stdlib option suffices.
+- The crypto stack pinned in Principle III is the ONLY cryptographic dependency
+  surface — adding another crypto library requires a constitutional amendment.
+- `govulncheck` runs in CI on every PR; reported vulnerabilities block merge until
+  upgraded, patched, or explicitly waived.
+- `gitleaks` runs pre-commit and in CI; zero findings required to merge.
 
 **Ephemeral vault — secrets are rebuildable, not backed up:**
-- The vault file at the trusted host is **explicitly NOT backed up**. No
-  off-host copies. No cloud snapshot of `~/.hush/vault`. No Time Machine
-  inclusion (the install path adds an exclusion).
-- All secrets stored in the vault MUST be rebuildable from their upstream
-  source within minutes (Anthropic console regenerate, GitHub PAT regen,
-  AWS rotate, OAuth re-consent). This is the only acceptable source of
-  truth.
-- Loss of the vault file is a recoverable operational event: re-run
-  `hush init`, re-add each secret from its upstream source, re-issue client
-  keys. It is NOT a disaster.
-- Backups would expand the attack surface (an offline copy could leak years
-  later). We accept the rebuild cost in exchange for zero archived
-  ciphertext.
-- The passphrase is held in the macOS Keychain on the trusted host only and
-  is regenerable by the operator. There is no escrow, no Shamir split, no
-  recovery seed in v0.1.0.
-
-**Authoritative references:**
-`.github/tech-conventions/dependency-management.md`,
-`.github/tech-conventions/security-practices.md`,
-`.github/tech-conventions/release-versioning.md`,
-`.github/tech-conventions/pre-commit.md`.
-
-**Rationale:** Every dependency is a future supply-chain incident waiting
-to happen; every backup is a future leak waiting to be found. Treating the
-vault as ephemeral inverts the usual durability/secrecy trade — we accept
-the rebuild cost so an attacker who finds an old backup gains nothing. The
-upstream providers are our durability layer; we do not duplicate their job.
+- The vault file is **explicitly NOT backed up.** No off-host copies, no cloud
+  snapshot, no Time Machine inclusion (the install path adds an exclusion).
+- All secrets in the vault MUST be rebuildable from their upstream source within
+  minutes (provider console regenerate, PAT regen, key rotate, OAuth re-consent).
+- Loss of the vault file is a recoverable operational event: re-run `hush init`,
+  re-add each secret from its upstream source, re-issue client keys. It is NOT a
+  disaster.
+- The passphrase is held in the macOS Keychain on the trusted host only and is
+  regenerable by the operator. There is no escrow, no Shamir split, no recovery
+  seed.
 
 ## Security Requirements
 
@@ -407,14 +266,14 @@ These constraints apply to ALL code in the repository:
 | Encrypted at rest | Argon2id (time=4, memory=256MB, threads=4) + AES-256-GCM |
 | Memory protection | mlock for sensitive data, explicit zeroing, `[]byte`-only for keys |
 | Input validation | All external input validated before use; nonce + timestamp on signed requests |
-| No hardcoded secrets | Passphrase from macOS Keychain via stdin pipe (never env var or plist) |
+| No hardcoded secrets | Passphrase from OS keystore via stdin pipe (never env var or plist) |
 | Secure defaults | Fail closed; explicit flags for `--format eval` and similar dangerous modes |
 | Replay protection | Nonce + timestamp on every signed request; nonce cache server-side |
 | Token revocation | `/revoke` endpoint; jti tracked in active session map |
 | Audit log | Append-only, hash-chained, ECDSA-signed; rotation strategy documented |
 | File permissions | Vault: 0600. Supervisor sockets: 0600. Configs: 0640. Dirs: 0750. |
-| Clock sync | Startup check against NTP; refuse to start if drift >60s |
-| Supply-chain | `govulncheck` runs in CI on every PR; `gitleaks` runs pre-commit and in CI with zero-finding requirement; dependabot updates direct deps weekly |
+| Clock sync | Startup check against NTP; refuse to start if drift exceeds threshold |
+| Supply-chain | `govulncheck` in CI on every PR; `gitleaks` pre-commit + CI with zero-finding requirement; weekly dependency updates |
 
 **Keychain ACLs (macOS):** The passphrase entry MUST restrict access to the `hush`
 binary path only. Wildcard ACLs are forbidden.
@@ -428,52 +287,43 @@ In-flight requests complete with the old vault; new requests use the new vault.
 
 All code MUST pass before merge:
 
-1. **Linting:** `magex lint` (golangci-lint with project config)
-2. **Format:** `magex format:fix` (gofmt + goimports + go-broadcast formatting)
-3. **Tests:** `magex test:race` (race detector enabled)
+1. **Linting:** `magex lint`
+2. **Format:** `magex format:fix`
+3. **Tests:** `magex test:race`
 4. **Pre-commit:** `go-pre-commit` (gitleaks must be zero-finding)
 5. **Build:** Clean build via `magex build`
 
 ### Commit Standards
 
-- Commits MUST be atomic (one logical change per commit)
-- Commit messages follow conventional commits: `type(scope): description`
-- Types: `feat`, `fix`, `docs`, `test`, `refactor`, `chore`, `security`
-- Security-sensitive changes MUST be tagged `security`
+- Commits MUST be atomic (one logical change per commit).
+- Commit messages follow conventional commits: `type(scope): description`.
+- Types: `feat`, `fix`, `docs`, `test`, `refactor`, `chore`, `security`.
+- Security-sensitive changes MUST be tagged `security`.
 
 ### Review Requirements
 
-- All cryptographic code requires explicit security-focused review
+- All cryptographic code requires explicit security-focused review.
 - Changes to key derivation, signing, encryption, or session handling require
-  security-aware review
-- New dependencies require justification and basic supply-chain audit
-- The supervisor state machine and Discord bot interaction logic require integration
-  test coverage of all 15 lifecycle scenarios documented in
-  `docs/LIFECYCLE-SCENARIOS.md`
+  security-aware review.
+- New dependencies require justification and basic supply-chain audit.
+- Supervisor state-machine and Discord-bot interaction changes require integration
+  test coverage.
 
 ## Governance
 
 This constitution supersedes all other development practices for the hush project.
 Amendments require:
 
-1. Written proposal with rationale (PR description)
-2. Impact analysis on existing code and downstream daemons (OpenClaw, Hermes)
+1. Written proposal with rationale (PR description).
+2. Impact analysis on existing code and any downstream consumers.
 3. Version increment per semantic versioning:
-   - **MAJOR:** Principle removal or incompatible redefinition
-   - **MINOR:** New principle or materially expanded guidance
-   - **PATCH:** Clarifications, wording, non-semantic refinements
-4. Update to all dependent documentation (ARCHITECTURE.md, SECURITY.md, OPERATIONS.md)
+   - **MAJOR:** Principle removal or incompatible redefinition.
+   - **MINOR:** New principle or materially expanded guidance.
+   - **PATCH:** Clarifications, wording, non-semantic refinements.
+4. Update to all dependent documentation.
 
 **Compliance:** All PRs and reviews MUST verify adherence to these principles.
 Deviations MUST be explicitly justified in the Complexity Tracking section of
 implementation plans.
 
-**Public release:** The repository starts PRIVATE. Z transitions it to public only
-after:
-- All v0.1.0 release criteria pass (lifecycle scenarios in `docs/LIFECYCLE-SCENARIOS.md`)
-- 90%+ test coverage achieved
-- `magex format:fix && magex lint && magex test:race` all green
-- `go-pre-commit` zero gitleaks findings
-- README, ARCHITECTURE, SECURITY docs polished
-
-**Version:** 1.2.0 | **Ratified:** 2026-04-26 | **Last Amended:** 2026-05-20
+**Version:** 2.0.0 | **Ratified:** 2026-04-26 | **Last Amended:** 2026-05-24
