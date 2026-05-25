@@ -367,4 +367,3 @@ func (s *TestSupervisor) StatusSocketPath() string { return s.statusSocket }
 // file. The harness writes this once per supervisor; reload tests pass
 // it to pkg/client.SupervisorStatus.Reload as the configPath argument.
 func (s *TestSupervisor) ConfigPath() string { return s.cfgPath }
-

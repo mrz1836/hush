@@ -157,17 +157,17 @@ type supervisorDecoded struct {
 }
 
 type childDecoded struct {
-	Command            []string                `toml:"command"`
-	WorkingDir         string                  `toml:"working_dir"`
-	EnvPassthrough     []string                `toml:"env_passthrough"`
-	Env                map[string]string       `toml:"env"`
-	StdoutPath         string                  `toml:"stdout_path"`
-	StderrPath         string                  `toml:"stderr_path"`
-	RestartOnCleanExit *bool                   `toml:"restart_on_clean_exit"`
-	RestartOnExit78    *bool                   `toml:"restart_on_exit_78"`
-	Readiness          *childReadinessDecoded  `toml:"readiness"`
-	Shutdown           *childShutdownDecoded   `toml:"shutdown"`
-	Handoff            *childHandoffDecoded    `toml:"handoff"`
+	Command            []string               `toml:"command"`
+	WorkingDir         string                 `toml:"working_dir"`
+	EnvPassthrough     []string               `toml:"env_passthrough"`
+	Env                map[string]string      `toml:"env"`
+	StdoutPath         string                 `toml:"stdout_path"`
+	StderrPath         string                 `toml:"stderr_path"`
+	RestartOnCleanExit *bool                  `toml:"restart_on_clean_exit"`
+	RestartOnExit78    *bool                  `toml:"restart_on_exit_78"`
+	Readiness          *childReadinessDecoded `toml:"readiness"`
+	Shutdown           *childShutdownDecoded  `toml:"shutdown"`
+	Handoff            *childHandoffDecoded   `toml:"handoff"`
 }
 
 type childReadinessDecoded struct {

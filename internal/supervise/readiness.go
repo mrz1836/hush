@@ -60,7 +60,7 @@ func ProbeHTTPReady(ctx context.Context, client *http.Client, cfg config.ChildRe
 // complexity cap. The loop guarantees one bounded HTTP attempt per
 // cfg.Interval cadence and a deterministic exit on either 2xx, ctx
 // cancellation, or budget exhaustion.
-func runProbeLoop(ctx, probeCtx context.Context, client *http.Client, cfg config.ChildReadiness, start time.Time, deadline time.Time) (time.Duration, error) {
+func runProbeLoop(ctx, probeCtx context.Context, client *http.Client, cfg config.ChildReadiness, start, deadline time.Time) (time.Duration, error) {
 	var (
 		lastStatus int
 		lastErr    error

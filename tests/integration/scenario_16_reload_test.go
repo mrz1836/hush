@@ -470,4 +470,3 @@ ANTHROPIC_API_KEY = "anthropic"
 		t.Errorf("scenario16: config.Load(invalid-mode): want ErrHandoffModeInvalid, got %v", err)
 	}
 }
-

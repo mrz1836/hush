@@ -118,7 +118,8 @@ var (
 // flow through the full claim pipeline (shape → sig → approver →
 // audit) without breaking the existing happy path.
 func TestClaim_AcceptsOptionalAgentFields(t *testing.T) {
-	h := newClaimHarness(t,
+	h := newClaimHarness(
+		t,
 		withApproverScript(
 			[]Decision{{Approved: true, GrantedTTL: 5 * time.Minute, ApproverID: "op-1"}},
 			[]error{nil},
@@ -148,7 +149,8 @@ func TestClaim_AcceptsOptionalAgentFields(t *testing.T) {
 // TestClaim_NoAgentFields_StillWorks proves backward compat — a
 // client that omits all agent fields still gets a 200.
 func TestClaim_NoAgentFields_StillWorks(t *testing.T) {
-	h := newClaimHarness(t,
+	h := newClaimHarness(
+		t,
 		withApproverScript(
 			[]Decision{{Approved: true, GrantedTTL: 5 * time.Minute, ApproverID: "op-1"}},
 			[]error{nil},
@@ -192,7 +194,8 @@ func TestClaim_RejectsOversizedAgentField(t *testing.T) {
 // secret-looking string, the server re-runs redaction before passing
 // it to the approver / audit log.
 func TestClaim_ServerRedactsCommandPreview(t *testing.T) {
-	h := newClaimHarness(t,
+	h := newClaimHarness(
+		t,
 		withApproverScript(
 			[]Decision{{Approved: true, GrantedTTL: 5 * time.Minute, ApproverID: "op-1"}},
 			[]error{nil},
