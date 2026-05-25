@@ -32,7 +32,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -76,40 +76,42 @@ func parseFlags() config {
 
 func main() {
 	cfg := parseFlags()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	// Demo 1: pre-task freshness gate.
 	if cfg.socket != "" {
-		if err := freshnessGate(ctx, cfg.socket); err != nil {
-			log.Fatalf("freshness gate failed: %v", err)
+		if err := freshnessGate(ctx, logger, cfg.socket); err != nil {
+			logger.ErrorContext(ctx, "freshness gate failed", slog.Any("err", err))
+			os.Exit(1)
 		}
 	} else {
-		log.Println("[skip] freshness gate — no --socket / HUSH_STATUS_SOCKET")
+		logger.InfoContext(ctx, "skip freshness gate", slog.String("reason", "no --socket / HUSH_STATUS_SOCKET"))
 	}
 
 	// Demo 2: capability discovery (optional; requires server + key).
 	if cfg.serverURL != "" && cfg.clientKeyPEM != "" {
-		if err := capabilityDiscovery(ctx, cfg); err != nil {
-			log.Printf("capability discovery failed: %v", err)
+		if err := capabilityDiscovery(ctx, logger, cfg); err != nil {
+			logger.WarnContext(ctx, "capability discovery failed", slog.Any("err", err))
 		}
 	} else {
-		log.Println("[skip] capability discovery — supply --server and --client-key-pem to enable")
+		logger.InfoContext(ctx, "skip capability discovery", slog.String("reason", "supply --server and --client-key-pem to enable"))
 	}
 
 	// Demo 3: lifecycle watcher (long-running; the example runs for 10s).
 	if cfg.socket != "" {
 		runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
-		lifecycleWatch(runCtx, cfg.socket, cfg.watchInterval)
+		lifecycleWatch(runCtx, logger, cfg.socket, cfg.watchInterval)
 	}
 
-	log.Println("done.")
+	logger.InfoContext(ctx, "done")
 }
 
 // freshnessGate refuses to start work when any scope is stale.
-func freshnessGate(ctx context.Context, socket string) error {
+func freshnessGate(ctx context.Context, logger *slog.Logger, socket string) error {
 	sup := client.NewSupervisorStatus(socket)
 	defer func() { _ = sup.Close() }()
 
@@ -123,14 +125,15 @@ func freshnessGate(ctx context.Context, socket string) error {
 	if len(status.ScopeStale) > 0 {
 		return fmt.Errorf("%w: %v", errStaleScopes, status.ScopeStale)
 	}
-	log.Printf("[gate] scopes healthy (%d); session expires at %s",
-		len(status.ScopeHealthy), status.SessionExpiresAt.Format(time.RFC3339))
+	logger.InfoContext(ctx, "freshness gate ok",
+		slog.Int("scope_healthy_count", len(status.ScopeHealthy)),
+		slog.String("session_expires_at", status.SessionExpiresAt.Format(time.RFC3339)))
 	return nil
 }
 
 // capabilityDiscovery asks the vault server what scopes exist and
 // what the current session looks like — no Discord approval.
-func capabilityDiscovery(ctx context.Context, cfg config) error {
+func capabilityDiscovery(ctx context.Context, logger *slog.Logger, cfg config) error {
 	key, err := loadECPrivateKeyPEM(cfg.clientKeyPEM)
 	if err != nil {
 		return fmt.Errorf("load client key: %w", err)
@@ -147,16 +150,18 @@ func capabilityDiscovery(ctx context.Context, cfg config) error {
 		}
 		return err
 	}
-	log.Printf("[me] server v%s schema v%d; scopes available: %v",
-		resp.ServerVersion, resp.SchemaVersion, resp.ScopesAvailable)
+	logger.InfoContext(ctx, "me",
+		slog.String("server_version", resp.ServerVersion),
+		slog.Int("schema_version", resp.SchemaVersion),
+		slog.Any("scopes_available", resp.ScopesAvailable))
 	if resp.CurrentSession != nil {
-		log.Printf("[me] current session: jti=%s expires=%s scopes=%v max_uses=%d",
-			resp.CurrentSession.JTI,
-			resp.CurrentSession.ExpiresAt.Format(time.RFC3339),
-			resp.CurrentSession.Scopes,
-			resp.CurrentSession.MaxUses)
+		logger.InfoContext(ctx, "current session",
+			slog.String("jti", resp.CurrentSession.JTI),
+			slog.String("expires_at", resp.CurrentSession.ExpiresAt.Format(time.RFC3339)),
+			slog.Any("scopes", resp.CurrentSession.Scopes),
+			slog.Int("max_uses", resp.CurrentSession.MaxUses))
 	} else {
-		log.Println("[me] no current_session (no bearer or bearer invalid)")
+		logger.InfoContext(ctx, "no current_session (no bearer or bearer invalid)")
 	}
 	return nil
 }
@@ -165,7 +170,7 @@ func capabilityDiscovery(ctx context.Context, cfg config) error {
 // session renewals, and pre-expiry warnings flow through one channel.
 // A cooperative agent uses ExpiresSoon to checkpoint and shut down
 // cleanly BEFORE its credentials rotate.
-func lifecycleWatch(ctx context.Context, socket string, pollInterval time.Duration) {
+func lifecycleWatch(ctx context.Context, logger *slog.Logger, socket string, pollInterval time.Duration) {
 	sup := client.NewSupervisorStatus(socket)
 	defer func() { _ = sup.Close() }()
 
@@ -178,29 +183,32 @@ func lifecycleWatch(ctx context.Context, socket string, pollInterval time.Durati
 		},
 	})
 	if err != nil {
-		log.Printf("[watch] start failed: %v", err)
+		logger.WarnContext(ctx, "watch start failed", slog.Any("err", err))
 		return
 	}
-	log.Println("[watch] subscribed; listening for events…")
+	logger.InfoContext(ctx, "watch subscribed; listening for events")
 	for ev := range events {
 		switch ev.Type {
 		case client.EventInitial:
-			log.Printf("[watch] initial — state=%s expires=%s",
-				ev.Status.State, ev.Status.SessionExpiresAt.Format(time.RFC3339))
+			logger.InfoContext(ctx, "watch initial",
+				slog.String("state", string(ev.Status.State)),
+				slog.String("expires_at", ev.Status.SessionExpiresAt.Format(time.RFC3339)))
 		case client.EventStateChange:
-			log.Printf("[watch] state-change → %s", ev.Status.State)
+			logger.InfoContext(ctx, "watch state-change", slog.String("state", string(ev.Status.State)))
 		case client.EventScopeHealthChange:
-			log.Printf("[watch] scope-change healthy=%v stale=%v",
-				ev.Status.ScopeHealthy, ev.Status.ScopeStale)
+			logger.InfoContext(ctx, "watch scope-change",
+				slog.Any("healthy", ev.Status.ScopeHealthy),
+				slog.Any("stale", ev.Status.ScopeStale))
 		case client.EventSessionRenewed:
-			log.Printf("[watch] session-renewed jti=%s", ev.Status.SessionJTI)
+			logger.InfoContext(ctx, "watch session-renewed", slog.String("jti", ev.Status.SessionJTI))
 		case client.EventExpiresSoon:
-			log.Printf("[watch] expires-soon (≤%s) — checkpoint / wind down NOW", ev.Threshold)
+			logger.WarnContext(ctx, "watch expires-soon — checkpoint / wind down NOW",
+				slog.Duration("threshold", ev.Threshold))
 		case client.EventError:
-			log.Printf("[watch] transient error: %v (continuing)", ev.Err)
+			logger.WarnContext(ctx, "watch transient error (continuing)", slog.Any("err", ev.Err))
 		}
 	}
-	log.Println("[watch] channel closed (ctx done)")
+	logger.InfoContext(ctx, "watch channel closed (ctx done)")
 }
 
 // loadECPrivateKeyPEM reads a PEM-encoded EC private key from disk.
