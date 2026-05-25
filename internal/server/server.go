@@ -192,6 +192,12 @@ type Deps struct {
 	// ShutdownTimeout overrides DefaultShutdownTimeout.
 	ShutdownTimeout time.Duration
 
+	// NonceCache overrides the default [sign.NewNonceCache] instance. When
+	// nil the chassis constructs the production cache with its 30s sweep
+	// interval. Tests inject a short-interval cache so the lifecycle of the
+	// chassis-owned sweep goroutine can be observed deterministically.
+	NonceCache sign.NonceCache
+
 	// AllowClockSkew downgrades a would-be clock-sync startup failure
 	// to a logged warning + a single [AuditClockSkewOverride] audit
 	// event. Set from `hush serve --allow-clock-skew`. hush never
@@ -282,7 +288,7 @@ func New(deps Deps) (*Server, error) {
 		vaultKey:          deps.VaultKey,
 		loadVault:         deps.LoadVaultFn,
 		clientKeyResolver: deps.ClientKeyResolver,
-		nonceCache:        sign.NewNonceCache(),
+		nonceCache:        deps.NonceCache,
 		reloadDrainWindow: deps.ReloadDrainWindow,
 		shutdownTimeout:   deps.ShutdownTimeout,
 		allowClockSkew:    deps.AllowClockSkew,
@@ -309,6 +315,9 @@ func New(deps Deps) (*Server, error) {
 	}
 	if s.shutdownTimeout <= 0 {
 		s.shutdownTimeout = DefaultShutdownTimeout
+	}
+	if s.nonceCache == nil {
+		s.nonceCache = sign.NewNonceCache()
 	}
 
 	return s, nil
@@ -470,15 +479,17 @@ func decodeCompressedSecp256k1(s string) (*ecdsa.PublicKey, error) {
 	}, nil
 }
 
-// Run executes the chassis lifecycle: startup checks → bind → serve →
-// shutdown. Run blocks until ctx cancels or a startup check fails.
+// Run executes the chassis lifecycle: startup checks → bind → launch
+// background loops (SIGHUP, nonce-cache sweep) → serve → shutdown. Run
+// blocks until ctx cancels or a startup check fails.
 //
 // On success Run returns nil; on a startup-check failure Run returns the
 // matching sentinel wrapped error. Run may only be called once per
 // Server; subsequent calls return [ErrAlreadyRun].
 //
 // ctx is never stored in the struct; cancellation flows through the
-// closure that calls http.Server.Shutdown.
+// closure that calls http.Server.Shutdown and through the derived sweep
+// context that drives the nonce-cache eviction loop.
 //
 //nolint:gocyclo,cyclop // sequential lifecycle: startup → bind → serve → drain → shutdown; complexity is structural
 func (s *Server) Run(ctx context.Context) error {
@@ -528,6 +539,17 @@ func (s *Server) Run(ctx context.Context) error {
 	sighupDone := make(chan struct{})
 	go s.sighupLoop(ctx, sigCh, sighupDone)
 
+	// Nonce-cache sweep — without this goroutine the sync.Map backing
+	// the replay-defense cache grows monotonically with every accepted
+	// request, leaking memory until OOM (Constitution V: failure must
+	// be loud; silent growth is the inverse). A derived context lets
+	// us cancel the sweep at shutdown even when the parent ctx wasn't
+	// the trigger (e.g. httpServer.Serve returned a fatal error).
+	sweepCtx, sweepCancel := context.WithCancel(ctx)
+	defer sweepCancel()
+	nonceSweepDone := make(chan struct{})
+	go s.nonceSweepLoop(sweepCtx, nonceSweepDone)
+
 	s.emitStartupAudit(ctx, "ok", "")
 
 	serveErrCh := make(chan error, 1)
@@ -546,6 +568,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 	s.shuttingDown.Store(true)
 	close(s.shutdownDoneCh)
+	sweepCancel()
 
 	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.shutdownTimeout)
 	defer cancel()
@@ -554,6 +577,7 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 	s.drainWG.Wait()
 	<-sighupDone
+	<-nonceSweepDone
 
 	if writeErr := s.audit.Write(ctx, AuditEvent{
 		Type: AuditServerStop,
@@ -606,6 +630,29 @@ func (s *Server) emitStartupAudit(ctx context.Context, status, check string) {
 		Detail: detail,
 	}); err != nil {
 		s.logger.WarnContext(ctx, "audit write server_start failed", "err", err.Error())
+	}
+}
+
+// nonceSweepLoop runs the nonce-cache sweep goroutine for the chassis
+// lifetime. It blocks inside [sign.NonceCache.Run] until ctx cancels,
+// then signals completion via done.
+//
+// Constitution IX requires every goroutine to recover(); the deferred
+// recoverNonceSweepLoop satisfies that. Without this loop the sync.Map
+// backing the cache grows monotonically and never evicts expired entries
+// — a silent memory leak that defeats Layer 4 replay defense by
+// exhausting RSS before any audit signal fires (Constitution V).
+func (s *Server) nonceSweepLoop(ctx context.Context, done chan<- struct{}) {
+	defer close(done)
+	defer s.recoverNonceSweepLoop(ctx)
+	s.nonceCache.Run(ctx)
+}
+
+// recoverNonceSweepLoop is the deferred panic recovery for
+// [Server.nonceSweepLoop].
+func (s *Server) recoverNonceSweepLoop(ctx context.Context) {
+	if r := recover(); r != nil {
+		s.logger.ErrorContext(ctx, "nonce sweep loop panic", "panic", fmt.Sprintf("%v", r))
 	}
 }
 
