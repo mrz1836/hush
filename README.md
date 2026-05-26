@@ -217,6 +217,7 @@ Every hush subcommand at a glance — every entry below is real today.
 | `hush init server` / `hush init client` | Bootstrap a vault host / enroll an agent host |
 | `hush serve` | Run the vault server (Tailscale-only) |
 | `hush secret add` / `list` / `remove` / `rotate` | Manage vault entries (rotate re-encrypts and hot-reloads) |
+| `hush vault rekey` | Change the vault passphrase — rotates the root of trust (TTY-only) |
 | `hush request --exec …` | One-shot interactive fetch + child exec |
 | `hush supervise <config.toml>` | Long-running daemon with grace cache + validators |
 | `hush health` / `server-url` / `version` | Daily-driver helpers |
@@ -378,6 +379,7 @@ fail loudly instead of breaking your daemon at 3am. Full guide in
 - `hush health --server "$(hush server-url)"` — one-shot reachability + clock-skew check.
 - `hush secret list` — enumerate vault entries (TTY: `NAME — description`; pipe-friendly).
 - `hush secret rotate` — re-encrypt the vault and hot-reload `hush serve` (SIGHUP, no downtime).
+- `hush vault rekey` — change the vault passphrase itself; snapshots the old vault and prints a restart-required reminder. See [`docs/VAULT-REKEY.md`](docs/VAULT-REKEY.md).
 - `hush server-url` — print the canonical server URL from your TOML config, perfect for `$(…)` substitution.
 - `hush revoke --jti <uuid>` — kill an active JWT before its TTL expires.
 
@@ -585,6 +587,7 @@ View the comprehensive documentation for hush:
 | Doc | Purpose |
 |-----|---------|
 | [`docs/OPERATIONS.md`](docs/OPERATIONS.md) | Setup, day-to-day modes, `--non-interactive`, Keychain recovery |
+| [`docs/VAULT-REKEY.md`](docs/VAULT-REKEY.md) | Vault passphrase rotation runbook: `secret rotate` vs `vault rekey`, Keychain follow-up, snapshot/rollback |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Component model, trust boundaries, supervisor lifecycle |
 | [`docs/SECURITY.md`](docs/SECURITY.md) | Threat model, 7 security layers, residual risks |
 | [`docs/AGENT-INTEGRATION.md`](docs/AGENT-INTEGRATION.md) | SDK guide for AI agents: `pkg/client` Snapshot / Me / Watch + agent-context flags on `/claim` |

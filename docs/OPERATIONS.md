@@ -322,6 +322,44 @@ Intent:
 - child restarts do not normally require a new phone approval
 - refreshes happen in waking hours
 
+### Vault root-key rotation (`hush vault rekey`)
+
+`hush secret rotate` and `hush vault rekey` look adjacent but rotate
+different material. Pick by the question you are answering.
+
+| Question | Command |
+|----------|---------|
+| "Re-encrypt the vault under the same passphrase-derived key (refresh nonces; hot-reload `hush serve`)." | `hush secret rotate` |
+| "Change the vault passphrase itself; rotate the root of trust for every BIP32-derived key." | `hush vault rekey` |
+
+`hush vault rekey` is strictly TTY-only on both stdin and stdout, takes
+no scripted-passphrase flags, prompts for the current passphrase, then
+prompts for a new passphrase + confirmation, snapshots the current
+vault to `secrets.vault.bak-<RFC3339>` (mode `0600`) before any
+rewrite, and emits a single `vault_rekeyed` audit event.
+
+Two operator follow-ups are mandatory after a successful rekey:
+
+1. **Update the macOS Keychain item.** By default the rekey leaves
+   `hush-vault-passphrase` / `hush-server` pointing at the **old**
+   passphrase. Either pass `--update-keychain` (opt-in; updates the
+   existing item only) or run `security add-generic-password -s
+   hush-vault-passphrase -a hush-server -T "$(command -v hush)" -U -w`
+   by hand with the new passphrase pasted at the no-echo prompt.
+2. **Restart `hush serve`.** No signal is sent by the rekey command — a
+   running daemon still holds the **old** key in memory until it
+   restarts, so the vault rewrite alone is not sufficient. The success
+   output prints a `restart it to pick up the new passphrase` reminder
+   when a live server PID is detected.
+
+The snapshot file remains decryptable under the **old** passphrase and
+is the only manual rollback artefact; treat it like the prior vault
+and delete it (`shred -u` on Linux, `rm -P` on macOS) once the new
+state is trusted and backed up. See
+[`docs/VAULT-REKEY.md`](VAULT-REKEY.md) for the full runbook,
+including partial-failure semantics, audit attribute shape, and the
+rollback procedure.
+
 ### Zero-downtime daemon reload (HTTP services)
 
 When the supervised child is an HTTP server and the supervisor TOML
@@ -464,7 +502,9 @@ These are the operational topics the final implementation must cover:
 - daemon supervisor deployment (one supervisor TOML per long-running daemon)
 - zero-downtime daemon reload for HTTP services (see
   [`docs/SUPERVISE-RELOAD.md`](SUPERVISE-RELOAD.md))
-- vault secret rotation
+- vault secret rotation (`hush secret rotate`)
+- vault root-key rotation (`hush vault rekey`, see
+  [`docs/VAULT-REKEY.md`](VAULT-REKEY.md))
 - `hush client refresh` flow after rotation
 - validator failure response
 - child exit 78 response
@@ -507,6 +547,7 @@ If a doc surface legitimately needs to *describe* the forbidden constructs (e.g.
 ## 10. Cross-references
 
 - daemon lifecycle details: `docs/LIFECYCLE-SCENARIOS.md`
+- vault root-key rotation (passphrase change): `docs/VAULT-REKEY.md`
 - zero-downtime HTTP reload runbook: `docs/SUPERVISE-RELOAD.md`
 - config locations and fields: `docs/CONFIG-SCHEMA.md`
 - supervisor pattern + validators: `docs/DAEMONS.md`
