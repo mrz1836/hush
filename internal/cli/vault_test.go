@@ -20,6 +20,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/mrz1836/hush/internal/keychain"
 	"github.com/mrz1836/hush/internal/keys"
 	"github.com/mrz1836/hush/internal/testutil"
 	"github.com/mrz1836/hush/internal/vault"
@@ -85,6 +86,9 @@ func newVaultFixture(t *testing.T, entries []testutil.VaultEntry) *vaultFixture 
 		kill:          func(_ int, _ syscall.Signal) error { return nil },
 		readPIDFile:   func(_ string) ([]byte, error) { return nil, fsErrNotExist() },
 		randReader:    rand.Reader,
+		keychain:      keychain.NewFake(),
+		binaryPath:    func() (string, error) { return "/test/hush", nil },
+		platformACL:   func() bool { return true },
 		stateDirRoot:  stateDir,
 		logger:        logger,
 		nowFn:         time.Now,
@@ -133,8 +137,11 @@ func TestVault_ProductionDeps_NotNil(t *testing.T) {
 	require.NotNil(t, d.kill)
 	require.NotNil(t, d.readPIDFile)
 	require.NotNil(t, d.randReader)
+	require.NotNil(t, d.binaryPath)
+	require.NotNil(t, d.platformACL)
 	require.NotNil(t, d.logger)
 	require.NotNil(t, d.nowFn)
+	require.False(t, d.updateKeychain, "production default must be --update-keychain=false")
 }
 
 // ---------- TTY refusal ----------
@@ -340,6 +347,9 @@ func newVaultRekeyRoundTripFixture(t *testing.T, entries []testutil.VaultEntry, 
 		kill:             func(_ int, _ syscall.Signal) error { return nil },
 		readPIDFile:      func(_ string) ([]byte, error) { return nil, fsErrNotExist() },
 		randReader:       rand.Reader,
+		keychain:         keychain.NewFake(),
+		binaryPath:       func() (string, error) { return "/test/hush", nil },
+		platformACL:      func() bool { return true },
 		stateDirRoot:     stateDir,
 		logger:           logger,
 		nowFn:            time.Now,
@@ -408,8 +418,7 @@ func TestVaultRekey_RoundTrip_SnapshotsAndRewrites(t *testing.T) {
 	require.NoError(t, err)
 
 	err = runVaultRekey(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, nil, fx.deps)
-	require.True(t, errors.Is(err, errVaultRekeyPostWriteNotImplemented),
-		"Phase 3 must complete the rewrite and stop with the Phase 4 stub; got %v", err)
+	require.NoError(t, err, "Phase 4 must complete the rekey end-to-end")
 
 	// Snapshot exists, 0600, byte-identical to the pre-rekey vault.
 	snapPath := findVaultSnapshot(t, fx.tempDir)
@@ -493,8 +502,8 @@ func TestVaultRekey_SnapshotFailureAbortsBeforeRewrite(t *testing.T) {
 
 	err = runVaultRekey(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, nil, fx.deps)
 	require.Error(t, err)
-	require.False(t, errors.Is(err, errVaultRekeyPostWriteNotImplemented),
-		"snapshot failure must abort before the rewrite stub is reached")
+	require.False(t, errors.Is(err, errVaultRekeyPartial),
+		"snapshot failure must abort before the rewrite, not surface as a post-write partial")
 
 	postBytes, err := os.ReadFile(fx.vaultPath)
 	require.NoError(t, err)
@@ -518,7 +527,8 @@ func TestVaultRekey_SaltMintFailureAbortsBeforeRewrite(t *testing.T) {
 
 	err = runVaultRekey(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, nil, fx.deps)
 	require.Error(t, err)
-	require.False(t, errors.Is(err, errVaultRekeyPostWriteNotImplemented))
+	require.False(t, errors.Is(err, errVaultRekeyPartial),
+		"salt-mint failure must abort before the rewrite, not surface as a post-write partial")
 
 	postBytes, err := os.ReadFile(fx.vaultPath)
 	require.NoError(t, err)
@@ -545,4 +555,335 @@ func TestConstantTimeSecureEqual(t *testing.T) {
 	require.Equal(t, 0, constantTimeSecureEqual([]byte("abc"), []byte("abcd")))
 	require.Equal(t, 0, constantTimeSecureEqual(nil, []byte("x")))
 	require.Equal(t, 1, constantTimeSecureEqual(nil, nil))
+}
+
+// ---------- Phase 4: PID probe, Keychain, terminal audit ----------
+
+// countingKeychain wraps a Keychain implementation and records the
+// number of Retrieve/Delete/Store calls. The opt-in Keychain branch
+// is the only path that should ever touch these methods, so tests
+// for the default-off and unsupported-platform branches use this
+// wrapper to assert "zero calls" without depending on the underlying
+// FakeKeychain's internal state.
+type countingKeychain struct {
+	inner    keychain.Keychain
+	retrieve int
+	del      int
+	store    int
+}
+
+func newCountingKeychain(inner keychain.Keychain) *countingKeychain {
+	return &countingKeychain{inner: inner}
+}
+
+func (c *countingKeychain) Retrieve(ctx context.Context, service, account string) (*securebytes.SecureBytes, error) {
+	c.retrieve++
+	return c.inner.Retrieve(ctx, service, account)
+}
+
+func (c *countingKeychain) Delete(ctx context.Context, service, account string) error {
+	c.del++
+	return c.inner.Delete(ctx, service, account)
+}
+
+func (c *countingKeychain) Store(ctx context.Context, service, account string, value *securebytes.SecureBytes, acl string) error {
+	c.store++
+	return c.inner.Store(ctx, service, account, value, acl)
+}
+
+// storeFailingKeychain wraps an inner Keychain but forces Store to
+// fail with a fixed sentinel after Retrieve+Delete have succeeded.
+// Used to exercise the AC-10 partial-failure path where the vault is
+// rewritten but the Keychain update fails post-rename.
+type storeFailingKeychain struct {
+	inner keychain.Keychain
+	err   error
+}
+
+func (s *storeFailingKeychain) Retrieve(ctx context.Context, service, account string) (*securebytes.SecureBytes, error) {
+	return s.inner.Retrieve(ctx, service, account)
+}
+
+func (s *storeFailingKeychain) Delete(ctx context.Context, service, account string) error {
+	return s.inner.Delete(ctx, service, account)
+}
+
+func (s *storeFailingKeychain) Store(_ context.Context, _, _ string, _ *securebytes.SecureBytes, _ string) error {
+	return s.err
+}
+
+// seedExistingKeychainItem populates the fake keychain with a
+// hush-vault-passphrase / hush-server item so the rekey's opt-in path
+// can exercise the existing-item branch.
+func seedExistingKeychainItem(t *testing.T, kc keychain.Keychain, value string) {
+	t.Helper()
+	sb, err := securebytes.New([]byte(value))
+	require.NoError(t, err)
+	defer func() { _ = sb.Destroy() }()
+	require.NoError(t, kc.Store(context.Background(), kcServiceVaultPassphrase, kcAccountServer, sb, "/seed/acl"))
+}
+
+// TestVaultRekey_PIDProbe_NoSignalEverSent proves AC-8's no-signal
+// guarantee: across every PID-probe path (present, absent, stale,
+// notourUser, unreadable) the only signal ever passed to kill is 0,
+// which is the POSIX liveness probe. SIGHUP/SIGTERM/SIGKILL must
+// never appear.
+func TestVaultRekey_PIDProbe_NoSignalEverSent(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name        string
+		readPID     func(string) ([]byte, error)
+		killErr     error
+		wantStatus  string // substring of stderr message
+		wantRestart bool
+	}{
+		{
+			name:        "absent",
+			readPID:     func(_ string) ([]byte, error) { return nil, fsErrNotExist() },
+			killErr:     nil,
+			wantStatus:  "no running server detected",
+			wantRestart: false,
+		},
+		{
+			name:        "present",
+			readPID:     func(_ string) ([]byte, error) { return []byte("4242"), nil },
+			killErr:     nil,
+			wantStatus:  "running server detected (pid=4242)",
+			wantRestart: true,
+		},
+		{
+			name:        "stale",
+			readPID:     func(_ string) ([]byte, error) { return []byte("4242"), nil },
+			killErr:     syscall.ESRCH,
+			wantStatus:  "stale PID file detected",
+			wantRestart: false,
+		},
+		{
+			name:        "notourUser",
+			readPID:     func(_ string) ([]byte, error) { return []byte("4242"), nil },
+			killErr:     syscall.EPERM,
+			wantStatus:  "PID file is owned by another user",
+			wantRestart: false,
+		},
+		{
+			name:        "unreadable",
+			readPID:     func(_ string) ([]byte, error) { return []byte("xx\n"), nil },
+			killErr:     nil,
+			wantStatus:  "PID file unreadable",
+			wantRestart: false,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fx := newVaultRekeyRoundTripFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}}, "correctbatterystaple")
+
+			var sentSignals []syscall.Signal
+			fx.deps.readPIDFile = tc.readPID
+			fx.deps.kill = func(_ int, sig syscall.Signal) error {
+				sentSignals = append(sentSignals, sig)
+				return tc.killErr
+			}
+
+			err := runVaultRekey(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, nil, fx.deps)
+			require.NoError(t, err)
+
+			// No signal other than 0 was ever sent.
+			for _, sig := range sentSignals {
+				require.Equal(t, syscall.Signal(0), sig, "vault rekey must never send any non-zero signal")
+			}
+
+			require.Contains(t, fx.stderr.String(), tc.wantStatus)
+			restartAttr := "restart_required=false"
+			if tc.wantRestart {
+				restartAttr = "restart_required=true"
+			}
+			require.Contains(t, fx.logBuf.String(), restartAttr)
+			require.Contains(t, fx.logBuf.String(), "outcome=success")
+		})
+	}
+}
+
+// TestVaultRekey_Keychain_DefaultOffZeroCalls asserts AC-9's default:
+// without --update-keychain the rekey path makes zero Retrieve, Delete,
+// or Store calls into the Keychain (proven via the instrumented
+// wrapper). The terminal audit event carries keychain_updated=false.
+func TestVaultRekey_Keychain_DefaultOffZeroCalls(t *testing.T) {
+	t.Parallel()
+	fx := newVaultRekeyRoundTripFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}}, "correctbatterystaple")
+	counter := newCountingKeychain(keychain.NewFake())
+	fx.deps.keychain = counter
+	fx.deps.updateKeychain = false
+
+	err := runVaultRekey(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, nil, fx.deps)
+	require.NoError(t, err)
+
+	require.Zero(t, counter.retrieve, "default rekey must not call Retrieve")
+	require.Zero(t, counter.del, "default rekey must not call Delete")
+	require.Zero(t, counter.store, "default rekey must not call Store")
+	require.Contains(t, fx.logBuf.String(), "keychain_updated=false")
+	require.Contains(t, fx.logBuf.String(), "outcome=success")
+}
+
+// TestVaultRekey_Keychain_OptInSuccess covers the AC-9 opt-in success
+// path: with an existing Keychain item the rekey runs
+// Retrieve→Delete→Store with the binary path as the ACL, the new
+// Keychain value matches the new passphrase, and the terminal audit
+// event carries keychain_updated=true.
+func TestVaultRekey_Keychain_OptInSuccess(t *testing.T) {
+	t.Parallel()
+	fx := newVaultRekeyRoundTripFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}}, "correctbatterystaple")
+	fakeKC := keychain.NewFake()
+	seedExistingKeychainItem(t, fakeKC, "old-passphrase")
+	counter := newCountingKeychain(fakeKC)
+	fx.deps.keychain = counter
+	fx.deps.binaryPath = func() (string, error) { return "/abs/hush", nil }
+	fx.deps.updateKeychain = true
+
+	err := runVaultRekey(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, nil, fx.deps)
+	require.NoError(t, err)
+
+	require.Equal(t, 1, counter.retrieve, "opt-in success path must Retrieve exactly once")
+	require.Equal(t, 1, counter.del, "opt-in success path must Delete exactly once")
+	require.Equal(t, 1, counter.store, "opt-in success path must Store exactly once")
+	require.Equal(t, "/abs/hush", fakeKC.RecordedACL(kcServiceVaultPassphrase, kcAccountServer),
+		"Store ACL must be the resolved hush binary path")
+
+	// The freshly stored Keychain value matches the new passphrase.
+	stored, err := fakeKC.Retrieve(context.Background(), kcServiceVaultPassphrase, kcAccountServer)
+	require.NoError(t, err)
+	defer func() { _ = stored.Destroy() }()
+	var got []byte
+	require.NoError(t, stored.Use(func(b []byte) {
+		got = append([]byte(nil), b...)
+	}))
+	require.Equal(t, "newbatterystaple1", string(got))
+
+	require.Contains(t, fx.stderr.String(), "Keychain item updated")
+	require.Contains(t, fx.logBuf.String(), "keychain_updated=true")
+	require.Contains(t, fx.logBuf.String(), "outcome=success")
+	require.NotContains(t, fx.logBuf.String(), "newbatterystaple1",
+		"audit must never log passphrase material")
+}
+
+// TestVaultRekey_Keychain_OptInUnsupportedPlatform covers the AC-9
+// warning/no-op branch when --update-keychain is set but
+// PerBinaryACLSupported() is false. No Keychain method runs; the
+// vault is still rekeyed; the terminal audit reports
+// keychain_updated=false; exit code is success.
+func TestVaultRekey_Keychain_OptInUnsupportedPlatform(t *testing.T) {
+	t.Parallel()
+	fx := newVaultRekeyRoundTripFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}}, "correctbatterystaple")
+	counter := newCountingKeychain(keychain.NewFake())
+	fx.deps.keychain = counter
+	fx.deps.platformACL = func() bool { return false }
+	fx.deps.updateKeychain = true
+
+	err := runVaultRekey(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, nil, fx.deps)
+	require.NoError(t, err)
+
+	require.Zero(t, counter.retrieve, "unsupported platform must skip Retrieve")
+	require.Zero(t, counter.del, "unsupported platform must skip Delete")
+	require.Zero(t, counter.store, "unsupported platform must skip Store")
+	require.Contains(t, fx.stderr.String(), "per-binary ACL unsupported on this platform")
+	require.Contains(t, fx.logBuf.String(), "keychain_updated=false")
+	require.Contains(t, fx.logBuf.String(), "outcome=success")
+}
+
+// TestVaultRekey_Keychain_OptInItemMissing covers the AC-9
+// warning/no-op branch when --update-keychain is set but the
+// (hush-vault-passphrase, hush-server) item does not exist. Delete
+// and Store must be skipped; the vault is still rekeyed; the
+// terminal audit reports keychain_updated=false.
+func TestVaultRekey_Keychain_OptInItemMissing(t *testing.T) {
+	t.Parallel()
+	fx := newVaultRekeyRoundTripFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}}, "correctbatterystaple")
+	counter := newCountingKeychain(keychain.NewFake())
+	fx.deps.keychain = counter
+	fx.deps.updateKeychain = true
+
+	err := runVaultRekey(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, nil, fx.deps)
+	require.NoError(t, err)
+
+	require.Equal(t, 1, counter.retrieve, "missing-item path still probes once via Retrieve")
+	require.Zero(t, counter.del, "missing-item path must skip Delete")
+	require.Zero(t, counter.store, "missing-item path must skip Store")
+	require.Contains(t, fx.stderr.String(), "existing Keychain item not found")
+	require.Contains(t, fx.logBuf.String(), "keychain_updated=false")
+	require.Contains(t, fx.logBuf.String(), "outcome=success")
+}
+
+// TestVaultRekey_Keychain_StoreFailure_PartialSuccess covers AC-10:
+// when the post-write Keychain Store fails, the rekeyed vault stays
+// in place, the locked partial-failure message is printed, the
+// terminal audit emits outcome=success_partial, and the returned
+// error maps to ExitErr (hush's internal catch-all code).
+func TestVaultRekey_Keychain_StoreFailure_PartialSuccess(t *testing.T) {
+	t.Parallel()
+	fx := newVaultRekeyRoundTripFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}}, "correctbatterystaple")
+	fakeKC := keychain.NewFake()
+	seedExistingKeychainItem(t, fakeKC, "old-passphrase")
+	fx.deps.keychain = &storeFailingKeychain{inner: fakeKC, err: errors.New("synthetic store failure")}
+	fx.deps.updateKeychain = true
+
+	// Capture the rekeyed vault salt so we can prove the new vault
+	// stayed in place after the Keychain Store failed.
+	err := runVaultRekey(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, nil, fx.deps)
+	require.Error(t, err)
+	require.True(t, errors.Is(err, errVaultRekeyPartial),
+		"Keychain Store failure must surface as errVaultRekeyPartial; got %v", err)
+	require.Equal(t, ExitErr, mapErr(err))
+
+	require.Contains(t, fx.stderr.String(), "vault rekey SUCCEEDED but Keychain update FAILED")
+	require.Contains(t, fx.logBuf.String(), "outcome=success_partial")
+	require.Contains(t, fx.logBuf.String(), "keychain_updated=false")
+
+	// New vault still decrypts with the new passphrase (rewrite was not rolled back).
+	postSalt, err := readVaultSalt(fx.vaultPath)
+	require.NoError(t, err)
+	newSeed, err := fx.deps.deriveMasterSeed(context.Background(), []byte("newbatterystaple1"), postSalt)
+	require.NoError(t, err)
+	newRawKey, err := keys.DeriveVaultEncKey(newSeed)
+	require.NoError(t, err)
+	newKey, err := securebytes.New(newRawKey)
+	require.NoError(t, err)
+	defer func() { _ = newKey.Destroy() }()
+	loaded, err := vault.LoadSecrets(context.Background(), fx.vaultPath, newKey)
+	require.NoError(t, err)
+	for i := len(loaded) - 1; i >= 0; i-- {
+		if loaded[i].Value != nil {
+			_ = loaded[i].Value.Destroy()
+		}
+	}
+	require.Len(t, loaded, 1)
+}
+
+// TestVaultRekey_TerminalAuditShape ensures the success-path
+// vault_rekeyed audit record carries the full AC-11 attribute set
+// (verb, outcome, restart_required, keychain_updated, snapshot_path)
+// and never carries any passphrase or secret material.
+func TestVaultRekey_TerminalAuditShape(t *testing.T) {
+	t.Parallel()
+	fx := newVaultRekeyRoundTripFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "secretA"}}, "correctbatterystaple")
+
+	err := runVaultRekey(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, nil, fx.deps)
+	require.NoError(t, err)
+
+	log := fx.logBuf.String()
+	require.Contains(t, log, "vault_rekeyed")
+	require.Contains(t, log, "verb=rekey")
+	require.Contains(t, log, "outcome=success")
+	require.Contains(t, log, "restart_required=false")
+	require.Contains(t, log, "keychain_updated=false")
+	require.Contains(t, log, "snapshot_path=")
+	// snapshot_path attribute must reference the actual file under stateDir.
+	snapPath := findVaultSnapshot(t, fx.tempDir)
+	require.Contains(t, log, "snapshot_path="+snapPath)
+	// No passphrase material in the audit stream.
+	require.NotContains(t, log, "correctbatterystaple")
+	require.NotContains(t, log, "newbatterystaple1")
+	require.NotContains(t, log, "secretA")
 }

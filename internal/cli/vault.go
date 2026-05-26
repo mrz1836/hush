@@ -23,6 +23,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/mrz1836/hush/internal/config"
+	"github.com/mrz1836/hush/internal/keychain"
 	"github.com/mrz1836/hush/internal/keys"
 	"github.com/mrz1836/hush/internal/vault"
 	"github.com/mrz1836/hush/internal/vault/securebytes"
@@ -45,6 +46,20 @@ const (
 	vaultMsgPassphraseTooShort  = "hush: vault: new passphrase must be at least 12 bytes"
 	vaultMsgPassphraseMismatch  = "hush: vault: new passphrase confirmation does not match"
 	vaultMsgPassphraseUnchanged = "hush: vault: new passphrase must differ from the current passphrase"
+
+	// Post-write PID-probe stderr lines. Phase 4 surfaces server-state
+	// hints without sending any signal; pidPresent prints the AC-8
+	// restart-required line, the other three states get tolerant notes.
+	vaultMsgPidPresentFmt  = "hush: vault: running server detected (pid=%d) — restart it to pick up the new passphrase"
+	vaultMsgPidAbsent      = "hush: vault: no running server detected"
+	vaultMsgPidStale       = "hush: vault: stale PID file detected; no running server"
+	vaultMsgPidNotOurUser  = "hush: vault: PID file is owned by another user; not probed"
+	vaultMsgPidUnreadable  = "hush: vault: PID file unreadable; cannot determine server state"
+	vaultMsgRekeyedFmt     = "hush: vault: rekey complete; snapshot=%s"
+	vaultMsgKcUnsupported  = "hush: vault: --update-keychain: per-binary ACL unsupported on this platform; skipping (no Keychain mutation)"
+	vaultMsgKcItemMissing  = "hush: vault: --update-keychain: existing Keychain item not found; skipping (no Keychain mutation)"
+	vaultMsgKcUpdated      = "hush: vault: --update-keychain: Keychain item updated"
+	vaultMsgPartialFailFmt = "hush: vault: vault rekey SUCCEEDED but Keychain update FAILED — manual follow-up required: %v"
 )
 
 // Locked prompt labels for the rekey flow. gosec G101 false positive
@@ -63,6 +78,15 @@ const (
 // errMissingFlag → ExitInputErr through the existing classifier so no
 // new sentinel needs to land in exit_codes.go.
 var errPassphraseUnchanged = fmt.Errorf("hush: vault: new passphrase unchanged: %w", errMissingFlag)
+
+// errVaultRekeyPartial surfaces the post-write partial-failure outcome:
+// the vault was rewritten successfully but the opt-in Keychain update
+// failed (Retrieve/Delete/Store error after the vault rename). The
+// snapshot remains in place as the operator's rollback artefact and
+// the new vault stays live. mapErr's catch-all returns ExitErr (1) —
+// hush has no separate `ExitInternalErr` symbol; the plan's reference
+// to that name maps to the catch-all internal code.
+var errVaultRekeyPartial = errors.New("hush: vault: rekey succeeded but Keychain update failed")
 
 // vaultDeps groups the testable seams threaded into the rekey flow.
 // Mirrors secretDeps in spirit but is intentionally separate so the
@@ -87,6 +111,17 @@ type vaultDeps struct {
 	// tests override to capture or fail salt generation.
 	randReader io.Reader
 
+	// Keychain seams — only exercised when updateKeychain=true.
+	// platformACL gates the whole opt-in branch; if it returns false
+	// the path is a warning/no-op even when keychain != nil.
+	keychain    keychain.Keychain
+	binaryPath  func() (string, error)
+	platformACL func() bool
+
+	// updateKeychain mirrors the --update-keychain CLI flag. Default
+	// false → zero Keychain calls. Set by RunE before runVaultRekey.
+	updateKeychain bool
+
 	stateDirRoot string
 	configPath   string
 	logger       *slog.Logger
@@ -94,8 +129,12 @@ type vaultDeps struct {
 }
 
 // productionVaultDeps wires the real seams. Tests construct a custom
-// vaultDeps directly.
+// vaultDeps directly. keychain.New can theoretically fail; production
+// swallows the error and leaves deps.keychain nil so the opt-in path
+// falls into the unsupported/no-op branch with a clear stderr warning
+// (it never silently drops a Store).
 func productionVaultDeps() *vaultDeps {
+	kc, _ := keychain.New(slog.Default()) //nolint:errcheck // nil keychain handled by opt-in branch
 	return &vaultDeps{
 		loadSecrets:      vault.LoadSecrets,
 		saveVault:        vault.SaveWithSalt,
@@ -107,6 +146,9 @@ func productionVaultDeps() *vaultDeps {
 		kill:             syscall.Kill,
 		readPIDFile:      os.ReadFile,
 		randReader:       rand.Reader,
+		keychain:         kc,
+		binaryPath:       os.Executable,
+		platformACL:      keychain.PerBinaryACLSupported,
 		stateDirRoot:     "",
 		logger:           slog.Default(),
 		nowFn:            time.Now,
@@ -126,8 +168,8 @@ func newVaultCmd() *cobra.Command {
 }
 
 // newVaultRekeyCmd builds the `hush vault rekey` leaf. The
-// --update-keychain flag is wired here so the surface matches the
-// plan's AC-9; the post-write Keychain branch is filled in by Phase 4.
+// --update-keychain flag is wired here; Phase 4 lit it up to drive the
+// post-write opt-in Keychain Retrieve→Delete→Store flow.
 func newVaultRekeyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "rekey",
@@ -137,6 +179,7 @@ func newVaultRekeyCmd() *cobra.Command {
 			out := outputFromCmd(cmd)
 			deps := productionVaultDeps()
 			deps.configPath = readGlobalFlags(cmd).configPath
+			deps.updateKeychain, _ = cmd.Flags().GetBool("update-keychain")
 			return runVaultRekey(cmd.Context(), out.stdout, out.stderr, os.Stdin, os.Stdout, deps)
 		},
 	}
@@ -144,18 +187,15 @@ func newVaultRekeyCmd() *cobra.Command {
 	return cmd
 }
 
-// runVaultRekey implements the `vault rekey` flow. Phase 2 landed the
-// TTY gating, current-passphrase authentication, and new-passphrase
-// validation paths. Phase 3 adds the snapshot of the old encrypted
-// vault and the rewrite under a fresh salt + new-passphrase-derived
-// key. PID-probe messaging, Keychain follow-up, and the terminal
-// `vault_rekeyed` success audit emission land in Phase 4; until then
-// runVaultRekey returns errVaultRekeyPostWriteNotImplemented after a
-// successful rewrite so an interim build's operator sees an explicit
-// "incomplete" signal even though the vault file is already valid.
+// runVaultRekey implements the `vault rekey` flow. Phases 2–3 landed
+// the TTY gating, current-passphrase authentication, new-passphrase
+// validation, snapshot of the old encrypted vault, and rewrite under a
+// fresh salt + new-passphrase-derived key. Phase 4 adds the read-only
+// PID probe, optional Keychain update, the locked success/partial
+// stderr+stdout copy, and the terminal `vault_rekeyed` audit event.
 //
 //nolint:gocognit,gocyclo // sequential rekey flow with TTY/auth/pass-validation dispatch
-func runVaultRekey(ctx context.Context, _ *Stream, stderr *Stream, in, stdoutFile *os.File, deps *vaultDeps) error {
+func runVaultRekey(ctx context.Context, stdout *Stream, stderr *Stream, in, stdoutFile *os.File, deps *vaultDeps) error {
 	if err := enforceRekeyTTY(ctx, in, stdoutFile, deps, stderr); err != nil {
 		return err
 	}
@@ -185,7 +225,7 @@ func runVaultRekey(ctx context.Context, _ *Stream, stderr *Stream, in, stdoutFil
 	secrets, err := deps.loadSecrets(ctx, vaultPath, oldKey)
 	if err != nil {
 		if errors.Is(err, vault.ErrAuthFailed) {
-			auditVaultRekey(ctx, deps.logger, "passphrase_failed")
+			auditVaultRekey(ctx, deps.logger, slog.LevelWarn, "passphrase_failed", false, false, "")
 		}
 		return err
 	}
@@ -235,22 +275,104 @@ func runVaultRekey(ctx context.Context, _ *Stream, stderr *Stream, in, stdoutFil
 		return err
 	}
 
-	// Phase 4 will surface snapshotPath to stdout, run the PID probe,
-	// optionally update the Keychain, and emit the terminal
-	// `vault_rekeyed` success audit event with snapshot_path,
-	// restart_required, and keychain_updated.
-	_ = snapshotPath
-	return errVaultRekeyPostWriteNotImplemented
+	return finishVaultRekey(ctx, stdout, stderr, deps, vaultPath, snapshotPath, newPass)
 }
 
-// errVaultRekeyPostWriteNotImplemented is the stub returned by `hush
-// vault rekey` after Phase 3's snapshot + rewrite succeeds but before
-// Phase 4 lands the PID probe, optional Keychain update, and terminal
-// success audit emission. Mapped to ExitErr via the catch-all so
-// operators see a clear "incomplete" signal if they invoke an interim
-// build even though the on-disk vault is already valid under the new
-// passphrase.
-var errVaultRekeyPostWriteNotImplemented = errors.New("hush: vault: rekey post-write steps not yet implemented")
+// finishVaultRekey runs the post-rewrite steps: probe the PID file
+// (read-only — only kill(pid, 0) is allowed), maybe update the
+// Keychain, print the operator-facing success or partial-failure copy,
+// and emit the terminal `vault_rekeyed` audit event with
+// restart_required, keychain_updated, snapshot_path. Splits the
+// post-write half out of runVaultRekey so the long sequential flow
+// reads top-to-bottom.
+func finishVaultRekey(ctx context.Context, stdout, stderr *Stream, deps *vaultDeps, vaultPath, snapshotPath string, newPass *securebytes.SecureBytes) error {
+	restartRequired := probeAndReportPID(deps, stderr, vaultPath)
+	keychainUpdated, kcErr := maybeUpdateKeychainPassphrase(ctx, deps, stderr, newPass)
+	if kcErr != nil {
+		_ = stderr.WriteText(vaultMsgPartialFailFmt, kcErr)
+		auditVaultRekey(ctx, deps.logger, slog.LevelWarn, "success_partial", restartRequired, keychainUpdated, snapshotPath)
+		return errVaultRekeyPartial
+	}
+	_ = stdout.WriteText(vaultMsgRekeyedFmt, snapshotPath)
+	auditVaultRekey(ctx, deps.logger, slog.LevelInfo, "success", restartRequired, keychainUpdated, snapshotPath)
+	return nil
+}
+
+// probeAndReportPID runs the read-only PID probe against
+// <stateDir>/hush.pid and prints the per-status stderr line. Returns
+// restartRequired=true ONLY for pidPresent — that is the single
+// status that confirms a running server with the old in-memory key.
+// The probe uses kill(pid, 0); no SIGHUP/SIGTERM/SIGKILL is ever
+// dispatched from the rekey path (AC-8 contract).
+func probeAndReportPID(deps *vaultDeps, stderr *Stream, vaultPath string) bool {
+	pidPath := filepath.Join(filepath.Dir(vaultPath), pidFilename)
+	status, pid := probePIDFile(deps.readPIDFile, deps.kill, pidPath)
+	switch status {
+	case pidPresent:
+		_ = stderr.WriteText(vaultMsgPidPresentFmt, pid)
+		return true
+	case pidAbsent:
+		_ = stderr.WriteText(vaultMsgPidAbsent)
+	case pidStale:
+		_ = stderr.WriteText(vaultMsgPidStale)
+	case pidNotOurUser:
+		_ = stderr.WriteText(vaultMsgPidNotOurUser)
+	case pidUnreadable:
+		_ = stderr.WriteText(vaultMsgPidUnreadable)
+	}
+	return false
+}
+
+// maybeUpdateKeychainPassphrase runs the opt-in Keychain
+// Retrieve→Delete→Store sequence under (hush-vault-passphrase,
+// hush-server) with the running binary as the per-binary ACL. Default
+// (deps.updateKeychain=false) returns (false, nil) without touching
+// the Keychain at all. Unsupported platform or a missing existing
+// item is a warning/no-op (returns false, nil). Any failure after the
+// vault rewrite — including a Retrieve error other than
+// ErrKeychainItemNotFound — propagates as the partial-failure error,
+// which the caller maps to outcome=success_partial / ExitErr while
+// leaving the new vault in place.
+func maybeUpdateKeychainPassphrase(ctx context.Context, deps *vaultDeps, stderr *Stream, newPass *securebytes.SecureBytes) (bool, error) {
+	if !deps.updateKeychain {
+		return false, nil
+	}
+	if deps.platformACL == nil || !deps.platformACL() {
+		_ = stderr.WriteText(vaultMsgKcUnsupported)
+		return false, nil
+	}
+	if deps.keychain == nil {
+		_ = stderr.WriteText(vaultMsgKcUnsupported)
+		return false, nil
+	}
+	existing, err := deps.keychain.Retrieve(ctx, kcServiceVaultPassphrase, kcAccountServer)
+	if err != nil {
+		if errors.Is(err, keychain.ErrKeychainItemNotFound) {
+			_ = stderr.WriteText(vaultMsgKcItemMissing)
+			return false, nil
+		}
+		return false, fmt.Errorf("hush: vault: keychain retrieve: %w", err)
+	}
+	_ = existing.Destroy()
+
+	binPath := ""
+	if deps.binaryPath != nil {
+		bp, bpErr := deps.binaryPath()
+		if bpErr != nil {
+			return false, fmt.Errorf("hush: vault: resolve binary path: %w", bpErr)
+		}
+		binPath = bp
+	}
+
+	if delErr := deps.keychain.Delete(ctx, kcServiceVaultPassphrase, kcAccountServer); delErr != nil {
+		return false, fmt.Errorf("hush: vault: keychain delete: %w", delErr)
+	}
+	if storeErr := deps.keychain.Store(ctx, kcServiceVaultPassphrase, kcAccountServer, newPass, binPath); storeErr != nil {
+		return false, fmt.Errorf("hush: vault: keychain store: %w", storeErr)
+	}
+	_ = stderr.WriteText(vaultMsgKcUpdated)
+	return true, nil
+}
 
 // snapshotVaultFile copies the current encrypted vault to a sibling
 // `secrets.vault.bak-<RFC3339>` file with 0600 perms before the new
@@ -308,7 +430,7 @@ func mintFreshVaultSalt(deps *vaultDeps) ([]byte, error) {
 }
 
 // enforceRekeyTTY refuses if stdin or stdout is not an interactive
-// terminal. Emits the locked stderr line and a `vault_rekey_tty_refused`
+// terminal. Emits the locked stderr line and a `vault_rekeyed`
 // audit record so an operator monitoring stderr sees the refusal AND
 // the audit log captures the attempt.
 func enforceRekeyTTY(ctx context.Context, in, stdoutFile *os.File, deps *vaultDeps, stderr *Stream) error {
@@ -316,7 +438,7 @@ func enforceRekeyTTY(ctx context.Context, in, stdoutFile *os.File, deps *vaultDe
 		return nil
 	}
 	_ = stderr.WriteText(vaultMsgNoTTY)
-	auditVaultRekey(ctx, deps.logger, "tty_refused")
+	auditVaultRekey(ctx, deps.logger, slog.LevelWarn, "tty_refused", false, false, "")
 	return errNoTTY
 }
 
@@ -381,7 +503,7 @@ func enforceNewPassphraseLen(ctx context.Context, deps *vaultDeps, stderr *Strea
 		return nil
 	}
 	_ = stderr.WriteText(vaultMsgPassphraseTooShort)
-	auditVaultRekey(ctx, deps.logger, "passphrase_too_short")
+	auditVaultRekey(ctx, deps.logger, slog.LevelWarn, "passphrase_too_short", false, false, "")
 	return errPassphraseTooShort
 }
 
@@ -397,7 +519,7 @@ func enforceNewPassphraseConfirmation(ctx context.Context, deps *vaultDeps, stde
 		return nil
 	}
 	_ = stderr.WriteText(vaultMsgPassphraseMismatch)
-	auditVaultRekey(ctx, deps.logger, "new_passphrase_mismatch")
+	auditVaultRekey(ctx, deps.logger, slog.LevelWarn, "new_passphrase_mismatch", false, false, "")
 	return errPassphraseMismatch
 }
 
@@ -425,7 +547,7 @@ func enforceNewPassphraseChanged(ctx context.Context, deps *vaultDeps, stderr *S
 		return nil
 	}
 	_ = stderr.WriteText(vaultMsgPassphraseUnchanged)
-	auditVaultRekey(ctx, deps.logger, "new_passphrase_unchanged")
+	auditVaultRekey(ctx, deps.logger, slog.LevelWarn, "new_passphrase_unchanged", false, false, "")
 	return errPassphraseUnchanged
 }
 
@@ -456,11 +578,19 @@ func destroyVaultRekeySecrets(secrets []vault.Secret) {
 	}
 }
 
-// auditVaultRekey emits an early-failure `vault_rekeyed` record at
-// WARN. Phase 2 only emits the refusal/validation outcomes (verb +
-// outcome); Phase 4 will add a separate INFO emitter that carries
-// `restart_required`, `keychain_updated`, and `snapshot_path` for the
-// terminal success / success_partial records.
-func auditVaultRekey(ctx context.Context, logger *slog.Logger, outcome string) {
-	logger.Log(ctx, slog.LevelWarn, "vault_rekeyed", "verb", "rekey", "outcome", outcome)
+// auditVaultRekey emits the canonical `vault_rekeyed` audit record.
+// Every terminal path in the rekey flow funnels through this function
+// so the structured event always carries the full AC-11 attribute set
+// (verb, outcome, restart_required, keychain_updated, snapshot_path).
+// Early-failure call sites pass zero values for the post-write fields
+// (snapshot_path="", booleans false) — those records still carry the
+// full shape so log consumers can rely on the schema.
+func auditVaultRekey(ctx context.Context, logger *slog.Logger, level slog.Level, outcome string, restartRequired, keychainUpdated bool, snapshotPath string) {
+	logger.Log(ctx, level, "vault_rekeyed",
+		"verb", "rekey",
+		"outcome", outcome,
+		"restart_required", restartRequired,
+		"keychain_updated", keychainUpdated,
+		"snapshot_path", snapshotPath,
+	)
 }
