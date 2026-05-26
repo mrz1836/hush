@@ -286,6 +286,12 @@ func (l *Lifecycle) doClaimRequest(ctx context.Context) (claimWireResponse, int,
 	defer func() { _ = resp.Body.Close() }()
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	// Zero the raw response bytes on every return path: a 200 OK body
+	// carries the JWT plaintext, and parseable error bodies may echo the
+	// supervisor's request_id. The parsed Go strings (resp.JWT etc.) are
+	// unzeroable per residual risk #12, but scrubbing the underlying []byte
+	// drops one of the heap copies. Mirrors refill.go's post-decrypt zero.
+	defer zeroBytes(body)
 
 	if resp.StatusCode == http.StatusOK {
 		var ok claimWireResponse
@@ -374,6 +380,20 @@ func signAndWrapClaim(ctx context.Context, clientKey *ecdsa.PrivateKey, fp strin
 		SupervisorName:       payload.SupervisorName,
 		ClientKeyFingerprint: fp,
 	}, nil
+}
+
+// zeroBytes scrubs every byte of b in place. Used by callers that read
+// secret-bearing payloads (JWT in /claim responses, ECIES envelopes in
+// /s/<name> responses) into a heap []byte and want to drop the unscrubbed
+// copy before the buffer becomes garbage. Safe to call on nil/empty slices.
+//
+// This does NOT zero any downstream Go string copies produced by
+// json.Unmarshal — those are unzeroable per docs/SECURITY.md residual
+// risk #12 and require a wire-format change to remove.
+func zeroBytes(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
 }
 
 // jitterInterval applies ±20% jitter to d. Cap is enforced at bootBackoffCap.

@@ -184,9 +184,7 @@ func (r *Refiller) fetchOne(ctx context.Context, name string, tok *securebytes.S
 	}
 
 	sb, err := ecies.Decrypt(ctx, r.priv, body)
-	for i := range body {
-		body[i] = 0
-	}
+	zeroBytes(body)
 	if err != nil {
 		return nil, fmt.Errorf("supervise/refill: decrypt: %w", err)
 	}
