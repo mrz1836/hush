@@ -82,7 +82,7 @@ var errPassphraseUnchanged = fmt.Errorf("hush: vault: new passphrase unchanged: 
 // errVaultRekeyPartial surfaces the post-write partial-failure outcome:
 // the vault was rewritten successfully but the opt-in Keychain update
 // failed (Retrieve/Delete/Store error after the vault rename). The
-// snapshot remains in place as the operator's rollback artefact and
+// snapshot remains in place as the operator's rollback artifact and
 // the new vault stays live. mapErr's catch-all returns ExitErr (1) —
 // hush has no separate `ExitInternalErr` symbol; the plan's reference
 // to that name maps to the catch-all internal code.
@@ -134,7 +134,7 @@ type vaultDeps struct {
 // falls into the unsupported/no-op branch with a clear stderr warning
 // (it never silently drops a Store).
 func productionVaultDeps() *vaultDeps {
-	kc, _ := keychain.New(slog.Default()) //nolint:errcheck // nil keychain handled by opt-in branch
+	kc, _ := keychain.New(slog.Default())
 	return &vaultDeps{
 		loadSecrets:      vault.LoadSecrets,
 		saveVault:        vault.SaveWithSalt,
@@ -195,7 +195,7 @@ func newVaultRekeyCmd() *cobra.Command {
 // stderr+stdout copy, and the terminal `vault_rekeyed` audit event.
 //
 //nolint:gocognit,gocyclo // sequential rekey flow with TTY/auth/pass-validation dispatch
-func runVaultRekey(ctx context.Context, stdout *Stream, stderr *Stream, in, stdoutFile *os.File, deps *vaultDeps) error {
+func runVaultRekey(ctx context.Context, stdout, stderr *Stream, in, stdoutFile *os.File, deps *vaultDeps) error {
 	if err := enforceRekeyTTY(ctx, in, stdoutFile, deps, stderr); err != nil {
 		return err
 	}
@@ -333,6 +333,8 @@ func probeAndReportPID(deps *vaultDeps, stderr *Stream, vaultPath string) bool {
 // ErrKeychainItemNotFound — propagates as the partial-failure error,
 // which the caller maps to outcome=success_partial / ExitErr while
 // leaving the new vault in place.
+//
+//nolint:gocognit,gocyclo // sequential opt-in Keychain update flow: ACL/support gate → Retrieve → Delete → Store
 func maybeUpdateKeychainPassphrase(ctx context.Context, deps *vaultDeps, stderr *Stream, newPass *securebytes.SecureBytes) (bool, error) {
 	if !deps.updateKeychain {
 		return false, nil
@@ -377,7 +379,7 @@ func maybeUpdateKeychainPassphrase(ctx context.Context, deps *vaultDeps, stderr 
 // snapshotVaultFile copies the current encrypted vault to a sibling
 // `secrets.vault.bak-<RFC3339>` file with 0600 perms before the new
 // vault is written. Returns the absolute snapshot path. The snapshot
-// is the operator's manual rollback artefact (it remains decryptable
+// is the operator's manual rollback artifact (it remains decryptable
 // under the OLD passphrase) and must be created BEFORE any rewrite so
 // AC-6's atomicity guarantee holds — if snapshotting fails the rekey
 // aborts with the vault file untouched.
@@ -586,7 +588,8 @@ func destroyVaultRekeySecrets(secrets []vault.Secret) {
 // (snapshot_path="", booleans false) — those records still carry the
 // full shape so log consumers can rely on the schema.
 func auditVaultRekey(ctx context.Context, logger *slog.Logger, level slog.Level, outcome string, restartRequired, keychainUpdated bool, snapshotPath string) {
-	logger.Log(ctx, level, "vault_rekeyed",
+	logger.Log(
+		ctx, level, "vault_rekeyed",
 		"verb", "rekey",
 		"outcome", outcome,
 		"restart_required", restartRequired,

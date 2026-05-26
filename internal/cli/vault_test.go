@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -26,6 +25,13 @@ import (
 	"github.com/mrz1836/hush/internal/vault"
 	"github.com/mrz1836/hush/internal/vault/securebytes"
 )
+
+// vaultRekeyTestCurrentPass is the seeded current passphrase used by
+// every rekey round-trip fixture. Centralizing it keeps newVaultRekey
+// RoundTripFixture single-arity (no always-same `currentPass` param)
+// while still letting individual tests reference the same string when
+// they need to assert old-passphrase semantics.
+const vaultRekeyTestCurrentPass = "correctbatterystaple"
 
 // vaultFixture captures stdout/stderr buffers, the in-memory log
 // handler, the test vault, and the vaultDeps for one rekey invocation.
@@ -283,8 +289,9 @@ func TestVaultRekey_NewPassphraseEqualsOld(t *testing.T) {
 // across passphrases — that is fine for input-validation tests, but
 // would make the AC-7 "old passphrase no longer decrypts" assertion
 // vacuous.
-func newVaultRekeyRoundTripFixture(t *testing.T, entries []testutil.VaultEntry, currentPass string) *vaultFixture {
+func newVaultRekeyRoundTripFixture(t *testing.T, entries []testutil.VaultEntry) *vaultFixture {
 	t.Helper()
+	const currentPass = vaultRekeyTestCurrentPass
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	stdoutS := newStream(stdout, false, true)
@@ -312,11 +319,23 @@ func newVaultRekeyRoundTripFixture(t *testing.T, entries []testutil.VaultEntry, 
 	// Seed the on-disk vault under the current passphrase + a fresh
 	// salt so the test exercises the real read-salt → derive-key →
 	// load-secrets path.
-	initialSalt := mustReadFullForTest(t, rand.Reader, 16)
+	//
+	// Salts are deterministic (not crypto/rand) because BIP32's
+	// SerializedPrivKey is variable-length: a uniformly random scalar
+	// has ~1/256 odds of high-byte zero and serializes to 31 bytes,
+	// which trips AES-256's "invalid key size" guard. Hardcoding both
+	// the seeded vault salt and the rekey randReader output keeps the
+	// fixture reproducible. The chosen bytes
+	// `0x00..0x0F` and `0x10..0x1F` are pre-verified to produce 32-byte
+	// BIP32 leaf scalars for both passphrases used here.
+	initialSalt := []byte{0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F}
+	rekeySaltBytes := []byte{0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F}
 	initialSeed, err := deriveSeed(context.Background(), []byte(currentPass), initialSalt)
 	require.NoError(t, err)
 	initialRawKey, err := keys.DeriveVaultEncKey(initialSeed)
 	require.NoError(t, err)
+	require.Len(t, initialRawKey, 32,
+		"fixture initialSalt no longer yields a 32-byte BIP32 leaf — pick a different deterministic salt")
 	initialKey, err := securebytes.New(initialRawKey)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = initialKey.Destroy() })
@@ -346,7 +365,7 @@ func newVaultRekeyRoundTripFixture(t *testing.T, entries []testutil.VaultEntry, 
 		readVaultSalt:    readVaultSalt,
 		kill:             func(_ int, _ syscall.Signal) error { return nil },
 		readPIDFile:      func(_ string) ([]byte, error) { return nil, fsErrNotExist() },
-		randReader:       rand.Reader,
+		randReader:       bytes.NewReader(rekeySaltBytes),
 		keychain:         keychain.NewFake(),
 		binaryPath:       func() (string, error) { return "/test/hush", nil },
 		platformACL:      func() bool { return true },
@@ -369,14 +388,6 @@ func newVaultRekeyRoundTripFixture(t *testing.T, entries []testutil.VaultEntry, 
 		stdinFile:  stdin,
 		tempDir:    stateDir,
 	}
-}
-
-func mustReadFullForTest(t *testing.T, r io.Reader, n int) []byte {
-	t.Helper()
-	buf := make([]byte, n)
-	_, err := io.ReadFull(r, buf)
-	require.NoError(t, err)
-	return buf
 }
 
 // findVaultSnapshot returns the absolute path of the unique
@@ -410,7 +421,7 @@ func TestVaultRekey_RoundTrip_SnapshotsAndRewrites(t *testing.T) {
 		{Name: "FOO", Description: "alpha", Value: "valueA"},
 		{Name: "BAR", Description: "bravo", Value: "valueB"},
 	}
-	fx := newVaultRekeyRoundTripFixture(t, entries, currentPass)
+	fx := newVaultRekeyRoundTripFixture(t, entries)
 
 	preBytes, err := os.ReadFile(fx.vaultPath)
 	require.NoError(t, err)
@@ -486,8 +497,7 @@ func TestVaultRekey_RoundTrip_SnapshotsAndRewrites(t *testing.T) {
 // to the caller and the on-disk vault is left untouched.
 func TestVaultRekey_SnapshotFailureAbortsBeforeRewrite(t *testing.T) {
 	t.Parallel()
-	const currentPass = "correctbatterystaple"
-	fx := newVaultRekeyRoundTripFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}}, currentPass)
+	fx := newVaultRekeyRoundTripFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}})
 
 	// Pre-create the exact snapshot path the rekey would use so the
 	// O_EXCL open in snapshotVaultFile fails. Use a fixed nowFn so the
@@ -513,11 +523,10 @@ func TestVaultRekey_SnapshotFailureAbortsBeforeRewrite(t *testing.T) {
 // TestVaultRekey_SaltMintFailureAbortsBeforeRewrite proves a random
 // source failure during salt minting is fatal and surfaces to the
 // caller; the vault file is not touched (the snapshot already exists
-// — that is the operator's recovery artefact).
+// — that is the operator's recovery artifact).
 func TestVaultRekey_SaltMintFailureAbortsBeforeRewrite(t *testing.T) {
 	t.Parallel()
-	const currentPass = "correctbatterystaple"
-	fx := newVaultRekeyRoundTripFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}}, currentPass)
+	fx := newVaultRekeyRoundTripFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}})
 
 	failingReader := iotest.ErrReader(errors.New("synthetic rand failure"))
 	fx.deps.randReader = failingReader
@@ -699,10 +708,9 @@ func TestVaultRekey_PIDProbe_NoSignalEverSent(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			fx := newVaultRekeyRoundTripFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}}, "correctbatterystaple")
+			fx := newVaultRekeyRoundTripFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}})
 
 			var sentSignals []syscall.Signal
 			fx.deps.readPIDFile = tc.readPID
@@ -736,7 +744,7 @@ func TestVaultRekey_PIDProbe_NoSignalEverSent(t *testing.T) {
 // wrapper). The terminal audit event carries keychain_updated=false.
 func TestVaultRekey_Keychain_DefaultOffZeroCalls(t *testing.T) {
 	t.Parallel()
-	fx := newVaultRekeyRoundTripFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}}, "correctbatterystaple")
+	fx := newVaultRekeyRoundTripFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}})
 	counter := newCountingKeychain(keychain.NewFake())
 	fx.deps.keychain = counter
 	fx.deps.updateKeychain = false
@@ -758,7 +766,7 @@ func TestVaultRekey_Keychain_DefaultOffZeroCalls(t *testing.T) {
 // event carries keychain_updated=true.
 func TestVaultRekey_Keychain_OptInSuccess(t *testing.T) {
 	t.Parallel()
-	fx := newVaultRekeyRoundTripFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}}, "correctbatterystaple")
+	fx := newVaultRekeyRoundTripFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}})
 	fakeKC := keychain.NewFake()
 	seedExistingKeychainItem(t, fakeKC, "old-passphrase")
 	counter := newCountingKeychain(fakeKC)
@@ -799,7 +807,7 @@ func TestVaultRekey_Keychain_OptInSuccess(t *testing.T) {
 // keychain_updated=false; exit code is success.
 func TestVaultRekey_Keychain_OptInUnsupportedPlatform(t *testing.T) {
 	t.Parallel()
-	fx := newVaultRekeyRoundTripFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}}, "correctbatterystaple")
+	fx := newVaultRekeyRoundTripFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}})
 	counter := newCountingKeychain(keychain.NewFake())
 	fx.deps.keychain = counter
 	fx.deps.platformACL = func() bool { return false }
@@ -823,7 +831,7 @@ func TestVaultRekey_Keychain_OptInUnsupportedPlatform(t *testing.T) {
 // terminal audit reports keychain_updated=false.
 func TestVaultRekey_Keychain_OptInItemMissing(t *testing.T) {
 	t.Parallel()
-	fx := newVaultRekeyRoundTripFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}}, "correctbatterystaple")
+	fx := newVaultRekeyRoundTripFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}})
 	counter := newCountingKeychain(keychain.NewFake())
 	fx.deps.keychain = counter
 	fx.deps.updateKeychain = true
@@ -846,7 +854,7 @@ func TestVaultRekey_Keychain_OptInItemMissing(t *testing.T) {
 // error maps to ExitErr (hush's internal catch-all code).
 func TestVaultRekey_Keychain_StoreFailure_PartialSuccess(t *testing.T) {
 	t.Parallel()
-	fx := newVaultRekeyRoundTripFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}}, "correctbatterystaple")
+	fx := newVaultRekeyRoundTripFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}})
 	fakeKC := keychain.NewFake()
 	seedExistingKeychainItem(t, fakeKC, "old-passphrase")
 	fx.deps.keychain = &storeFailingKeychain{inner: fakeKC, err: errors.New("synthetic store failure")}
@@ -893,7 +901,7 @@ func TestVaultRekey_Keychain_StoreFailure_PartialSuccess(t *testing.T) {
 // at Delete.
 func TestVaultRekey_Keychain_DeleteFailure_PartialSuccess(t *testing.T) {
 	t.Parallel()
-	fx := newVaultRekeyRoundTripFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}}, "correctbatterystaple")
+	fx := newVaultRekeyRoundTripFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}})
 	fakeKC := keychain.NewFake()
 	seedExistingKeychainItem(t, fakeKC, "old-passphrase")
 	fx.deps.keychain = &deleteFailingKeychain{inner: fakeKC, err: errors.New("synthetic delete failure")}
@@ -948,7 +956,7 @@ func TestVaultRekey_Keychain_DeleteFailure_PartialSuccess(t *testing.T) {
 // and never carries any passphrase or secret material.
 func TestVaultRekey_TerminalAuditShape(t *testing.T) {
 	t.Parallel()
-	fx := newVaultRekeyRoundTripFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "secretA"}}, "correctbatterystaple")
+	fx := newVaultRekeyRoundTripFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "secretA"}})
 
 	err := runVaultRekey(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, nil, fx.deps)
 	require.NoError(t, err)
