@@ -217,24 +217,29 @@ func TestProbeHTTPReady_NetworkErrorTimesOut(t *testing.T) {
 
 // TestProbeHTTPReady_PollsAtInterval: with Timeout >> Interval and a
 // permanently-5xx server, we expect roughly (Timeout/Interval)
-// attempts, +/- a small slack for jitter. This guards against a
-// regression where the loop spins (no sleep) or sleeps too long
-// (skipping intervals).
+// attempts, +/- generous slack for scheduler jitter. This guards
+// against a regression where the loop spins (no sleep) or never
+// loops at all.
+//
+// Not parallel: real-time cadence tests get starved by other parallel
+// workers in CI (notably the fuzz job), which previously caused
+// requests=2 vs the expected ~15.
 func TestProbeHTTPReady_PollsAtInterval(t *testing.T) {
-	t.Parallel()
 	rs := newReadinessServer(t)
 	rs.setStatus(http.StatusServiceUnavailable)
 
-	cfg := readinessCfg(rs.URL(), 200*time.Millisecond, 40*time.Millisecond)
+	cfg := readinessCfg(rs.URL(), 600*time.Millisecond, 40*time.Millisecond)
 	_, err := ProbeHTTPReady(context.Background(), rs.client(), cfg)
 	if !errors.Is(err, ErrReadinessTimeout) {
 		t.Fatalf("err = %v; want errors.Is(_, ErrReadinessTimeout)", err)
 	}
 	got := rs.requests.Load()
-	// Expect at least 3 attempts (200ms / 40ms = 5) and at most ~12 to
-	// allow for scheduler jitter and any retry on the trailing tick.
-	if got < 3 || got > 12 {
-		t.Fatalf("requests=%d outside expected range [3, 12]; loop cadence is off", got)
+	// Expected ~15 attempts (600ms / 40ms). Floor of 4 still catches a
+	// "never loops" regression while leaving headroom for slow CI
+	// workers; ceiling of 25 still catches a "no sleep" spin (which
+	// would observe hundreds of attempts in 600ms).
+	if got < 4 || got > 25 {
+		t.Fatalf("requests=%d outside expected range [4, 25]; loop cadence is off", got)
 	}
 }
 
