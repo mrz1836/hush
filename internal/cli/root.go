@@ -61,6 +61,7 @@ func newRootCmd(initialOut *outputContext) *cobra.Command {
 	root.AddCommand(newSuperviseCmd())
 	root.AddCommand(newClientCmd())
 	root.AddCommand(newUpgradeCmd())
+	root.AddCommand(newVaultCmd())
 
 	return root
 }

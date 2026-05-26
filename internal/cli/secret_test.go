@@ -879,68 +879,68 @@ func TestSecret_ProbePIDFile_AllBranches(t *testing.T) {
 	t.Parallel()
 
 	// pidAbsent
-	deps := &secretDeps{
-		readPIDFile: func(_ string) ([]byte, error) { return nil, os.ErrNotExist },
-		kill:        func(_ int, _ syscall.Signal) error { return nil },
-	}
-	got, _ := probePIDFile(deps, "/no/such/path")
+	got, _ := probePIDFile(
+		func(_ string) ([]byte, error) { return nil, os.ErrNotExist },
+		func(_ int, _ syscall.Signal) error { return nil },
+		"/no/such/path",
+	)
 	require.Equal(t, pidAbsent, got)
 
 	// pidUnreadable (read error)
-	deps = &secretDeps{
-		readPIDFile: func(_ string) ([]byte, error) { return nil, errSyntheticTest },
-		kill:        func(_ int, _ syscall.Signal) error { return nil },
-	}
-	got, _ = probePIDFile(deps, "/anything")
+	got, _ = probePIDFile(
+		func(_ string) ([]byte, error) { return nil, errSyntheticTest },
+		func(_ int, _ syscall.Signal) error { return nil },
+		"/anything",
+	)
 	require.Equal(t, pidUnreadable, got)
 
 	// pidUnreadable (parse error)
-	deps = &secretDeps{
-		readPIDFile: func(_ string) ([]byte, error) { return []byte("xx\n"), nil },
-		kill:        func(_ int, _ syscall.Signal) error { return nil },
-	}
-	got, _ = probePIDFile(deps, "/anything")
+	got, _ = probePIDFile(
+		func(_ string) ([]byte, error) { return []byte("xx\n"), nil },
+		func(_ int, _ syscall.Signal) error { return nil },
+		"/anything",
+	)
 	require.Equal(t, pidUnreadable, got)
 
 	// pidUnreadable (zero PID)
-	deps = &secretDeps{
-		readPIDFile: func(_ string) ([]byte, error) { return []byte("0\n"), nil },
-		kill:        func(_ int, _ syscall.Signal) error { return nil },
-	}
-	got, _ = probePIDFile(deps, "/anything")
+	got, _ = probePIDFile(
+		func(_ string) ([]byte, error) { return []byte("0\n"), nil },
+		func(_ int, _ syscall.Signal) error { return nil },
+		"/anything",
+	)
 	require.Equal(t, pidUnreadable, got)
 
 	// pidStale (ESRCH)
-	deps = &secretDeps{
-		readPIDFile: func(_ string) ([]byte, error) { return []byte("4242"), nil },
-		kill:        func(_ int, _ syscall.Signal) error { return syscall.ESRCH },
-	}
-	got, gotPid := probePIDFile(deps, "/anything")
+	got, gotPid := probePIDFile(
+		func(_ string) ([]byte, error) { return []byte("4242"), nil },
+		func(_ int, _ syscall.Signal) error { return syscall.ESRCH },
+		"/anything",
+	)
 	require.Equal(t, pidStale, got)
 	require.Equal(t, 4242, gotPid)
 
 	// pidNotOurUser (EPERM)
-	deps = &secretDeps{
-		readPIDFile: func(_ string) ([]byte, error) { return []byte("4242"), nil },
-		kill:        func(_ int, _ syscall.Signal) error { return syscall.EPERM },
-	}
-	got, _ = probePIDFile(deps, "/anything")
+	got, _ = probePIDFile(
+		func(_ string) ([]byte, error) { return []byte("4242"), nil },
+		func(_ int, _ syscall.Signal) error { return syscall.EPERM },
+		"/anything",
+	)
 	require.Equal(t, pidNotOurUser, got)
 
 	// pidStale (other error)
-	deps = &secretDeps{
-		readPIDFile: func(_ string) ([]byte, error) { return []byte("4242"), nil },
-		kill:        func(_ int, _ syscall.Signal) error { return errSyntheticTest },
-	}
-	got, _ = probePIDFile(deps, "/anything")
+	got, _ = probePIDFile(
+		func(_ string) ([]byte, error) { return []byte("4242"), nil },
+		func(_ int, _ syscall.Signal) error { return errSyntheticTest },
+		"/anything",
+	)
 	require.Equal(t, pidStale, got)
 
 	// pidPresent
-	deps = &secretDeps{
-		readPIDFile: func(_ string) ([]byte, error) { return []byte("4242"), nil },
-		kill:        func(_ int, _ syscall.Signal) error { return nil },
-	}
-	got, gotPid = probePIDFile(deps, "/anything")
+	got, gotPid = probePIDFile(
+		func(_ string) ([]byte, error) { return []byte("4242"), nil },
+		func(_ int, _ syscall.Signal) error { return nil },
+		"/anything",
+	)
 	require.Equal(t, pidPresent, got)
 	require.Equal(t, 4242, gotPid)
 }

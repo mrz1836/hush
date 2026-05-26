@@ -860,7 +860,7 @@ func runSecretRotate(ctx context.Context, stderr *Stream, in *os.File, deps *sec
 	}
 
 	pidPath := filepath.Join(stateDir, pidFilename)
-	status, pid := probePIDFile(deps, pidPath)
+	status, pid := probePIDFile(deps.readPIDFile, deps.kill, pidPath)
 	signalled := false
 	switch status {
 	case pidPresent:
@@ -885,10 +885,12 @@ func runSecretRotate(ctx context.Context, stderr *Stream, in *os.File, deps *sec
 }
 
 // probePIDFile reads, parses, and probes the PID file. Returns the
-// pidStatus that drives the rotate stderr message and the (best-effort)
-// integer PID on success.
-func probePIDFile(deps *secretDeps, path string) (pidStatus, int) {
-	body, err := deps.readPIDFile(path)
+// pidStatus that drives caller-side messaging and the (best-effort)
+// integer PID on success. Decoupled from secretDeps so the vault
+// rekey flow can reuse the same classification without depending on
+// secret-verb internals.
+func probePIDFile(readPIDFile func(string) ([]byte, error), kill func(int, syscall.Signal) error, path string) (pidStatus, int) {
+	body, err := readPIDFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return pidAbsent, 0
@@ -899,7 +901,7 @@ func probePIDFile(deps *secretDeps, path string) (pidStatus, int) {
 	if parseErr != nil || pid <= 0 {
 		return pidUnreadable, 0
 	}
-	if err := deps.kill(pid, 0); err != nil {
+	if err := kill(pid, 0); err != nil {
 		switch {
 		case errors.Is(err, syscall.ESRCH):
 			return pidStale, pid

@@ -226,7 +226,9 @@ passphrase + salt → Argon2id(time=4, mem=256MB) → 64-byte master seed
 standard BIP44 coins.
 
 **Implications:** No `signing.key` to steal. Backup is just the encrypted
-vault file + salt. Key rotation is passphrase rotation.
+vault file + salt. Key rotation is passphrase rotation — `hush vault
+rekey` performs that rotation in place (see
+[`docs/VAULT-REKEY.md`](VAULT-REKEY.md)).
 
 ### Layer 2 — Asymmetric JWT signing (ES256K)
 
@@ -429,4 +431,5 @@ this doc is wrong.
 | Server config + supervisor TOML | `docs/CONFIG-SCHEMA.md` |
 | Lifecycle scenarios | `docs/LIFECYCLE-SCENARIOS.md` |
 | Operational runbooks | `docs/OPERATIONS.md` |
+| Vault passphrase rotation (`hush vault rekey`) | `docs/VAULT-REKEY.md` |
 | Constitutional principles | `.specify/memory/constitution.md` |
