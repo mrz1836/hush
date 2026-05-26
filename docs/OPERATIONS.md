@@ -477,55 +477,31 @@ intentionally TTY-only as rogue-process defence.
 
 ---
 
-## 6. Bootstrap checklist
+## 6. Runbook index
 
-Before implementation deepens:
+The operational topics every hush install eventually needs:
 
-- repo remains private
-- constitution is ratified
-- core docs are present and cross-linked
-- package layout is explicit
-- config schema is explicit
-- supervisor model is documented before code complexity grows
-- implementation execution creates a real `tasks.yaml`
-
----
-
-## 7. Required runbooks for v0.1.0
-
-These are the operational topics the final implementation must cover:
-
-- first-time `hush init` bootstrap (see §1)
-- vault server start/stop/reload
-- client registration / machine-index assignment
-- interactive session request workflow
-- daemon supervisor deployment (one supervisor TOML per long-running daemon)
-- zero-downtime daemon reload for HTTP services (see
+- First-time `hush init` bootstrap (see §1)
+- Vault server start / stop / reload
+- Client registration and machine-index assignment
+- Interactive session request workflow (`hush request`)
+- Daemon supervisor deployment — one supervisor TOML per long-running daemon
+- Zero-downtime daemon reload for HTTP services (see
   [`docs/SUPERVISE-RELOAD.md`](SUPERVISE-RELOAD.md))
-- vault secret rotation (`hush secret rotate`)
-- vault root-key rotation (`hush vault rekey`, see
+- Vault secret rotation (`hush secret rotate`)
+- Vault root-key rotation (`hush vault rekey`, see
   [`docs/VAULT-REKEY.md`](VAULT-REKEY.md))
 - `hush client refresh` flow after rotation
-- validator failure response
-- child exit 78 response
-- Discord outage behavior
-- Tailscale outage behavior
-- NTP/clock-sync troubleshooting (see §1)
-- duplicate supervisor / pid-file recovery
+- Validator failure response
+- Child exit 78 (stale-credential) response
+- Discord outage behaviour
+- Tailscale outage behaviour
+- NTP / clock-sync troubleshooting (see §1)
+- Duplicate supervisor / pid-file recovery
 
 ---
 
-## 8. Known Phase 0 operational posture
-
-Current truth:
-- docs-first hardening is still the active work
-- implementation has not started yet
-- `tasks.yaml` should be created when implementation execution begins
-- examples and config docs must stay placeholder-safe and avoid real infrastructure values
-
----
-
-## 9. Shell snippet safety (zsh-first)
+## 7. Shell snippet safety (zsh-first)
 
 Every shell snippet hush emits to the operator or ships in this repo's docs MUST be safe to paste into the default macOS shell, which is `zsh`. Bash-only constructs that crash zsh — most notably `read -p` and `read -s` — are forbidden in:
 
@@ -544,12 +520,12 @@ If a doc surface legitimately needs to *describe* the forbidden constructs (e.g.
 
 ---
 
-## 10. Cross-references
+## 8. Cross-references
 
-- daemon lifecycle details: `docs/LIFECYCLE-SCENARIOS.md`
-- vault root-key rotation (passphrase change): `docs/VAULT-REKEY.md`
-- zero-downtime HTTP reload runbook: `docs/SUPERVISE-RELOAD.md`
-- config locations and fields: `docs/CONFIG-SCHEMA.md`
-- supervisor pattern + validators: `docs/DAEMONS.md`
-- security posture (including Keychain vs env-token positioning): `docs/SECURITY.md`
-- structured error sentinels: `internal/cli/setup/errors.go`
+- Daemon lifecycle details: [`docs/LIFECYCLE-SCENARIOS.md`](LIFECYCLE-SCENARIOS.md)
+- Vault root-key rotation (passphrase change): [`docs/VAULT-REKEY.md`](VAULT-REKEY.md)
+- Zero-downtime HTTP reload runbook: [`docs/SUPERVISE-RELOAD.md`](SUPERVISE-RELOAD.md)
+- Config locations and fields: [`docs/CONFIG-SCHEMA.md`](CONFIG-SCHEMA.md)
+- Supervisor pattern + validators: [`docs/DAEMONS.md`](DAEMONS.md)
+- Security posture (including Keychain vs env-token positioning): [`docs/SECURITY.md`](SECURITY.md)
+- Structured error sentinels: [`internal/cli/setup/errors.go`](../internal/cli/setup/errors.go)

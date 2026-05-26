@@ -1,8 +1,8 @@
 # SECURITY — hush
 
 > Threat model, security layers, mitigations, and known residual risks for
-> hush v0.1.0. This document is the security source of truth. If
-> implementation contradicts SECURITY, implementation is wrong.
+> hush. This document is the security source of truth — if implementation
+> contradicts SECURITY, the implementation is wrong.
 
 ---
 
@@ -407,18 +407,22 @@ Documented for transparency. These are accepted trade-offs.
 
 ---
 
-## 7. Phase 0 security goal
+## 7. Anchor questions
 
-By the end of Phase 0, anyone reading the repo cold MUST be able to answer:
+A first-time reader of this doc plus [`docs/ARCHITECTURE.md`](ARCHITECTURE.md)
+should be able to answer all of these. If anything below is unclear after
+reading both, the docs need a fix.
 
-- What threat is being eliminated? (Commodity malware scanning agent dotfiles for secrets.)
-- What is out of scope? (Root-level memory forensics; nation-state opponents; multi-owner approval.)
-- Why is the supervisor model mandatory for daemons? (Crash-induced re-approval storms train humans to auto-approve and cause 3am outages.)
-- Why are validators on the supervisor and not the vault server? (To preserve the vault's no-outbound-internet boundary.)
-- Why is the grace-window cache opt-in? (Trades stricter secret isolation for restart resilience.)
-
-If any of these is unclear after reading this doc + `docs/ARCHITECTURE.md`,
-this doc is wrong.
+- What threat is hush eliminating? (Commodity malware scanning agent
+  dotfiles for secrets.)
+- What is explicitly out of scope? (Root-level memory forensics on the
+  vault host; nation-state opponents; multi-owner approval quorum.)
+- Why is the supervisor model mandatory for daemons? (Crash-induced
+  re-approval storms train humans to auto-approve and cause 3am outages.)
+- Why do validators run on the supervisor, not the vault server? (To
+  preserve the vault's no-outbound-internet boundary.)
+- Why is the grace-window cache opt-in? (It trades stricter secret
+  isolation for restart resilience.)
 
 ---
 
@@ -426,10 +430,9 @@ this doc is wrong.
 
 | Topic | See |
 |-------|-----|
-| Components, data flow, lifecycle | `docs/ARCHITECTURE.md` |
-| API payloads + signature canonicalization | `docs/API.md` |
-| Server config + supervisor TOML | `docs/CONFIG-SCHEMA.md` |
-| Lifecycle scenarios | `docs/LIFECYCLE-SCENARIOS.md` |
-| Operational runbooks | `docs/OPERATIONS.md` |
-| Vault passphrase rotation (`hush vault rekey`) | `docs/VAULT-REKEY.md` |
-| Constitutional principles | `.specify/memory/constitution.md` |
+| Components, data flow, lifecycle | [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) |
+| API payloads + signature canonicalization | [`docs/API.md`](API.md) |
+| Server config + supervisor TOML | [`docs/CONFIG-SCHEMA.md`](CONFIG-SCHEMA.md) |
+| Lifecycle scenarios | [`docs/LIFECYCLE-SCENARIOS.md`](LIFECYCLE-SCENARIOS.md) |
+| Operational runbooks | [`docs/OPERATIONS.md`](OPERATIONS.md) |
+| Vault passphrase rotation (`hush vault rekey`) | [`docs/VAULT-REKEY.md`](VAULT-REKEY.md) |

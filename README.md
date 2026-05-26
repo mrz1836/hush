@@ -368,9 +368,9 @@ fail loudly instead of breaking your daemon at 3am. Full guide in
 - Requires phone approval (Discord DM with interactive buttons) for every fresh session.
 - Delivers secrets ECIES-encrypted end-to-end into agent process memory only — no disk writes on the agent.
 
-**What hush explicitly does NOT do (v0.1.0):**
+**What hush explicitly does NOT do:**
 
-- No multi-owner approvals (a single configured operator approves; multi-owner is post-v0.1.0 future scope).
+- No multi-owner approvals — a single configured operator approves every request (multi-owner quorum is future scope).
 - No cloud KMS / SaaS dependency. The vault is self-hosted and offline-capable.
 - No public network exposure. The vault server is bound to a Tailscale interface and refuses to start otherwise.
 
@@ -451,13 +451,14 @@ layer does not enable secret extraction:
 7. **Obscurity** — random API path prefix, custom vault file format,
    non-obvious binary name. Additive only — never load-bearing.
 
-The network perimeter is **Tailscale-only** (Constitution Principle VI).
-Tailscale is the v0.1.0 mesh-VPN choice; the architecture does not depend
-on it specifically — the requirement is "no public reachability" and
-Tailscale satisfies it cleanly. The `Approver` interface is also
-pluggable; **Discord is the v0.1.0 reference implementation** and the
-only one that ships, but future Slack / Telegram / PagerDuty backends can
-be wired without changing the rest of the system.
+The network perimeter is **Tailscale-only** — the vault server refuses to
+bind on a non-Tailscale interface. Tailscale is the current mesh-VPN
+choice, but the architecture does not depend on it specifically; the
+requirement is "no public reachability," and Tailscale satisfies it
+cleanly. The `Approver` interface is also pluggable: **Discord is the
+reference implementation** and the only one that ships today, but future
+Slack / Telegram / PagerDuty backends can be wired without changing the
+rest of the system.
 
 For the full architecture treatment, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
@@ -553,18 +554,18 @@ complete agent integration guide.
 
 ### Tech stack
 
-- **[Go 1.26+](https://go.dev/)** — single static binary, `CGO_ENABLED=0`
-  exclusively (Constitution Principle IX).
+- **[Go 1.26+](https://go.dev/)** — single static binary, built
+  `CGO_ENABLED=0` exclusively.
 - **[decred/dcrd/dcrec/secp256k1/v4](https://github.com/decred/dcrd)** —
   secp256k1 primitives used for ECDSA signing, ES256K JWTs, and ECIES
-  envelope encryption (Constitution Principle III).
+  envelope encryption.
 - **[decred/dcrd/hdkeychain/v3](https://github.com/decred/dcrd)** — BIP32
-  HD key derivation from the operator passphrase (Constitution Principle
-  III); paired with stdlib `golang.org/x/crypto/argon2` for the KDF.
+  HD key derivation from the operator passphrase, paired with stdlib
+  `golang.org/x/crypto/argon2` for the KDF.
 - **[Tailscale](https://tailscale.com/)** — the only network reachable to
   the vault server. WireGuard underneath; identity-based ACLs above.
 - **[Discord](https://discord.com/)** + **[discordgo](https://github.com/bwmarrin/discordgo)**
-  — phone-based approval channel; the v0.1.0 reference Approver.
+  — phone-based approval channel; the reference `Approver` implementation.
 - **[golang-jwt/jwt v5](https://github.com/golang-jwt/jwt)** — JWT framework;
   hush registers a custom `ES256K` signing method.
 - **[go-toml v2](https://github.com/pelletier/go-toml)** — strict TOML
@@ -594,10 +595,9 @@ View the comprehensive documentation for hush:
 | [`docs/CONFIG-SCHEMA.md`](docs/CONFIG-SCHEMA.md) | Server + supervisor TOML schemas, defaults, validation |
 | [`docs/DAEMONS.md`](docs/DAEMONS.md) | Supervisor pattern, refresh tuning, validator authoring |
 | [`docs/API.md`](docs/API.md) | HTTP endpoint reference |
-| [`docs/LIFECYCLE-SCENARIOS.md`](docs/LIFECYCLE-SCENARIOS.md) | 17 supervisor lifecycle scenarios — behavioral reference |
+| [`docs/LIFECYCLE-SCENARIOS.md`](docs/LIFECYCLE-SCENARIOS.md) | Supervisor lifecycle scenarios — behavioral reference |
 | [`docs/TAILSCALE-ACLS.md`](docs/TAILSCALE-ACLS.md) | Recommended ACL pattern restricting the vault port |
 | [`docs/CLEAN-MACHINE.md`](docs/CLEAN-MACHINE.md) | Agent-machine cleanup checklist |
-| [`.specify/memory/constitution.md`](.specify/memory/constitution.md) | The 11 non-negotiable principles |
 
 <br/>
 

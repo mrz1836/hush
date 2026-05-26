@@ -23,7 +23,7 @@ These scenarios define what "correct" looks like under normal use and failure.
 
 ## State model
 
-Supervisor states in v0.1.0:
+Supervisor states:
 
 - `fetching`
 - `running`
@@ -31,7 +31,9 @@ Supervisor states in v0.1.0:
 - `grace-restart` (conceptual sub-state when cached secrets are being used)
 - `stopped`
 
-Implementation may represent grace as flags instead of a distinct enum, but the behavior must still exist when enabled.
+The implementation may represent `grace-restart` as flags rather than a
+distinct enum value, but the behavior must still exist when grace caching
+is enabled.
 
 ---
 
@@ -428,16 +430,17 @@ These should remain visually distinct in wording and/or label.
 
 ---
 
-## Phase 0 completion check
+## Quick reference
 
-This document is sufficient when an implementation agent can answer, without guessing:
+The scenarios above cover the questions operators ask most often:
 
-- what happens on first boot?
-- what happens on clean restart?
-- what happens on crash?
-- what happens on exit 78?
-- what happens when Discord is down?
-- what happens when the vault restarts?
-- what happens overnight with and without grace cache?
+- What happens on first boot?
+- What happens on clean restart?
+- What happens on crash?
+- What happens on exit 78?
+- What happens when Discord is down?
+- What happens when the vault restarts?
+- What happens overnight, with and without the grace cache?
 
-If those flows are still fuzzy, Phase 0 is not done.
+If a behaviour you need isn't covered, open an issue — these are the
+source of truth, and gaps are bugs.

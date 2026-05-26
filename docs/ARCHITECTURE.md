@@ -1,8 +1,8 @@
 # ARCHITECTURE — hush
 
-> Component model, trust boundaries, data flow, and lifecycle for hush v0.1.0.
+> Component model, trust boundaries, data flow, and lifecycle for hush.
 > This document explains *how* the system is shaped. The *why* lives in
-> `docs/SECURITY.md`.
+> [`docs/SECURITY.md`](SECURITY.md).
 
 ---
 
@@ -24,7 +24,7 @@ a bounded TTL so a single approval covers a working day.
 
 | Zone | Trust | Notes |
 |------|-------|-------|
-| **The operator (human approver)** | Fully trusted | Approves via Discord on a 2FA-locked phone. v0.1.0 supports a single configured approver. |
+| **The operator (human approver)** | Fully trusted | Approves via Discord on a 2FA-locked phone. A single configured approver is supported today; multi-owner quorum is future scope. |
 | **Discord** | Trusted as a delivery channel | Bot token is high-sensitivity; disconnects raise alerts. Discord is NOT a security boundary — it is the human's UI. |
 | **Tailscale mesh** | Trusted as transport | WireGuard-encrypted; ACL-restricted. |
 | **Vault host process** | Semi-trusted | Holds decrypted secrets in mlocked memory. Host root compromise does not enable issuing new sessions without Discord approval. |
@@ -300,18 +300,18 @@ on-host plaintext surface (child + supervisor); see `docs/SECURITY.md` §
 
 ---
 
-## 10. Phase 0 architecture goals (this bootstrap)
+## 10. Invariants
 
-By the end of Phase 0, the architecture must already make the following truths
-unambiguous to anyone reading the repo cold:
+These architectural truths must hold at all times — they are enforced in code,
+not aspirational:
 
-- The vault server is never public.
-- Approval is always human and out-of-band.
-- Secrets never persist on agent disks.
-- Daemons use `hush supervise` — not naive `hush request --exec`.
-- Staleness surfaces proactively via three independent channels.
+- The vault server is never reachable from the public internet.
+- Approval is always human and out-of-band (Discord DM, interactive button).
+- Secrets never persist on agent disks; only in process memory.
+- Long-running daemons use `hush supervise` — never naked `hush request --exec`.
+- Staleness surfaces proactively via three independent channels (Discord alerts,
+  status socket, audit log).
 - The seven security layers are independent — no single failure leaks secrets.
-- The repo is private until the public-release gate is satisfied.
 
 ---
 
@@ -319,10 +319,9 @@ unambiguous to anyone reading the repo cold:
 
 | Topic | See |
 |-------|-----|
-| Threat model + 7 layers | `docs/SECURITY.md` |
-| HTTP/socket schemas | `docs/API.md` |
-| Config formats | `docs/CONFIG-SCHEMA.md` |
-| Lifecycle scenarios | `docs/LIFECYCLE-SCENARIOS.md` |
-| Operational runbooks | `docs/OPERATIONS.md` |
-| Daemon supervisor guide | `docs/DAEMONS.md` |
-| Constitutional principles | `.specify/memory/constitution.md` |
+| Threat model + 7 layers | [`docs/SECURITY.md`](SECURITY.md) |
+| HTTP/socket schemas | [`docs/API.md`](API.md) |
+| Config formats | [`docs/CONFIG-SCHEMA.md`](CONFIG-SCHEMA.md) |
+| Lifecycle scenarios | [`docs/LIFECYCLE-SCENARIOS.md`](LIFECYCLE-SCENARIOS.md) |
+| Operational runbooks | [`docs/OPERATIONS.md`](OPERATIONS.md) |
+| Daemon supervisor guide | [`docs/DAEMONS.md`](DAEMONS.md) |

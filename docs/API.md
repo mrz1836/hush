@@ -2,9 +2,10 @@
 
 ## Scope
 
-Phase 0 defines the contract shape before implementation hardens it.
+The HTTP contract between client and vault server, plus the local
+supervisor status socket. All server routes live under a random opaque
+prefix:
 
-All server routes live under a random opaque prefix:
 - `/h/<prefix>/...`
 
 The local supervisor status socket exposes a separate local-only API.

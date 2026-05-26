@@ -1,9 +1,10 @@
 # Config Schema
 
-This file defines the exact configuration surface Phase 0 commits to.
+The canonical reference for every hush configuration file: server TOML,
+supervisor TOML, and the runtime status socket payload.
 
-If a field is documented here, implementation must support it.
-If a field is not documented here, implementation agents should not invent it casually.
+If a field is documented here, the binary supports it. If a field is not
+documented here, treat it as not configurable.
 
 ---
 
@@ -180,7 +181,7 @@ Required fields:
   - default: `20h`
   - rules:
     - must be greater than `jwt_default_ttl`
-    - must not exceed 24h in v0.1.0
+    - must not exceed 24h
 
 - `default_max_uses`
   - type: int
@@ -202,7 +203,7 @@ Required fields:
 - `require_tailscale`
   - type: bool
   - default: `true`
-  - must remain true in v0.1.0
+  - must remain `true` — the vault server refuses to bind on non-Tailscale interfaces
 
 - `allowed_cidrs`
   - type: string array
@@ -317,8 +318,8 @@ Required:
 - `server_url`
   - type: string
   - rules:
-    - must point to `http://<tailscale-ip>:7743/h/<prefix>` in v0.1.0
-    - must not be public internet host
+    - must point to `http://<tailscale-ip>:7743/h/<prefix>`
+    - must not be a public internet host
 
 - `client_machine_index`
   - type: int
@@ -506,7 +507,7 @@ Optional but recommended:
 Type:
 - map of secret name → validator type
 
-Allowed validator values in v0.1.0:
+Built-in validator values:
 - `anthropic`
 - `anthropic-oauth`
 - `openai`
@@ -588,19 +589,17 @@ Startup must fail if any of these are true:
 - supervisor scope is empty
 - unknown validator is declared
 - refresh window is malformed
-- grace cache TTL exceeds v0.1.0 cap
+- grace cache TTL exceeds the 4h cap
 - status socket or pid file path is unsafe/unwritable
 
 ---
 
-## Phase 0 completion check
+## Quick reference
 
-This file is sufficient when an implementation agent can answer these without guessing:
+If you're skimming this file, the load-bearing questions it answers are:
 
-- what config files exist?
-- what exact fields are required?
-- what defaults are expected?
-- what validations are startup-fatal?
-- what is server-only vs supervisor-only config?
-
-If those answers still require invention, Phase 0 is not done.
+- What config files exist? (server + per-daemon supervisor TOML)
+- Which fields are required? (everything marked `Required fields` above)
+- What defaults apply? (defaults are inlined per field)
+- Which validations are startup-fatal? (see the list above)
+- Which knobs are server-only vs supervisor-only? (separate `[server]` and supervisor sections)

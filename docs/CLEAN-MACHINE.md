@@ -1,9 +1,9 @@
 # CLEAN-MACHINE — agent machine cleanup checklist
 
-> Constitution Principle I requires zero secret files at rest on agent
-> machines. This checklist is the executable form of that principle.
-> Run it on every agent machine before deploying hush, and re-run it
-> periodically as a hygiene check.
+> hush requires zero secret files at rest on agent machines. This
+> checklist is the executable form of that rule. Run it on every agent
+> machine before deploying hush, and re-run it periodically as a hygiene
+> check.
 
 ---
 
@@ -257,7 +257,5 @@ it to read from env vars before installing.
   machines (the threat-eliminated list).
 - [`docs/DAEMONS.md`](DAEMONS.md) — running long-running jobs under
   `hush supervise` instead of dotfile env vars.
-- Constitution Principle I (zero files at rest on agent machines):
-  `.specify/memory/constitution.md`.
 - [`docs/TAILSCALE-ACLS.md`](TAILSCALE-ACLS.md) — companion network-layer
   hardening.

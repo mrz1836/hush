@@ -10,10 +10,10 @@
 
 ## Why ACLs matter
 
-Constitution Principle VI is non-negotiable: the vault server MUST NOT be
+hush's network rule is non-negotiable: the vault server MUST NOT be
 reachable outside the Tailscale mesh. Tailscale's default ACL (allow all
-between mesh members) is too permissive for this — a compromised non-agent
-device on the same tailnet could probe port 7743.
+between mesh members) is too permissive — a compromised non-agent device
+on the same tailnet could probe port 7743.
 
 A correct ACL grants port 7743 access **only** from explicitly tagged agent
 machines to explicitly tagged vault hosts. Everything else is denied at the
@@ -24,14 +24,12 @@ defence-in-depth (signed-request verification, IP allowlist, JWT validation).
 
 ## The pattern
 
-The constitution names the canonical pair as `tag:trusted → tag:sandbox:7743`.
-Many operators prefer more descriptive tags such as
-`tag:hush-agent → tag:hush-vault`. The **pattern** is the
-load-bearing part — one source tag, one destination tag, port 7743
-only — not the specific names.
+The canonical tag pair is `tag:trusted → tag:sandbox:7743`. Many operators
+prefer more descriptive names such as `tag:hush-agent → tag:hush-vault`. The
+**pattern** is the load-bearing part — one source tag, one destination tag,
+port 7743 only — not the specific names.
 
-Two tags (substitute names that fit your existing tailnet
-conventions):
+Two tags (substitute names that fit your existing tailnet conventions):
 
 - **source tag** (canonical: `tag:trusted`; descriptive alternative
   shown in examples below: `tag:hush-agent`) — applied to machines
@@ -41,10 +39,10 @@ conventions):
   alternative: `tag:hush-vault`) — applied to the single vault host
   that runs `hush serve`.
 
-The grant pattern: `<source-tag> → <destination-tag>:7743` (and
-nothing else for port 7743). Either tag-pair satisfies Constitution
-Principle VI as long as the grant is scoped to port 7743 and the
-source-tagged set is exactly the set of authorised agents.
+The grant pattern: `<source-tag> → <destination-tag>:7743` (and nothing
+else for port 7743). Either tag-pair satisfies the Tailscale-only network
+rule as long as the grant is scoped to port 7743 and the source-tagged set
+is exactly the set of authorised agents.
 
 ---
 
@@ -57,7 +55,7 @@ hush-relevant grants. Drop it into your existing `tailnet/policy.hujson`
 ```hujson
 {
   "tagOwners": {
-    "tag:trusted":  ["autogroup:admin"],   // canonical per Constitution VI
+    "tag:trusted":  ["autogroup:admin"],   // canonical hush source tag
     "tag:sandbox":  ["autogroup:admin"],
     // Descriptive alternative — pick one pair, not both:
     // "tag:hush-agent": ["autogroup:admin"],
@@ -146,9 +144,8 @@ After applying the ACL:
    should fail with **connection refused** or **timeout** (depending on
    Tailscale ACL enforcement mode). If it returns 200, the ACL is wrong.
 3. From the public internet: it must **not** be reachable. The vault
-   server's `listen_addr` is bound to a Tailscale interface IP per
-   Constitution Principle VI; this is enforced at the bind layer in
-   addition to the ACL.
+   server's `listen_addr` is bound to a Tailscale interface IP, enforced
+   at the bind layer in addition to the ACL.
 
 ---
 
@@ -182,7 +179,7 @@ These are tightenings; the **default pattern in this document is the floor**.
   allowlist, JWT validation. Those live inside hush itself and are
   documented in [`docs/SECURITY.md`](SECURITY.md) Layer 4.
 - Multi-tailnet topologies. The pattern works inside a single tailnet;
-  cross-tailnet sharing is out of scope for v0.1.0.
+  cross-tailnet sharing is out of scope.
 
 ---
 
@@ -194,5 +191,3 @@ These are tightenings; the **default pattern in this document is the floor**.
   `[network] require_tailscale = true` and `allowed_cidrs`.
 - [`docs/CLEAN-MACHINE.md`](CLEAN-MACHINE.md) — companion checklist for
   removing on-host secrets from agent machines.
-- Constitution Principle VI (Tailscale-only network boundary):
-  `.specify/memory/constitution.md`.

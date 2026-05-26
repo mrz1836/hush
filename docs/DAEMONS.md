@@ -199,7 +199,7 @@ isolated from outbound internet). Each validator hits the cheapest
 read-only provider endpoint and returns nil on success or a typed error on
 401 / 403 / network / timeout.
 
-### v0.1.0 builtins
+### Built-in validators
 
 | Name | Endpoint | Purpose |
 |------|----------|---------|
@@ -221,7 +221,7 @@ GITHUB_TOKEN      = "github"
 Unknown validator names are startup errors — `hush supervise` refuses to
 start if your TOML lists a validator that does not exist.
 
-### Authoring a custom validator (post-v0.1.0)
+### Authoring a custom validator (future scope)
 
 The `Validator` interface is intentionally tiny:
 
@@ -231,7 +231,7 @@ type Validator interface {
 }
 ```
 
-Any future custom validator MUST:
+Any custom validator MUST:
 
 - Use the SecureBytes value via `Use(fn)` with a bounded scope; never copy
   the secret to a `string`.
@@ -240,8 +240,8 @@ Any future custom validator MUST:
   `ErrValidatorNetwork` on network failure.
 - Never log or include the secret value in error messages.
 
-Custom validators are a **post-v0.1.0** feature. v0.1.0 ships the five
-builtins only; the registry refuses unknown names by design.
+Custom validators are not yet wired up. Today only the five built-ins
+above are registered; the registry refuses unknown names by design.
 
 ---
 
@@ -269,11 +269,11 @@ supervisor TOML. Pick deliberately.
 - Approval becomes "first arrival, not ongoing presence" — the approver
   approved when the day started, the cache fills the gap.
 
-The cap of `4h` is enforced by config validation; v0.1.0 will refuse to
-start with a longer grace window. Override at runtime with `--no-cache` to
-force strict mode regardless of TOML.
+The cap of `4h` is enforced by config validation; `hush supervise` refuses
+to start with a longer grace window. Override at runtime with `--no-cache`
+to force strict mode regardless of TOML.
 
-Documented residual risk: see `docs/SECURITY.md` §6.
+Documented residual risk: see [`docs/SECURITY.md`](SECURITY.md) §6.
 
 ---
 
@@ -284,10 +284,10 @@ Every running supervisor binds a Unix socket at:
 - macOS: `~/Library/Caches/hush/supervise-<daemon>.sock` (mode `0600`, parent dir `0700`)
 - Linux: `$XDG_RUNTIME_DIR/hush-supervise-<daemon>.sock` (mode `0600`)
 
-Filesystem permissions are the auth — there is no bearer token, no HTTP-
-on-localhost (Constitution Principle V).
+Filesystem permissions are the auth — there is no bearer token and no
+HTTP-on-localhost listener.
 
-`GET /status` returns the JSON shape from `docs/CONFIG-SCHEMA.md`. The
+`GET /status` returns the JSON shape from [`docs/CONFIG-SCHEMA.md`](CONFIG-SCHEMA.md). The
 `hush client status [--supervisor NAME] [--json]` subcommand pretty-prints
 or emits the JSON directly.
 
@@ -361,11 +361,10 @@ distinct supervisor; the old host's pidfile/socket can be removed.
 
 | Topic | See |
 |-------|-----|
-| 15 named lifecycle scenarios | `docs/LIFECYCLE-SCENARIOS.md` |
-| Per-supervisor TOML schema | `docs/CONFIG-SCHEMA.md` |
-| Threat model + grace-cache residual risk | `docs/SECURITY.md` |
-| Status socket JSON shape | `docs/CONFIG-SCHEMA.md` |
-| HTTP API used during refill | `docs/API.md` |
-| Supervisor state machine | `docs/ARCHITECTURE.md` §8 |
-| Constitutional principles for daemons | `.specify/memory/constitution.md` IV, V |
-| Operational runbooks | `docs/OPERATIONS.md` |
+| Named lifecycle scenarios | [`docs/LIFECYCLE-SCENARIOS.md`](LIFECYCLE-SCENARIOS.md) |
+| Per-supervisor TOML schema | [`docs/CONFIG-SCHEMA.md`](CONFIG-SCHEMA.md) |
+| Threat model + grace-cache residual risk | [`docs/SECURITY.md`](SECURITY.md) |
+| Status socket JSON shape | [`docs/CONFIG-SCHEMA.md`](CONFIG-SCHEMA.md) |
+| HTTP API used during refill | [`docs/API.md`](API.md) |
+| Supervisor state machine | [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) §8 |
+| Operational runbooks | [`docs/OPERATIONS.md`](OPERATIONS.md) |
