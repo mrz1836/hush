@@ -407,3 +407,131 @@ func TestClose_NoOp(t *testing.T) {
 	sup := client.NewSupervisorStatus("/some/path")
 	assert.NoError(t, sup.Close())
 }
+
+// =============================================================
+// Response size cap (K3: bound io.ReadAll on the socket)
+// =============================================================
+
+// fakeSocketBytes binds a Unix listener that writes a fixed payload
+// of exactly `size` 'a' bytes (with no trailing newline so the test
+// controls the total). Reuses the same plumbing as fakeSocketOpts.
+func fakeSocketBytes(t *testing.T, size int) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "h23p-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	path := filepath.Join(dir, "s")
+
+	var lc net.ListenConfig
+	listener, err := lc.Listen(context.Background(), "unix", path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+
+	payload := make([]byte, size)
+	for i := range payload {
+		payload[i] = 'a'
+	}
+
+	go func() {
+		for {
+			conn, aerr := listener.Accept()
+			if aerr != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer func() { _ = c.Close() }()
+				buf := make([]byte, 64)
+				_, _ = c.Read(buf)
+				_, _ = c.Write(payload)
+			}(conn)
+		}
+	}()
+	return path
+}
+
+func TestRoundTrip_RejectsOversizedResponse(t *testing.T) {
+	// Write exactly one byte more than the cap.
+	path := fakeSocketBytes(t, client.SupervisorMaxResponseBytes+1)
+	sup := client.NewSupervisorStatus(path)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	_, err := sup.Snapshot(ctx)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, client.ErrInvalidResponse)
+	assert.Contains(t, err.Error(), "exceeded")
+}
+
+func TestRoundTrip_AcceptsResponseAtCapBoundary(t *testing.T) {
+	// Exactly at the cap is permitted (the +1 reserve in LimitReader
+	// lets us distinguish "at cap" from "over cap"). JSON parsing
+	// will fail because the payload is 'a' repeated, not valid JSON
+	// — but the size cap must NOT be the trigger.
+	path := fakeSocketBytes(t, client.SupervisorMaxResponseBytes)
+	sup := client.NewSupervisorStatus(path)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	_, err := sup.Snapshot(ctx)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, client.ErrInvalidResponse)
+	assert.NotContains(t, err.Error(), "exceeded",
+		"a response exactly at the cap must not trigger the size-exceeded error")
+}
+
+// =============================================================
+// Default deadline (K2: socket round-trip)
+// =============================================================
+
+// fakeSocketHangFor accepts a connection and sleeps for `sleep`
+// before closing — long enough to outlast supervisorDefaultTimeout so
+// the SDK's own deadline (not the server's close) is what releases
+// the call.
+func fakeSocketHangFor(t *testing.T, sleep time.Duration) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "h23p-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	path := filepath.Join(dir, "s")
+
+	var lc net.ListenConfig
+	listener, err := lc.Listen(context.Background(), "unix", path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+
+	go func() {
+		for {
+			conn, aerr := listener.Accept()
+			if aerr != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer func() { _ = c.Close() }()
+				buf := make([]byte, 64)
+				_, _ = c.Read(buf)
+				time.Sleep(sleep)
+			}(conn)
+		}
+	}()
+	return path
+}
+
+func TestRoundTrip_AppliesDefaultDeadlineWhenContextHasNone(t *testing.T) {
+	// Server hangs for 3x the SDK default so the SDK's own deadline
+	// fires first. With ctx.Background(), the SDK MUST apply
+	// supervisorDefaultTimeout — otherwise the test would block for
+	// the server's entire sleep.
+	path := fakeSocketHangFor(t, 3*client.SupervisorDefaultTimeout)
+	sup := client.NewSupervisorStatus(path)
+
+	start := time.Now()
+	_, err := sup.Snapshot(context.Background())
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, client.ErrSocketUnavailable)
+	assert.Less(t, elapsed, client.SupervisorDefaultTimeout+2*time.Second,
+		"Snapshot must respect the default deadline; took %s", elapsed)
+	assert.GreaterOrEqual(t, elapsed, client.SupervisorDefaultTimeout-500*time.Millisecond,
+		"Snapshot must wait approximately the default deadline; took %s", elapsed)
+}

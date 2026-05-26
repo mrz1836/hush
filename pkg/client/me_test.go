@@ -285,3 +285,103 @@ func TestMe_PreservesPathPrefix(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, strings.HasSuffix(f.gotPath, "/h/abcd/me"), "got path %q", f.gotPath)
 }
+
+// =============================================================
+// Default deadline (K2: http.DefaultClient has no Timeout)
+// =============================================================
+
+// deadlineCaptor is a http.RoundTripper that records the request
+// context's deadline before responding with a canned body.
+type deadlineCaptor struct {
+	deadline    time.Time
+	hasDeadline bool
+	respStatus  int
+	respBody    string
+}
+
+func (d *deadlineCaptor) RoundTrip(r *http.Request) (*http.Response, error) {
+	d.deadline, d.hasDeadline = r.Context().Deadline()
+	return &http.Response{
+		StatusCode: d.respStatus,
+		Body:       io.NopCloser(strings.NewReader(d.respBody)),
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+	}, nil
+}
+
+func TestMe_AppliesDefaultDeadlineWhenContextHasNone(t *testing.T) {
+	captor := &deadlineCaptor{
+		respStatus: http.StatusOK,
+		respBody:   `{"schema_version":1,"server_version":"x","scopes_available":[]}`,
+	}
+	_, err := client.Me(context.Background(), client.MeRequest{
+		ServerURL:   "http://127.0.0.1:1/h/abcd",
+		ClientKey:   newTestKey(t),
+		MachineName: "test",
+		HTTPClient:  &http.Client{Transport: captor},
+	})
+	require.NoError(t, err)
+	require.True(t, captor.hasDeadline, "Me must inject a default deadline when ctx has none")
+	// Deadline should be approximately now + meDefaultTimeout.
+	expected := time.Now().Add(client.MeDefaultTimeout)
+	assert.WithinDuration(t, expected, captor.deadline, 5*time.Second,
+		"injected deadline must be ~%s in the future", client.MeDefaultTimeout)
+}
+
+func TestMe_PreservesCallerDeadline(t *testing.T) {
+	captor := &deadlineCaptor{
+		respStatus: http.StatusOK,
+		respBody:   `{"schema_version":1,"server_version":"x","scopes_available":[]}`,
+	}
+	callerDeadline := time.Now().Add(7 * time.Second)
+	ctx, cancel := context.WithDeadline(context.Background(), callerDeadline)
+	defer cancel()
+	_, err := client.Me(ctx, client.MeRequest{
+		ServerURL:   "http://127.0.0.1:1/h/abcd",
+		ClientKey:   newTestKey(t),
+		MachineName: "test",
+		HTTPClient:  &http.Client{Transport: captor},
+	})
+	require.NoError(t, err)
+	require.True(t, captor.hasDeadline)
+	assert.WithinDuration(t, callerDeadline, captor.deadline, 100*time.Millisecond,
+		"caller deadline must not be overridden")
+}
+
+// =============================================================
+// ensureDeadline unit tests
+// =============================================================
+
+func TestEnsureDeadline_AddsDeadlineWhenAbsent(t *testing.T) {
+	parent := context.Background()
+	_, hasDeadline := parent.Deadline()
+	require.False(t, hasDeadline)
+
+	ctx, cancel := client.EnsureDeadline(parent, 50*time.Millisecond)
+	defer cancel()
+	deadline, ok := ctx.Deadline()
+	require.True(t, ok)
+	assert.WithinDuration(t, time.Now().Add(50*time.Millisecond), deadline, 100*time.Millisecond)
+}
+
+func TestEnsureDeadline_PreservesExistingDeadline(t *testing.T) {
+	parentDeadline := time.Now().Add(3 * time.Second)
+	parent, parentCancel := context.WithDeadline(context.Background(), parentDeadline)
+	defer parentCancel()
+
+	ctx, cancel := client.EnsureDeadline(parent, 30*time.Second)
+	defer cancel()
+	got, ok := ctx.Deadline()
+	require.True(t, ok)
+	assert.WithinDuration(t, parentDeadline, got, 100*time.Millisecond,
+		"existing deadline must be preserved, not replaced with fallback")
+}
+
+func TestEnsureDeadline_CancelIsSafeWhenNoop(t *testing.T) {
+	parent, parentCancel := context.WithTimeout(context.Background(), time.Second)
+	defer parentCancel()
+	_, cancel := client.EnsureDeadline(parent, 10*time.Second)
+	// The returned cancel for the noop path must be safe to call any
+	// number of times without panicking.
+	assert.NotPanics(t, func() { cancel() })
+	assert.NotPanics(t, func() { cancel() })
+}

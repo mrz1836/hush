@@ -413,3 +413,160 @@ func TestWatch_NilReceiver(t *testing.T) {
 	_, err := sup.Watch(context.Background(), client.WatchOptions{})
 	require.Error(t, err)
 }
+
+// =====================================================================
+// Panic recovery (Principle VII: every goroutine recover()s at top frame)
+// =====================================================================
+
+func TestRecoverWatchPanic_EmitsEventError(t *testing.T) {
+	ch := make(chan client.Event, 1)
+	func() {
+		defer client.RecoverWatchPanic(context.Background(), ch)
+		panic("induced for test")
+	}()
+	select {
+	case ev := <-ch:
+		assert.Equal(t, client.EventError, ev.Type)
+		require.Error(t, ev.Err)
+		assert.Contains(t, ev.Err.Error(), "induced for test")
+		assert.Contains(t, ev.Err.Error(), "panic")
+	case <-time.After(time.Second):
+		t.Fatal("recoverWatchPanic did not emit EventError")
+	}
+}
+
+func TestRecoverWatchPanic_NoOpWhenNoPanic(t *testing.T) {
+	ch := make(chan client.Event, 1)
+	func() {
+		defer client.RecoverWatchPanic(context.Background(), ch)
+		// no panic
+	}()
+	select {
+	case ev := <-ch:
+		t.Fatalf("recoverWatchPanic emitted an event with no panic: %+v", ev)
+	case <-time.After(50 * time.Millisecond):
+		// expected: nothing sent
+	}
+}
+
+func TestRecoverWatchPanic_RespectsContextCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // pre-cancelled
+	ch := make(chan client.Event)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer client.RecoverWatchPanic(ctx, ch)
+		panic("induced")
+	}()
+	select {
+	case <-done:
+		// expected: handler returned via ctx.Done() race
+	case <-time.After(time.Second):
+		t.Fatal("recoverWatchPanic blocked despite ctx cancel")
+	}
+}
+
+func TestSendBlocking_DeliversToConsumer(t *testing.T) {
+	ch := make(chan client.Event, 1)
+	ch <- client.Event{Type: client.EventInitial} // saturate
+	delivered := make(chan struct{})
+	go func() {
+		client.SendBlocking(context.Background(), ch, client.Event{Type: client.EventError})
+		close(delivered)
+	}()
+	// Drain the sentinel; sendBlocking should now unblock.
+	<-ch
+	select {
+	case <-delivered:
+	case <-time.After(time.Second):
+		t.Fatal("sendBlocking did not deliver after drain")
+	}
+	select {
+	case ev := <-ch:
+		assert.Equal(t, client.EventError, ev.Type)
+	case <-time.After(time.Second):
+		t.Fatal("EventError not on channel after sendBlocking returned")
+	}
+}
+
+func TestSendBlocking_ReturnsOnContextCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	ch := make(chan client.Event) // unbuffered, no consumer
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		client.SendBlocking(ctx, ch, client.Event{Type: client.EventError})
+	}()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("sendBlocking did not return after ctx cancel")
+	}
+}
+
+// =====================================================================
+// Smallest-threshold EventExpiresSoon survives buffer backpressure
+// =====================================================================
+
+func TestWatch_SmallestExpiresSoon_DeliversUnderBackpressure(t *testing.T) {
+	s := newScriptedSocket(t)
+	// RFC3339 has seconds precision; format `now + 30s` so the
+	// parsed value lands somewhere in [now+29s, now+30s].
+	expires := time.Now().UTC().Add(30 * time.Second).Format(time.RFC3339)
+	s.SetReplies(statusBytes(t, map[string]any{
+		"session_expires_at": expires,
+		"session_jti":        "j1",
+		"state":              "running",
+	}))
+
+	sup := client.NewSupervisorStatus(s.path)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Buffer=1 + single-element ExpiryThresholds → the threshold IS
+	// the smallest, so fireExpiresSoon takes the sendBlocking path.
+	// A 29s threshold against a ~29-30s horizon means the threshold
+	// is immediately overdue when the watch loop starts; the event
+	// fires in the "already crossed" branch of watchOnce, which
+	// guarantees the blocking-send path executes while EventInitial
+	// still occupies the buffer.
+	ch, err := sup.Watch(ctx, client.WatchOptions{
+		PollInterval:     200 * time.Millisecond,
+		ExpiryThresholds: []time.Duration{29 * time.Second},
+		Buffer:           1,
+	})
+	require.NoError(t, err)
+
+	first := <-ch
+	require.Equal(t, client.EventInitial, first.Type)
+
+	select {
+	case ev := <-ch:
+		assert.Equal(t, client.EventExpiresSoon, ev.Type, "smallest threshold must arrive even under backpressure")
+		assert.Equal(t, 29*time.Second, ev.Threshold)
+	case <-time.After(2 * time.Second):
+		t.Fatal("EventExpiresSoon was dropped under backpressure")
+	}
+}
+
+// =====================================================================
+// Integration: a panic inside the watch goroutine surfaces as EventError
+// =====================================================================
+
+// scriptedPanicSocket sends a malformed status payload that causes
+// statusWire.toStatus to error — which Watch propagates as EventError
+// (not a panic). To exercise the recover path end-to-end we'd need a
+// real panic surface in the loop; the unit tests above cover the
+// recover helper directly.
+
+// =====================================================================
+// Sanity: production constants are exported for assertion
+// =====================================================================
+
+func TestConstants_ExposeProductionValues(t *testing.T) {
+	assert.Equal(t, 30*time.Second, client.MeDefaultTimeout)
+	assert.Equal(t, 5*time.Second, client.SupervisorDefaultTimeout)
+	assert.Equal(t, 64*1024, client.SupervisorMaxResponseBytes)
+}
