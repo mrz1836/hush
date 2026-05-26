@@ -195,6 +195,7 @@ var legalCells = []legalCell{ //nolint:gochecknoglobals // test fixture: 23 lega
 	{StateRunning, EventStopRequested, StateStopped, "running+stop-requested"},
 	{StateAwaitingApproval, EventApprovalGranted, StateFetching, "awaiting-approval+approval-granted"},
 	{StateAwaitingApproval, EventStopRequested, StateStopped, "awaiting-approval+stop-requested"},
+	{StateGraceRestart, EventRefreshRequested, StateFetching, "grace-restart+refresh-requested"},
 	{StateGraceRestart, EventGraceRestartOK, StateRunning, "grace-restart+grace-restart-ok"},
 	{StateGraceRestart, EventGraceExpired, StateAwaitingApproval, "grace-restart+grace-expired"},
 	{StateGraceRestart, EventStopRequested, StateStopped, "grace-restart+stop-requested"},
@@ -208,8 +209,8 @@ var legalCells = []legalCell{ //nolint:gochecknoglobals // test fixture: 23 lega
 
 func TestStore_LegalTransitions(t *testing.T) { //nolint:gocognit // structural complexity: table-driven over 19 legal cells with prefix-replay + post-state assertions
 	t.Parallel()
-	if got, want := len(legalCells), 23; got != want {
-		t.Fatalf("legalCells size = %d, want 23 (matrix is locked)", got)
+	if got, want := len(legalCells), 24; got != want {
+		t.Fatalf("legalCells size = %d, want 24 (matrix is locked)", got)
 	}
 	t0 := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
 	for _, tc := range legalCells {
@@ -269,8 +270,8 @@ func TestStore_IllegalTransitionErr(t *testing.T) { //nolint:gocognit,gocyclo //
 			illegal = append(illegal, illegalCell{src, ev})
 		}
 	}
-	if got, want := len(illegal), 85; got != want {
-		t.Fatalf("illegal-cell count = %d, want 85", got)
+	if got, want := len(illegal), 84; got != want {
+		t.Fatalf("illegal-cell count = %d, want 84", got)
 	}
 
 	t0 := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
@@ -828,4 +829,99 @@ func TestStore_DestroyTokenZeroesAndClears(t *testing.T) {
 	if snap := s.Snapshot(); snap.Token != nil {
 		t.Errorf("Snapshot.Token after second destroyToken = %v want nil", snap.Token)
 	}
+}
+
+// TestStore_TransitionIf_TableDriven covers the three branches of
+// Store.TransitionIf: (a) matching state + legal event succeeds and
+// advances; (b) matching state + illegal event returns wrapped
+// ErrInvalidTransition without mutating; (c) mismatching state returns
+// wrapped ErrInvalidTransition naming both observed and expected state.
+// TransitionIf is the atomic compare-and-transition seam executeSwap
+// uses to enter StateSwapping without racing the dispatch arms.
+//
+//nolint:gocognit,nestif // table-driven over 3 cells; the error/post-state branching is intentional and visually flat
+func TestStore_TransitionIf_TableDriven(t *testing.T) {
+	t.Parallel()
+	t0 := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+
+	cases := []struct {
+		name        string
+		prefix      []Event // events to drive the store to the start state
+		expected    State
+		event       Event
+		wantErrIs   error
+		wantPostStt State
+	}{
+		{
+			name:        "matching_state_legal_event",
+			prefix:      []Event{EventFetchOK}, // → StateRunning
+			expected:    StateRunning,
+			event:       EventReloadRequested,
+			wantPostStt: StateSwapping,
+		},
+		{
+			name:        "matching_state_illegal_event",
+			prefix:      []Event{EventFetchOK}, // → StateRunning
+			expected:    StateRunning,
+			event:       EventApprovalGranted, // not legal from StateRunning
+			wantErrIs:   ErrInvalidTransition,
+			wantPostStt: StateRunning,
+		},
+		{
+			name:        "non_matching_state",
+			prefix:      []Event{EventFetchOK}, // → StateRunning
+			expected:    StateAwaitingApproval,
+			event:       EventApprovalGranted,
+			wantErrIs:   ErrInvalidTransition,
+			wantPostStt: StateRunning,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			clk := testutil.NewFakeClock(t0)
+			s := NewStore(context.Background(), clk)
+			for _, p := range tc.prefix {
+				if err := s.Transition(context.Background(), p); err != nil {
+					t.Fatalf("prefix %q: %v", p, err)
+				}
+			}
+			err := s.TransitionIf(context.Background(), tc.expected, tc.event)
+			if tc.wantErrIs == nil {
+				if err != nil {
+					t.Fatalf("TransitionIf returned %v, want nil", err)
+				}
+			} else {
+				if !errors.Is(err, tc.wantErrIs) {
+					t.Fatalf("TransitionIf err = %v, want errors.Is %v", err, tc.wantErrIs)
+				}
+				// On mismatch, the error string MUST name the observed state and
+				// the rejected event so audit/log readers can diagnose.
+				es := err.Error()
+				if !strings.Contains(es, string(tc.event)) {
+					t.Errorf("error %q does not mention event %q", es, tc.event)
+				}
+			}
+			if got := s.Snapshot().State; got != tc.wantPostStt {
+				t.Errorf("post-state = %q, want %q", got, tc.wantPostStt)
+			}
+		})
+	}
+}
+
+// TestStore_RefreshFromGraceRestart_RoundTrip covers V4: the new
+// EventRefreshRequested edge from StateGraceRestart. Before the fix the
+// edge was missing and dispatchRefreshVerb's transition call failed
+// silently, stranding the supervisor reporting "grace-restart" forever.
+// After the fix: grace-restart → refresh → fetching → fetch-ok → running.
+func TestStore_RefreshFromGraceRestart_RoundTrip(t *testing.T) {
+	t.Parallel()
+	t0 := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+	clk := testutil.NewFakeClock(t0)
+	s := NewStore(context.Background(), clk)
+	mustTransition(t, s, EventFetchOK, StateRunning)
+	mustTransition(t, s, EventGraceRestartTriggered, StateGraceRestart)
+	mustTransition(t, s, EventRefreshRequested, StateFetching)
+	mustTransition(t, s, EventFetchOK, StateRunning)
 }

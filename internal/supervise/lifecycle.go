@@ -229,6 +229,22 @@ type refreshVerb struct {
 	ack chan error
 }
 
+// swapVerb is the message SwapChild posts on swapVerbCh so the actual
+// swap orchestration runs inside mainLoop's single goroutine. Routing
+// SwapChild through mainLoop is what guarantees it cannot interleave with
+// dispatchRefreshVerb / dispatchChildExit / dispatchRefreshResult — the
+// fix for the V2 race in hush-audit/supervisor.
+type swapVerb struct {
+	ack chan swapVerbResult
+}
+
+// swapVerbResult is the payload sent back on swapVerb.ack: either the
+// successful SwapResult or a wrapped error sentinel.
+type swapVerbResult struct {
+	result SwapResult
+	err    error
+}
+
 // Lifecycle is the supervisor orchestrator. Construct via NewLifecycle;
 // drive via Run(ctx). Single-shot — calling Run twice returns
 // ErrLifecycleAlreadyRan.
@@ -247,6 +263,7 @@ type Lifecycle struct {
 	refreshTickCh chan struct{}
 	refreshDoneCh chan refreshResult
 	refreshVerbCh chan refreshVerb
+	swapVerbCh    chan swapVerb
 
 	runOnce sync.Once
 	ran     atomic.Bool
@@ -336,6 +353,7 @@ func NewLifecycle(ctx context.Context, cfg *config.Supervisor, deps Deps) *Lifec
 		refreshTickCh: make(chan struct{}, 1),
 		refreshDoneCh: make(chan refreshResult, 1),
 		refreshVerbCh: make(chan refreshVerb, 1),
+		swapVerbCh:    make(chan swapVerb, 1),
 		inputs:        &statusInputs{name: cfg.Name},
 	}
 	lc.inputs.discordConnected.Store(true)
@@ -487,6 +505,8 @@ func (l *Lifecycle) mainLoop(ctx context.Context) {
 			l.dispatchRefreshResult(ctx, res)
 		case verb := <-l.refreshVerbCh:
 			l.dispatchRefreshVerb(ctx, verb)
+		case verb := <-l.swapVerbCh:
+			l.dispatchSwapVerb(ctx, verb)
 		}
 	}
 }

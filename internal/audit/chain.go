@@ -79,7 +79,13 @@ const (
 	ActionSupervisorGraceExited      = "supervisor_grace_exited"
 	ActionSupervisorBootTimeout      = "supervisor_boot_timeout"
 	ActionSupervisorChildSwap        = "supervisor_child_swap"
-	ActionClientRefreshInvoked       = "client_refresh_invoked"
+	// Emitted when SwapChild's candidate child is reaped after a swap
+	// failure (readiness, backend set, missing readiness config). Carries
+	// {candidate_pid, escalated_to_sigkill, ceiling_exceeded,
+	// reap_duration_ms, reason}. Reason is drawn from a closed phrase
+	// map in lifecycle_audit.go; never any secret value.
+	ActionSupervisorSwapCandidateReaped = "supervisor_swap_candidate_reaped"
+	ActionClientRefreshInvoked          = "client_refresh_invoked"
 )
 
 // genesisDomainTag is the domain-separator string hashed once to derive

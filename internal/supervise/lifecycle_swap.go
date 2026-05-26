@@ -37,6 +37,13 @@ import (
 // caller surface.
 const HandoffStrategyHTTPProxy = "http-proxy"
 
+// reapHardCeiling caps how long reapSwapCandidate waits for child.Wait()
+// to return after SIGKILL. Beyond this the reap goroutine is allowed to
+// outlive the caller (it dies with the supervisor process). 5s comfortably
+// covers any normal kernel reap path; an unkillable-sleep child past this
+// window is a kernel/driver problem, not a hush problem.
+const reapHardCeiling = 5 * time.Second
+
 // Swap-related sentinel errors. Compare via errors.Is.
 var (
 	// ErrSwapInFlight indicates another SwapChild call is already in
@@ -78,6 +85,13 @@ var (
 	// allocation precedes promote in normal flow; this guards a future
 	// reorder.
 	ErrPromoteNoBackendPort = errors.New("supervise: promote child to proxy: no backend port allocated")
+
+	// errSwapDispatchPanic is the synthetic error dispatchSwapVerb sends
+	// on a verb's ack channel when executeSwap panics. Package-private —
+	// callers see it wrapped as "supervise: swap dispatch panicked"
+	// without the recovered value (which may carry implementation-detail
+	// strings unsafe to surface to operators).
+	errSwapDispatchPanic = errors.New("supervise: swap dispatch panicked")
 )
 
 // SwapResult is the public outcome of a successful SwapChild call.
@@ -224,19 +238,13 @@ func (l *Lifecycle) terminateCurrentChild(ctx context.Context) {
 // fresh private backend port, probes readiness, atomically points the
 // proxy at the new backend, audits the swap, and terminates the old
 // child with the configured shutdown grace. On readiness failure the
-// new child is killed and the old child is left serving.
-//
-// SwapChild blocks until the new child is running and the audit event
-// has been appended (on success) or until the new child has been torn
-// down (on failure). Single-flight: concurrent callers receive
-// ErrSwapInFlight.
+// new child is reaped and the old child is left serving.
 //
 // Pre-conditions:
-//   - the supervisor config has [child.handoff] mode = "http-proxy"
-//     (otherwise ErrSwapNotEligible).
-//   - the lifecycle is in StateRunning with a live child (otherwise
+//   - [child.handoff] mode = "http-proxy" (otherwise ErrSwapNotEligible).
+//   - The lifecycle is in StateRunning with a live child (otherwise
 //     ErrSwapWrongState / ErrSwapNoChild).
-//   - a Proxy has been attached via AttachProxy (otherwise
+//   - A Proxy has been attached via AttachProxy (otherwise
 //     ErrSwapProxyMissing).
 //
 // Post-conditions on success: l.child references the new child, the
@@ -244,36 +252,106 @@ func (l *Lifecycle) terminateCurrentChild(ctx context.Context) {
 // new port, an emitChildSwap audit event has been appended, and the
 // state machine has returned to StateRunning via EventSwapOK.
 //
-//nolint:funlen,gocyclo,cyclop // sequential orchestration; each step has explicit error handling
+// SwapChild is a thin wrapper: it fast-fails the two cheap preconditions
+// (handoff-eligibility, proxy attached) plus the swapInFlight single-
+// flight CAS, then posts a swapVerb on swapVerbCh so the actual
+// orchestration (executeSwap) runs inside mainLoop's single goroutine.
+// Routing through mainLoop guarantees executeSwap cannot interleave
+// with dispatchRefreshVerb, dispatchChildExit, or
+// dispatchRefreshResult — fixes the V2 race in
+// hush-audit/supervisor where a concurrent status-socket refresh could
+// spawn a parallel child with fresh secrets.
+//
+// Cancellable via ctx (returns ctx.Err() if the verb cannot be posted
+// or the ack does not arrive). Single-flight: concurrent callers
+// receive ErrSwapInFlight.
 func (l *Lifecycle) SwapChild(ctx context.Context) (SwapResult, error) {
 	if !l.isHandoffEligible() {
 		return SwapResult{}, fmt.Errorf("supervise: %w", ErrSwapNotEligible)
 	}
-	p := l.proxyHandle()
-	if p == nil {
+	if l.proxyHandle() == nil {
 		return SwapResult{}, fmt.Errorf("supervise: %w", ErrSwapProxyMissing)
 	}
-
 	if !l.swapInFlight.CompareAndSwap(false, true) {
 		return SwapResult{}, fmt.Errorf("supervise: %w", ErrSwapInFlight)
 	}
 	defer l.swapInFlight.Store(false)
 
-	if got := l.store.Snapshot().State; got != StateRunning {
-		return SwapResult{}, fmt.Errorf("supervise: %w (current=%s)", ErrSwapWrongState, got)
+	verb := swapVerb{ack: make(chan swapVerbResult, 1)}
+	select {
+	case l.swapVerbCh <- verb:
+	case <-ctx.Done():
+		return SwapResult{}, ctx.Err()
+	}
+	select {
+	case res := <-verb.ack:
+		return res.result, res.err
+	case <-ctx.Done():
+		return SwapResult{}, ctx.Err()
+	}
+}
+
+// dispatchSwapVerb is mainLoop's arm for swap verbs. It calls executeSwap
+// inside a recover() so a panic on the orchestration path does not (a)
+// crash mainLoop and (b) deadlock the SwapChild caller blocked on the
+// verb's ack channel. On a recovered panic, sends a synthetic
+// errSwapDispatchPanic on the ack channel.
+func (l *Lifecycle) dispatchSwapVerb(ctx context.Context, verb swapVerb) {
+	defer func() {
+		if r := recover(); r != nil {
+			l.deps.Logger.Error(
+				"supervise: dispatchSwapVerb panic",
+				slog.Any("recover", r),
+			)
+			select {
+			case verb.ack <- swapVerbResult{err: fmt.Errorf("supervise: %w", errSwapDispatchPanic)}:
+			default:
+			}
+		}
+	}()
+	res, err := l.executeSwap(ctx)
+	select {
+	case verb.ack <- swapVerbResult{result: res, err: err}:
+	default:
+	}
+}
+
+// executeSwap performs the HTTP-proxy reload swap. It runs inside
+// mainLoop's goroutine (via dispatchSwapVerb), so concurrent
+// dispatchChildExit / dispatchRefreshVerb / dispatchRefreshResult arms
+// cannot interleave with it. The proxy and handoff-eligibility
+// preconditions were already verified by the SwapChild wrapper.
+//
+// The state move into StateSwapping uses Store.TransitionIf — atomic
+// under the state write lock — so a concurrent direct mutator (tests
+// or future code paths) cannot race the precondition check against
+// the transition.
+//
+//nolint:funlen,cyclop // sequential orchestration; each step has explicit error handling
+func (l *Lifecycle) executeSwap(ctx context.Context) (SwapResult, error) {
+	p := l.proxyHandle()
+	if p == nil {
+		return SwapResult{}, fmt.Errorf("supervise: %w", ErrSwapProxyMissing)
+	}
+
+	// Atomic single critical section: requires StateRunning AND moves
+	// into StateSwapping. Even though mainLoop already serializes us
+	// against the other dispatch arms, TransitionIf gives unit tests
+	// a clean way to assert the invariant — and protects future code
+	// paths that might call executeSwap from outside mainLoop.
+	if err := l.store.TransitionIf(ctx, StateRunning, EventReloadRequested); err != nil {
+		return SwapResult{}, fmt.Errorf("supervise: %w (transition: %w)", ErrSwapWrongState, err)
 	}
 
 	l.childMu.Lock()
 	oldChild := l.child
 	l.childMu.Unlock()
 	if oldChild == nil {
+		// State already moved to StateSwapping; restore via EventSwapFailed.
+		l.transition(ctx, EventSwapFailed)
 		return SwapResult{}, fmt.Errorf("supervise: %w", ErrSwapNoChild)
 	}
 	oldPID := oldChild.PID()
-
-	// Move into swapping; from this point we MUST eventually transition
-	// back via EventSwapOK or EventSwapFailed.
-	l.transition(ctx, EventReloadRequested)
 
 	// Gather secrets for the replacement child. We re-fetch via Refiller
 	// using the existing JWT — A5 in the plan: no fresh /claim required.
@@ -302,7 +380,7 @@ func (l *Lifecycle) SwapChild(ctx context.Context) (SwapResult, error) {
 	if l.config.Child.Readiness == nil {
 		// Defensive: isHandoffEligible already checked readiness via
 		// validate, but guard the dereference anyway.
-		l.terminateChildWithGrace(ctx, newChild, l.config.Child.Shutdown.Grace)
+		l.reapSwapCandidate(ctx, newChild, l.config.Child.Shutdown.Grace, reasonReapReadinessConfigMissing)
 		closeIfNotNil(stdoutCloser)
 		closeIfNotNil(stderrCloser)
 		l.transition(ctx, EventSwapFailed)
@@ -319,7 +397,7 @@ func (l *Lifecycle) SwapChild(ctx context.Context) (SwapResult, error) {
 		l.deps.Logger.Warn("supervise: swap readiness failed",
 			slog.Int("new_pid", newPID),
 			slog.Any("err", probeErr))
-		l.terminateChildWithGrace(ctx, newChild, l.config.Child.Shutdown.Grace)
+		l.reapSwapCandidate(ctx, newChild, l.config.Child.Shutdown.Grace, reasonReapReadinessProbeFailed)
 		closeIfNotNil(stdoutCloser)
 		closeIfNotNil(stderrCloser)
 		l.transition(ctx, EventSwapFailed)
@@ -329,7 +407,7 @@ func (l *Lifecycle) SwapChild(ctx context.Context) (SwapResult, error) {
 	// Atomic backend swap. Past this line the proxy routes new traffic
 	// to the replacement child.
 	if setErr := p.SetBackend(newPort); setErr != nil {
-		l.terminateChildWithGrace(ctx, newChild, l.config.Child.Shutdown.Grace)
+		l.reapSwapCandidate(ctx, newChild, l.config.Child.Shutdown.Grace, reasonReapBackendSetFailed)
 		closeIfNotNil(stdoutCloser)
 		closeIfNotNil(stderrCloser)
 		l.transition(ctx, EventSwapFailed)
@@ -445,6 +523,85 @@ func (l *Lifecycle) startSwapCandidate(ctx context.Context, secrets secretSet) (
 	return newChild, stdoutCloser, stderrCloser, port, nil
 }
 
+// reapSwapCandidate terminates AND reaps a candidate child spawned by
+// startSwapCandidate but never promoted (i.e. no childWaitLoop was
+// attached). It is the only correct teardown path for the three SwapChild
+// failure branches — terminateChildWithGrace alone leaves the candidate
+// as a zombie + leaks the per-Child drain/forward/death-watch goroutines
+// (no one ever calls child.Wait, which is what closes c.childDone +
+// joins c.wg).
+//
+// Sequence:
+//  1. Spawn an UNTRACKED reap goroutine that calls child.Wait() and
+//     signals waitDone. The goroutine is not on Lifecycle.wg because we
+//     do not want runShutdown to block on a stuck (uninterruptible-
+//     sleep) child past the hard ceiling — bounded by supervisor
+//     lifetime is acceptable.
+//  2. SIGTERM.
+//  3. Wait for {waitDone, grace, ctx.Done}.
+//  4. If grace expired or ctx cancelled, SIGKILL.
+//  5. Wait for {waitDone, reapHardCeiling}.
+//  6. Emit ActionSupervisorSwapCandidateReaped with timing + reason.
+//
+// grace<=0 collapses to a short floor (50ms) so unit tests passing zero
+// do not loop forever. Production callers receive
+// [child.shutdown.grace] which validate ensures is positive.
+//
+// Returns nothing — the audit event is the operator-visible contract.
+func (l *Lifecycle) reapSwapCandidate(ctx context.Context, child *Child, grace time.Duration, reason string) {
+	if child == nil {
+		return
+	}
+	candidatePID := child.PID()
+	start := l.deps.NowFn()
+
+	waitDone := make(chan struct{})
+	go func() {
+		defer close(waitDone)
+		defer func() {
+			if r := recover(); r != nil {
+				l.deps.Logger.Error("supervise: swap-candidate reap goroutine panic", slog.Any("recover", r))
+			}
+		}()
+		_, _, _ = child.Wait()
+	}()
+
+	_ = child.Forward(syscall.SIGTERM)
+	if grace <= 0 {
+		grace = 50 * time.Millisecond
+	}
+	graceTimer := time.NewTimer(grace)
+	defer graceTimer.Stop()
+
+	var (
+		escalated       bool
+		ceilingExceeded bool
+	)
+	select {
+	case <-waitDone:
+		l.emitSwapCandidateReaped(ctx, candidatePID, escalated, ceilingExceeded, l.deps.NowFn().Sub(start), reason)
+		return
+	case <-graceTimer.C:
+	case <-ctx.Done():
+	}
+
+	escalated = true
+	_ = child.Forward(syscall.SIGKILL)
+	hardTimer := time.NewTimer(reapHardCeiling)
+	defer hardTimer.Stop()
+	select {
+	case <-waitDone:
+	case <-hardTimer.C:
+		ceilingExceeded = true
+		l.deps.Logger.Warn(
+			"supervise: swap-candidate reap exceeded hard ceiling",
+			slog.Int("candidate_pid", candidatePID),
+			slog.String("reason", reason),
+		)
+	}
+	l.emitSwapCandidateReaped(ctx, candidatePID, escalated, ceilingExceeded, l.deps.NowFn().Sub(start), reason)
+}
+
 // terminateChildWithGrace sends SIGTERM to child, polls for natural exit
 // up to grace, then sends SIGKILL if still alive. Always returns once
 // either the child exits (child.PID()==0) or grace+ctx is exhausted.
@@ -452,6 +609,13 @@ func (l *Lifecycle) startSwapCandidate(ctx context.Context, secrets secretSet) (
 // grace<=0 collapses to a short floor (50ms) so test fixtures that pass
 // zero do not loop forever. Production callers configure
 // [child.shutdown.grace] which validate ensures is positive.
+//
+// Used for children that already have a parallel wait loop (the
+// supervisor's main child, started via initialRefillAndStart or
+// silentRefillAndRestart). The wait loop zeroes child.PID() inside
+// Wait, allowing the poll here to short-circuit on natural exit. For
+// SwapChild's candidate children — which never get a wait loop — use
+// reapSwapCandidate instead.
 func (l *Lifecycle) terminateChildWithGrace(ctx context.Context, child *Child, grace time.Duration) {
 	if child == nil {
 		return

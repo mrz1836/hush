@@ -48,6 +48,14 @@ const (
 	reasonGraceEntered         = "entered grace cache restart"
 	reasonLogPatternMatch      = "log pattern matched"
 	reasonClientRefreshInvoked = "client refresh invoked"
+
+	// reasonReap* are the closed-set reason labels for the
+	// supervisor_swap_candidate_reaped audit event emitted by
+	// reapSwapCandidate. Drawn from a closed map so audit consumers can
+	// switch on them without parsing free-form strings.
+	reasonReapReadinessConfigMissing = "readiness_config_missing"
+	reasonReapReadinessProbeFailed   = "readiness_probe_failed"
+	reasonReapBackendSetFailed       = "backend_set_failed"
 )
 
 // emitSessionClaimed appends supervisor_session_claimed after a successful
@@ -173,6 +181,25 @@ func (l *Lifecycle) emitChildSwap(ctx context.Context, oldPID, newPID int, readi
 		"swap_completed_at":     l.deps.NowFn().UTC().Format(time.RFC3339),
 		"readiness_duration_ms": readiness.Milliseconds(),
 		"strategy":              strategy,
+	})
+}
+
+// emitSwapCandidateReaped appends supervisor_swap_candidate_reaped after
+// reapSwapCandidate retires a candidate child following a swap-failure
+// branch (readiness probe, missing readiness config, backend set failure).
+// Data carries: candidate_pid (kernel id, non-secret), escalated_to_sigkill
+// (whether SIGTERM grace expired before exit), ceiling_exceeded (whether
+// the post-SIGKILL hard ceiling tripped), reap_duration_ms (wall-clock from
+// SIGTERM to Wait return or ceiling), and reason (closed-set string from
+// the reasonReap* constants above). No secret/env value can flow here by
+// construction — reapSwapCandidate sees only PIDs and timestamps.
+func (l *Lifecycle) emitSwapCandidateReaped(ctx context.Context, candidatePID int, escalated, ceilingExceeded bool, dur time.Duration, reason string) {
+	l.appendAudit(ctx, audit.ActionSupervisorSwapCandidateReaped, map[string]any{
+		"candidate_pid":        candidatePID,
+		"escalated_to_sigkill": escalated,
+		"ceiling_exceeded":     ceilingExceeded,
+		"reap_duration_ms":     dur.Milliseconds(),
+		"reason":               reason,
 	})
 }
 

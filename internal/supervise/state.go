@@ -116,9 +116,10 @@ var transitions = map[State]map[Event]State{ //nolint:gochecknoglobals // sentin
 		EventStopRequested:   StateStopped,
 	},
 	StateGraceRestart: {
-		EventGraceRestartOK: StateRunning,
-		EventGraceExpired:   StateAwaitingApproval,
-		EventStopRequested:  StateStopped,
+		EventRefreshRequested: StateFetching,
+		EventGraceRestartOK:   StateRunning,
+		EventGraceExpired:     StateAwaitingApproval,
+		EventStopRequested:    StateStopped,
 	},
 	StateSwapping: {
 		EventSwapOK:        StateRunning,
@@ -181,6 +182,37 @@ func NewStore(_ context.Context, clock Clock) *Store {
 func (s *Store) Transition(_ context.Context, event Event) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	next, ok := transitions[s.currentState][event]
+	if !ok {
+		return fmt.Errorf("supervise: %w (state=%s event=%s)", ErrInvalidTransition, s.currentState, event)
+	}
+	s.currentState = next
+	s.lastTransitionAt = s.clock.Now()
+	s.reason = reasons[event]
+	return nil
+}
+
+// TransitionIf is a compare-and-transition: applies event only when the
+// current state equals expected, atomically under the write lock. Used by
+// callers that need the precondition check and the transition to be a single
+// critical section (e.g. SwapChild's StateRunning → StateSwapping move,
+// where a stale Snapshot() read followed by a non-atomic Transition would
+// race the mainLoop dispatcher).
+//
+// Returns nil on success. Returns a wrapped ErrInvalidTransition naming both
+// the observed state and the rejected event when the precondition fails OR
+// when the transition itself is illegal from the observed state. Callers
+// inspect via errors.Is.
+//
+// ctx is accepted for parity with Transition; the current implementation
+// does no cancellable work.
+func (s *Store) TransitionIf(_ context.Context, expected State, event Event) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.currentState != expected {
+		return fmt.Errorf("supervise: %w (state=%s event=%s expected=%s)",
+			ErrInvalidTransition, s.currentState, event, expected)
+	}
 	next, ok := transitions[s.currentState][event]
 	if !ok {
 		return fmt.Errorf("supervise: %w (state=%s event=%s)", ErrInvalidTransition, s.currentState, event)
