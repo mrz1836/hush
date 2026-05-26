@@ -133,6 +133,7 @@ func deriveAuditSigningKey() (*ecdsa.PrivateKey, error) {
 //
 //nolint:cyclop,contextcheck // sequential dependency-wiring; audit drain outlives rootCtx by design (mirrors serve.go)
 func runLifecycle(rootCtx context.Context, cfg *superviseconfig.Supervisor, pidfile *supervise.PidFile, logger *slog.Logger) error {
+	logSupervisorRuntimeLimitations(logger)
 	rt, err := superviseDepsSeam()
 	if err != nil {
 		return err

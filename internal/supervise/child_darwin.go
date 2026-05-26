@@ -24,15 +24,32 @@ func applyPlatformSysProcAttr(cmd *exec.Cmd) {
 	cmd.SysProcAttr.Setpgid = true
 }
 
-// startDeathWatch spawns the per-Start kqueue death-watch
-// goroutine pair. The watcher fires SIGTERM at the
-// child's process group when the supervisor's parent (PPID)
-// exits; the waker breaks the kqueue blocker out of Kevent on
-// ctx cancellation or child exit.
+// startDeathWatch spawns the per-Start kqueue death-watch goroutine pair.
+// The watcher fires SIGTERM at the child's process group when the
+// supervisor's parent (PPID — typically launchd in production) exits; the
+// waker breaks the kqueue blocker out of Kevent on ctx cancellation or
+// child exit.
 //
-// Known limitation: if the supervisor itself is SIGKILL'd, both
-// goroutines die with the process and cannot deliver cleanup.
-// Surfaced via t.Skip in the SIGKILL subtest.
+// Platform gap (darwin vs linux). On linux, Pdeathsig=SIGTERM (set in
+// child_linux.go) is kernel-enforced and fires whenever the supervisor
+// process exits — including SIGKILL, OOM-kill, segfault, or a panic that
+// escapes every recover(). On darwin there is no equivalent kernel
+// primitive accessible without injecting code into the child binary. The
+// kqueue death-watch implemented here is the closest defensive proxy: it
+// only catches the case where the supervisor's parent (launchd) goes
+// down. The supervisor's OWN unexpected death — SIGKILL, OOM-kill,
+// segfault, or an unrecovered panic — leaves the supervised child
+// orphaned with the freshly-fetched scope env still resident in
+// /proc-equivalent (visible via `ps eww`) until the child exits
+// naturally. This widens residual risk #2's exposure window unboundedly
+// for those rare-but-possible scenarios.
+//
+// runLifecycle's darwin startup path logs a one-time WARN naming this
+// limitation so operators have visibility; closing the gap entirely
+// would require either (a) wrapping the daemon with a hush-supplied
+// shim that watches its parent via kqueue, or (b) the daemon
+// cooperating with a Mach-port MACH_NOTIFY_DEAD_NAME ride. Both are
+// out of scope for v0.1.0.
 //
 //nolint:gocognit,gocyclo // kqueue+pipe registration + 2 goroutines + EINTR loop: complexity is inherent to the death-watch contract
 func startDeathWatch(ctx context.Context, c *Child) error {
