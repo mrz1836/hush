@@ -612,6 +612,29 @@ func (s *storeFailingKeychain) Store(_ context.Context, _, _ string, _ *secureby
 	return s.err
 }
 
+// deleteFailingKeychain wraps an inner Keychain but forces Delete to
+// fail with a fixed sentinel after Retrieve has succeeded. Mirrors
+// storeFailingKeychain for the AC-10 partial-failure path triggered by
+// the Delete half of the Retrieve→Delete→Store sequence; the vault is
+// already rewritten by the time Delete runs, so the failure must
+// surface as success_partial rather than rolling back the vault.
+type deleteFailingKeychain struct {
+	inner keychain.Keychain
+	err   error
+}
+
+func (d *deleteFailingKeychain) Retrieve(ctx context.Context, service, account string) (*securebytes.SecureBytes, error) {
+	return d.inner.Retrieve(ctx, service, account)
+}
+
+func (d *deleteFailingKeychain) Delete(_ context.Context, _, _ string) error {
+	return d.err
+}
+
+func (d *deleteFailingKeychain) Store(ctx context.Context, service, account string, value *securebytes.SecureBytes, acl string) error {
+	return d.inner.Store(ctx, service, account, value, acl)
+}
+
 // seedExistingKeychainItem populates the fake keychain with a
 // hush-vault-passphrase / hush-server item so the rekey's opt-in path
 // can exercise the existing-item branch.
@@ -840,6 +863,64 @@ func TestVaultRekey_Keychain_StoreFailure_PartialSuccess(t *testing.T) {
 	require.Contains(t, fx.stderr.String(), "vault rekey SUCCEEDED but Keychain update FAILED")
 	require.Contains(t, fx.logBuf.String(), "outcome=success_partial")
 	require.Contains(t, fx.logBuf.String(), "keychain_updated=false")
+
+	// New vault still decrypts with the new passphrase (rewrite was not rolled back).
+	postSalt, err := readVaultSalt(fx.vaultPath)
+	require.NoError(t, err)
+	newSeed, err := fx.deps.deriveMasterSeed(context.Background(), []byte("newbatterystaple1"), postSalt)
+	require.NoError(t, err)
+	newRawKey, err := keys.DeriveVaultEncKey(newSeed)
+	require.NoError(t, err)
+	newKey, err := securebytes.New(newRawKey)
+	require.NoError(t, err)
+	defer func() { _ = newKey.Destroy() }()
+	loaded, err := vault.LoadSecrets(context.Background(), fx.vaultPath, newKey)
+	require.NoError(t, err)
+	for i := len(loaded) - 1; i >= 0; i-- {
+		if loaded[i].Value != nil {
+			_ = loaded[i].Value.Destroy()
+		}
+	}
+	require.Len(t, loaded, 1)
+}
+
+// TestVaultRekey_Keychain_DeleteFailure_PartialSuccess covers AC-10's
+// Delete-failure half: when the post-write Keychain Delete fails (after
+// Retrieve already confirmed an existing item), the rewritten vault
+// stays in place, the locked partial-failure stderr message fires, the
+// audit event reports outcome=success_partial, and the caller's error
+// maps to ExitErr. Store must NOT be invoked because the flow aborts
+// at Delete.
+func TestVaultRekey_Keychain_DeleteFailure_PartialSuccess(t *testing.T) {
+	t.Parallel()
+	fx := newVaultRekeyRoundTripFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}}, "correctbatterystaple")
+	fakeKC := keychain.NewFake()
+	seedExistingKeychainItem(t, fakeKC, "old-passphrase")
+	fx.deps.keychain = &deleteFailingKeychain{inner: fakeKC, err: errors.New("synthetic delete failure")}
+	fx.deps.updateKeychain = true
+
+	err := runVaultRekey(context.Background(), fx.stdoutS, fx.stderrS, fx.stdinFile, nil, fx.deps)
+	require.Error(t, err)
+	require.True(t, errors.Is(err, errVaultRekeyPartial),
+		"Keychain Delete failure must surface as errVaultRekeyPartial; got %v", err)
+	require.Equal(t, ExitErr, mapErr(err))
+
+	require.Contains(t, fx.stderr.String(), "vault rekey SUCCEEDED but Keychain update FAILED")
+	require.Contains(t, fx.stderr.String(), "keychain delete")
+	require.Contains(t, fx.logBuf.String(), "outcome=success_partial")
+	require.Contains(t, fx.logBuf.String(), "keychain_updated=false")
+
+	// The pre-existing Keychain item still resolves under the old value
+	// because Delete failed — the test fake reports the seeded value.
+	stored, err := fakeKC.Retrieve(context.Background(), kcServiceVaultPassphrase, kcAccountServer)
+	require.NoError(t, err)
+	defer func() { _ = stored.Destroy() }()
+	var got []byte
+	require.NoError(t, stored.Use(func(b []byte) {
+		got = append([]byte(nil), b...)
+	}))
+	require.Equal(t, "old-passphrase", string(got),
+		"Delete failure must leave the pre-existing Keychain item untouched")
 
 	// New vault still decrypts with the new passphrase (rewrite was not rolled back).
 	postSalt, err := readVaultSalt(fx.vaultPath)
