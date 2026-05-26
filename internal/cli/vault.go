@@ -9,6 +9,7 @@ package cli
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
 	"errors"
 	"fmt"
@@ -26,6 +27,11 @@ import (
 	"github.com/mrz1836/hush/internal/vault"
 	"github.com/mrz1836/hush/internal/vault/securebytes"
 )
+
+// vaultSaltLen is the on-disk salt width expected by vault.SaveWithSalt
+// (matches the unexported saltLen constant in internal/vault). Pinned
+// locally so the rekey path does not import a private vault constant.
+const vaultSaltLen = 16
 
 // Locked stderr literals for `hush vault rekey`. Every byte is
 // contract-asserted by tests so renames in messaging require an
@@ -76,6 +82,11 @@ type vaultDeps struct {
 	kill        func(pid int, sig syscall.Signal) error
 	readPIDFile func(path string) ([]byte, error)
 
+	// randReader is the source for the fresh 16-byte salt minted during
+	// the vault rewrite. Defaults to crypto/rand.Reader in production;
+	// tests override to capture or fail salt generation.
+	randReader io.Reader
+
 	stateDirRoot string
 	configPath   string
 	logger       *slog.Logger
@@ -95,6 +106,7 @@ func productionVaultDeps() *vaultDeps {
 		readVaultSalt:    readVaultSalt,
 		kill:             syscall.Kill,
 		readPIDFile:      os.ReadFile,
+		randReader:       rand.Reader,
 		stateDirRoot:     "",
 		logger:           slog.Default(),
 		nowFn:            time.Now,
@@ -132,13 +144,15 @@ func newVaultRekeyCmd() *cobra.Command {
 	return cmd
 }
 
-// runVaultRekey implements the `vault rekey` flow. Phase 2 lands the
+// runVaultRekey implements the `vault rekey` flow. Phase 2 landed the
 // TTY gating, current-passphrase authentication, and new-passphrase
-// validation paths. Snapshot + rewrite + PID + Keychain land in Phase
-// 3/4. Returning successfully from this Phase-2 build is intentionally
-// not yet possible: after validation succeeds the caller falls through
-// to errVaultRekeyNotImplemented so a half-built rekey can never
-// accidentally rewrite a real vault.
+// validation paths. Phase 3 adds the snapshot of the old encrypted
+// vault and the rewrite under a fresh salt + new-passphrase-derived
+// key. PID-probe messaging, Keychain follow-up, and the terminal
+// `vault_rekeyed` success audit emission land in Phase 4; until then
+// runVaultRekey returns errVaultRekeyPostWriteNotImplemented after a
+// successful rewrite so an interim build's operator sees an explicit
+// "incomplete" signal even though the vault file is already valid.
 //
 //nolint:gocognit,gocyclo // sequential rekey flow with TTY/auth/pass-validation dispatch
 func runVaultRekey(ctx context.Context, _ *Stream, stderr *Stream, in, stdoutFile *os.File, deps *vaultDeps) error {
@@ -201,18 +215,97 @@ func runVaultRekey(ctx context.Context, _ *Stream, stderr *Stream, in, stdoutFil
 		return changedErr
 	}
 
-	// Phase 2 stops here. Snapshot + rewrite + PID + Keychain land in
-	// later phases; the supervisor sequences those into separate
-	// commits.
-	return errVaultRekeyNotImplemented
+	snapshotPath, err := snapshotVaultFile(deps, vaultPath)
+	if err != nil {
+		return err
+	}
+
+	freshSalt, err := mintFreshVaultSalt(deps)
+	if err != nil {
+		return err
+	}
+
+	newKey, err := deriveVaultRekeyKey(ctx, deps, newPass, freshSalt)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = newKey.Destroy() }()
+
+	if err := deps.saveVault(ctx, vaultPath, newKey, freshSalt, secrets); err != nil {
+		return err
+	}
+
+	// Phase 4 will surface snapshotPath to stdout, run the PID probe,
+	// optionally update the Keychain, and emit the terminal
+	// `vault_rekeyed` success audit event with snapshot_path,
+	// restart_required, and keychain_updated.
+	_ = snapshotPath
+	return errVaultRekeyPostWriteNotImplemented
 }
 
-// errVaultRekeyNotImplemented is the stub returned by `hush vault
-// rekey` after Phase 2's validation succeeds but before Phase 3 lands
-// the snapshot and rewrite. Mapped to ExitErr via the catch-all so
-// operators see a clear failure instead of a silently-incomplete
-// command if they invoke an interim build.
-var errVaultRekeyNotImplemented = errors.New("hush: vault: rekey is not yet implemented")
+// errVaultRekeyPostWriteNotImplemented is the stub returned by `hush
+// vault rekey` after Phase 3's snapshot + rewrite succeeds but before
+// Phase 4 lands the PID probe, optional Keychain update, and terminal
+// success audit emission. Mapped to ExitErr via the catch-all so
+// operators see a clear "incomplete" signal if they invoke an interim
+// build even though the on-disk vault is already valid under the new
+// passphrase.
+var errVaultRekeyPostWriteNotImplemented = errors.New("hush: vault: rekey post-write steps not yet implemented")
+
+// snapshotVaultFile copies the current encrypted vault to a sibling
+// `secrets.vault.bak-<RFC3339>` file with 0600 perms before the new
+// vault is written. Returns the absolute snapshot path. The snapshot
+// is the operator's manual rollback artefact (it remains decryptable
+// under the OLD passphrase) and must be created BEFORE any rewrite so
+// AC-6's atomicity guarantee holds — if snapshotting fails the rekey
+// aborts with the vault file untouched.
+func snapshotVaultFile(deps *vaultDeps, vaultPath string) (string, error) {
+	body, err := os.ReadFile(vaultPath) //nolint:gosec // vaultPath is resolved through deps.stateDirRoot or loaded server config
+	if err != nil {
+		return "", fmt.Errorf("hush: vault: read for snapshot: %w", err)
+	}
+	timestamp := deps.nowFn().UTC().Format(time.RFC3339)
+	snapPath := vaultPath + ".bak-" + timestamp
+	// O_EXCL guards against the (theoretical) RFC3339-second-collision
+	// case where two rekeys land in the same wall-clock second; the
+	// caller surfaces the error rather than silently overwriting a
+	// prior snapshot.
+	f, err := os.OpenFile(snapPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // snapshot sibling of vaultPath; 0600 enforced via explicit chmod below
+	if err != nil {
+		return "", fmt.Errorf("hush: vault: create snapshot: %w", err)
+	}
+	if _, writeErr := f.Write(body); writeErr != nil {
+		_ = f.Close()
+		_ = os.Remove(snapPath)
+		return "", fmt.Errorf("hush: vault: write snapshot: %w", writeErr)
+	}
+	if syncErr := f.Sync(); syncErr != nil {
+		_ = f.Close()
+		_ = os.Remove(snapPath)
+		return "", fmt.Errorf("hush: vault: sync snapshot: %w", syncErr)
+	}
+	if closeErr := f.Close(); closeErr != nil {
+		_ = os.Remove(snapPath)
+		return "", fmt.Errorf("hush: vault: close snapshot: %w", closeErr)
+	}
+	// Belt-and-braces: neutralize any umask effect on the new file
+	// (mirrors vault.SaveWithSalt's post-rename chmod).
+	if err := os.Chmod(snapPath, 0o600); err != nil {
+		return "", fmt.Errorf("hush: vault: chmod snapshot: %w", err)
+	}
+	return snapPath, nil
+}
+
+// mintFreshVaultSalt reads exactly vaultSaltLen bytes from the deps
+// random source. io.ReadFull turns a short read into a fatal error so
+// the salt is never partial.
+func mintFreshVaultSalt(deps *vaultDeps) ([]byte, error) {
+	salt := make([]byte, vaultSaltLen)
+	if _, err := io.ReadFull(deps.randReader, salt); err != nil {
+		return nil, fmt.Errorf("hush: vault: mint salt: %w", err)
+	}
+	return salt, nil
+}
 
 // enforceRekeyTTY refuses if stdin or stdout is not an interactive
 // terminal. Emits the locked stderr line and a `vault_rekey_tty_refused`
