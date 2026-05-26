@@ -52,6 +52,10 @@ const (
 // an error rather than a panic so library users get a clean failure.
 var errNilSupervisor = errors.New("hush/client: Watch called on nil SupervisorStatus")
 
+// errWatchPanic wraps a recovered goroutine panic from watchLoop.
+// Static sentinel so callers can match via errors.Is.
+var errWatchPanic = errors.New("hush/client: watch goroutine panic")
+
 // Event is one notification on a Watch channel.
 type Event struct {
 	Type      EventType
@@ -150,7 +154,8 @@ func (o WatchOptions) withDefaults() WatchOptions {
 // watchLoop is the goroutine body. Owns the channel; closes it on
 // ctx.Done.
 func (s *SupervisorStatus) watchLoop(ctx context.Context, opts WatchOptions, ch chan<- Event) {
-	defer close(ch)
+	defer close(ch)                  // registered 1st → runs LAST
+	defer recoverWatchPanic(ctx, ch) // registered 2nd → runs FIRST (LIFO)
 
 	prev := s.initialSnapshot(ctx, ch)
 
@@ -162,6 +167,35 @@ func (s *SupervisorStatus) watchLoop(ctx context.Context, opts WatchOptions, ch 
 		if s.watchOnce(ctx, opts, ch, &prev, fired, poll.C) {
 			return
 		}
+	}
+}
+
+// recoverWatchPanic is the top-frame defer for watchLoop. Converts a
+// goroutine-killing panic into a final EventError so callers see a
+// signal instead of an unexplained channel close. Constitution §VII
+// (.specify/memory/constitution.md): every spawned goroutine MUST
+// recover() at its top frame. Uses sendBlocking because the loop is
+// dying anyway — better to block briefly than to lose the signal.
+func recoverWatchPanic(ctx context.Context, ch chan<- Event) {
+	r := recover()
+	if r == nil {
+		return
+	}
+	sendBlocking(ctx, ch, Event{
+		Type: EventError,
+		At:   time.Now(),
+		Err:  fmt.Errorf("%w: %v", errWatchPanic, r),
+	})
+}
+
+// sendBlocking delivers ev with a ctx-cancel race. Used for events
+// the consumer MUST see: panic notification, final ("exit cleanly
+// NOW") expires-soon warning. Other events use send() which drops on
+// buffer-full to keep the poll/timer machinery responsive.
+func sendBlocking(ctx context.Context, ch chan<- Event, ev Event) {
+	select {
+	case ch <- ev:
+	case <-ctx.Done():
 	}
 }
 
@@ -188,7 +222,7 @@ func (s *SupervisorStatus) watchOnce(
 	threshDelay, threshLabel := nextThresholdDelay(*prev, opts.ExpiryThresholds, fired, time.Now())
 	if threshDelay == 0 && threshLabel > 0 {
 		// Already crossed — fire immediately and re-iterate.
-		fireExpiresSoon(ctx, ch, *prev, threshLabel, fired)
+		fireExpiresSoon(ctx, ch, *prev, threshLabel, opts.ExpiryThresholds, fired)
 		return false
 	}
 	var threshC <-chan time.Time
@@ -204,7 +238,7 @@ func (s *SupervisorStatus) watchOnce(
 	case <-pollC:
 		s.handlePoll(ctx, ch, prev, fired)
 	case <-threshC:
-		fireExpiresSoon(ctx, ch, *prev, threshLabel, fired)
+		fireExpiresSoon(ctx, ch, *prev, threshLabel, opts.ExpiryThresholds, fired)
 	}
 	return false
 }
@@ -223,12 +257,21 @@ func (s *SupervisorStatus) handlePoll(ctx context.Context, ch chan<- Event, prev
 }
 
 // fireExpiresSoon marks the threshold as fired and emits the event.
-func fireExpiresSoon(ctx context.Context, ch chan<- Event, status *Status, threshold time.Duration, fired map[time.Duration]bool) {
+// The smallest threshold (last in the descending-sorted slice — the
+// "exit cleanly NOW" warning) uses blocking send so a slow consumer
+// cannot lose the final warning. Other thresholds keep the
+// drop-on-full send so the poll/timer machinery stays responsive.
+func fireExpiresSoon(ctx context.Context, ch chan<- Event, status *Status, threshold time.Duration, thresholds []time.Duration, fired map[time.Duration]bool) {
 	fired[threshold] = true
-	send(ctx, ch, Event{
+	ev := Event{
 		Type: EventExpiresSoon, At: time.Now(),
 		Status: status, Threshold: threshold,
-	})
+	}
+	if len(thresholds) > 0 && threshold == thresholds[len(thresholds)-1] {
+		sendBlocking(ctx, ch, ev)
+		return
+	}
+	send(ctx, ch, ev)
 }
 
 // emitTransitionEvents compares prev and snap and emits any
@@ -303,15 +346,15 @@ func scopesEqual(a, b []string) bool {
 // send delivers ev to ch, dropping silently when the buffer is full
 // or when ctx is cancelled. Drop-on-overflow keeps the watcher
 // goroutine non-blocking — a slow consumer never starves the timer
-// machinery.
+// machinery. Callers that need lossless delivery should size Buffer
+// generously or drain promptly. Critical events (panic notification,
+// final expires-soon warning) use sendBlocking instead.
 func send(ctx context.Context, ch chan<- Event, ev Event) {
 	select {
 	case ch <- ev:
 	case <-ctx.Done():
 	default:
-		// Buffer full; drop the event to keep the loop responsive.
-		// Callers that need lossless delivery should size Buffer
-		// generously or drain promptly.
-		_ = fmt.Sprintf // intentionally no log; SDK avoids embedding a logger.
+		// Buffer full; drop to keep the loop responsive. No log —
+		// the SDK avoids embedding a logger.
 	}
 }

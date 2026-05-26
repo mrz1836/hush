@@ -33,8 +33,11 @@ import (
 // CurrentSession field of the response. An invalid bearer does not
 // fail the request — the response simply omits CurrentSession.
 //
-// HTTPClient defaults to http.DefaultClient when nil. Tests inject a
-// stub to drive failure modes.
+// HTTPClient defaults to http.DefaultClient when nil. http.DefaultClient
+// has no transport timeout — Me bounds the request via ctx. When ctx
+// carries no deadline the SDK applies a 30s default (meDefaultTimeout);
+// pass context.WithTimeout for latency-sensitive callers. Tests inject
+// a stub to drive failure modes.
 //
 // MachineName is included in the signed payload for parity with
 // /claim. A free-form identifier (e.g. os.Hostname). Required.
@@ -83,6 +86,21 @@ var ErrUnauthenticated = errors.New("hush/client: /me request rejected by server
 // when MeRequest.ServerURL uses a scheme other than http/https.
 var errBadServerURLScheme = errors.New("hush/client: ServerURL scheme must be http or https")
 
+// meDefaultTimeout caps a single Me() round-trip when the caller's
+// context carries no deadline. Matches the server's DefaultReadTimeout
+// / DefaultWriteTimeout at internal/server/server.go.
+const meDefaultTimeout = 30 * time.Second
+
+// ensureDeadline returns ctx unchanged if it already carries a
+// deadline; otherwise wraps it with fallback. The returned cancel
+// must always be called (defer cancel()) to release resources.
+func ensureDeadline(ctx context.Context, fallback time.Duration) (context.Context, context.CancelFunc) {
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, fallback)
+}
+
 // Me queries the vault server's /me endpoint and returns the parsed
 // response. The call does NOT trigger a Discord approval; it is safe
 // to invoke repeatedly for planning purposes.
@@ -98,6 +116,8 @@ func Me(ctx context.Context, req MeRequest) (*MeResponse, error) {
 	if err := validateMeRequest(req); err != nil {
 		return nil, err
 	}
+	ctx, cancel := ensureDeadline(ctx, meDefaultTimeout)
+	defer cancel()
 	endpoint, err := joinMeURL(req.ServerURL)
 	if err != nil {
 		return nil, fmt.Errorf("%w: ServerURL invalid: %w", ErrInvalidResponse, err)

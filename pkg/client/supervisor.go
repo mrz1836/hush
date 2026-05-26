@@ -170,10 +170,25 @@ func classifyReloadAck(ack reloadAckWire) error {
 	return fmt.Errorf("%w: %s", ErrReloadFailed, reason)
 }
 
+// supervisorDefaultTimeout caps a single status-socket round-trip
+// when the caller's context carries no deadline. 5s is generous for
+// a same-host Unix-socket call while still bounding a runaway peer.
+const supervisorDefaultTimeout = 5 * time.Second
+
+// supervisorMaxResponseBytes caps a single status-socket response.
+// Matches the server's MaxRequestBodyBytes (64 KiB at
+// internal/server/server.go). The supervisor's status JSON is well
+// under 1 KiB; ack payloads are smaller still.
+const supervisorMaxResponseBytes = 64 << 10
+
 // roundTrip dials the socket, sends verb, reads to EOF or context
 // deadline, and returns the bytes. Single attempt; never retries.
 // Any dial / write / read failure wraps ErrSocketUnavailable.
+// Responses larger than supervisorMaxResponseBytes are rejected with
+// ErrInvalidResponse rather than silently truncated.
 func (s *SupervisorStatus) roundTrip(ctx context.Context, verb string) ([]byte, error) {
+	ctx, cancel := ensureDeadline(ctx, supervisorDefaultTimeout)
+	defer cancel()
 	var dialer net.Dialer
 	conn, err := dialer.DialContext(ctx, "unix", s.socketPath)
 	if err != nil {
@@ -186,9 +201,12 @@ func (s *SupervisorStatus) roundTrip(ctx context.Context, verb string) ([]byte, 
 	if _, werr := conn.Write([]byte(verb)); werr != nil {
 		return nil, fmt.Errorf("%w: write verb: %w", ErrSocketUnavailable, werr)
 	}
-	body, rerr := io.ReadAll(conn)
+	body, rerr := io.ReadAll(io.LimitReader(conn, supervisorMaxResponseBytes+1))
 	if rerr != nil && !errors.Is(rerr, io.EOF) {
 		return nil, fmt.Errorf("%w: read response: %w", ErrSocketUnavailable, rerr)
+	}
+	if len(body) > supervisorMaxResponseBytes {
+		return nil, fmt.Errorf("%w: supervisor response exceeded %d bytes", ErrInvalidResponse, supervisorMaxResponseBytes)
 	}
 	return body, nil
 }

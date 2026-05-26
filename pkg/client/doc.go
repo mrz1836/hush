@@ -12,11 +12,17 @@
 // # Example
 //
 //	sup := client.NewSupervisorStatus("/var/run/hush/supervise-hermes.sock")
-//	status, err := sup.Snapshot(context.Background())
+//	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+//	defer cancel()
+//	status, err := sup.Snapshot(ctx)
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
 //	fmt.Println("expires at:", status.SessionExpiresAt)
+//
+// The SDK applies a defensive default deadline when ctx carries none,
+// but callers should supply their own context.WithTimeout matched to
+// their latency budget.
 //
 // # Scope
 //
