@@ -538,15 +538,56 @@ func materialize(d supervisorDecoded) (*Supervisor, error) {
 	}
 
 	// [reseal] — pointer preserves absence. Validation and parsing of the
-	// configured timezone, daily time, and weekday overrides are layered on top
-	// of this config surface by the dedicated reseal validation helpers.
+	// configured timezone, daily time, and weekday overrides are required when
+	// the section is present.
 	if d.Reseal != nil {
-		s.Reseal = &ResealSchedule{
-			Overrides: map[time.Weekday]hhmm{},
+		reseal, resealErr := materializeReseal(d.Reseal)
+		if resealErr != nil {
+			return nil, resealErr
 		}
+		s.Reseal = reseal
 	}
 
 	return s, nil
+}
+
+// materializeReseal validates and parses the optional [reseal] section.
+func materializeReseal(d *resealDecoded) (*ResealSchedule, error) {
+	if strings.TrimSpace(d.Timezone) == "" {
+		return nil, fmt.Errorf("%w: reseal.timezone", ErrResealTimezoneMissing)
+	}
+	// Go installations built without zoneinfo need the caller's binary to
+	// import time/tzdata for IANA timezone loading to work reliably.
+	location, err := time.LoadLocation(d.Timezone)
+	if err != nil {
+		return nil, fmt.Errorf("%w: got %q", ErrResealTimezoneInvalid, d.Timezone)
+	}
+	if strings.TrimSpace(d.DailyTime) == "" {
+		return nil, fmt.Errorf("%w: reseal.daily_time", ErrResealTimeMissing)
+	}
+	dailyTime, err := parseResealHHMM(d.DailyTime)
+	if err != nil {
+		return nil, err
+	}
+
+	overrides := make(map[time.Weekday]hhmm, len(d.Overrides))
+	for name, raw := range d.Overrides {
+		weekday, ok := weekdayByLowercaseName[name]
+		if !ok {
+			return nil, fmt.Errorf("%w: got %q", ErrResealWeekdayInvalid, name)
+		}
+		override, err := parseResealHHMM(raw)
+		if err != nil {
+			return nil, err
+		}
+		overrides[weekday] = override
+	}
+
+	return &ResealSchedule{
+		Location:  location,
+		DailyTime: dailyTime,
+		Overrides: overrides,
+	}, nil
 }
 
 // materializeReadiness applies defaults and validates the [child.readiness]

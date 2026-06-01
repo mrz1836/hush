@@ -99,6 +99,36 @@ func validateRefreshWindow(raw string) error {
 	return nil
 }
 
+// parseResealHHMM parses raw as "HH:MM" with an exact leading-zero shape.
+func parseResealHHMM(raw string) (hhmm, error) {
+	if len(raw) != 5 {
+		return hhmm{}, fmt.Errorf("%w: got %q", ErrResealTimeFormat, raw)
+	}
+	parsed, err := time.Parse("15:04", raw)
+	if err != nil {
+		return hhmm{}, fmt.Errorf("%w: got %q", ErrResealTimeFormat, raw)
+	}
+	return hhmm{Hour: parsed.Hour(), Minute: parsed.Minute()}, nil
+}
+
+func validateResealHHMM(value hhmm) error {
+	if value.Hour < 0 || value.Hour > 23 || value.Minute < 0 || value.Minute > 59 {
+		return fmt.Errorf("%w: got %02d:%02d", ErrResealTimeFormat, value.Hour, value.Minute)
+	}
+	return nil
+}
+
+//nolint:gochecknoglobals // sentinel-class: set-once at package load, never mutated
+var weekdayByLowercaseName = map[string]time.Weekday{
+	"sunday":    time.Sunday,
+	"monday":    time.Monday,
+	"tuesday":   time.Tuesday,
+	"wednesday": time.Wednesday,
+	"thursday":  time.Thursday,
+	"friday":    time.Friday,
+	"saturday":  time.Saturday,
+}
+
 // validateServerURL parses raw via net/url and rejects empty / parse-error /
 // empty-host / non-http(s)-scheme. Deeper checks (Tailscale CIDR, port, path)
 // are deferred to runtime hardening.
@@ -206,6 +236,10 @@ func (s *Supervisor) Validate() error {
 	// child references HUSH_BIND_PORT.
 	errs = append(errs, validateHandoff(s.Child)...)
 
+	// [reseal] — when present, enforce materialized timezone, daily time, and
+	// weekday override validity.
+	errs = append(errs, validateReseal(s.Reseal)...)
+
 	return errors.Join(errs...)
 }
 
@@ -250,6 +284,30 @@ func validateHandoff(child Child) []error {
 	}
 	if !childReferencesBindPort(child) {
 		errs = append(errs, fmt.Errorf("%w", ErrHandoffRequiresBindPortRef))
+	}
+	return errs
+}
+
+// validateReseal returns validation errors for the optional [reseal] section.
+func validateReseal(reseal *ResealSchedule) []error {
+	if reseal == nil {
+		return nil
+	}
+	var errs []error
+	if reseal.Location == nil {
+		errs = append(errs, fmt.Errorf("%w: reseal.timezone", ErrResealTimezoneMissing))
+	}
+	if err := validateResealHHMM(reseal.DailyTime); err != nil {
+		errs = append(errs, err)
+	}
+	for weekday, override := range reseal.Overrides {
+		if weekday < time.Sunday || weekday > time.Saturday {
+			errs = append(errs, fmt.Errorf("%w: got %d", ErrResealWeekdayInvalid, weekday))
+			continue
+		}
+		if err := validateResealHHMM(override); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	return errs
 }

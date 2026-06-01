@@ -439,6 +439,51 @@ func TestSuperviseConfig_WatchdogRateInvalid_Rejected(t *testing.T) {
 	}
 }
 
+// ---- Reseal schedule -------------------------------------------------------
+
+func TestSuperviseConfig_ResealValidation(t *testing.T) {
+	t.Parallel()
+	validReseal := `
+[reseal]
+timezone = "America/New_York"
+daily_time = "03:15"
+
+[reseal.overrides]
+monday = "04:30"
+sunday = "00:00"
+`
+	cases := []struct {
+		name     string
+		reseal   string
+		sentinel error
+	}{
+		{"valid", validReseal, nil},
+		{"missing timezone", strings.Replace(validReseal, `timezone = "America/New_York"`+"\n", "", 1), ErrResealTimezoneMissing},
+		{"bad timezone", strings.Replace(validReseal, `timezone = "America/New_York"`, `timezone = "Not/AZone"`, 1), ErrResealTimezoneInvalid},
+		{"missing daily time", strings.Replace(validReseal, `daily_time = "03:15"`+"\n", "", 1), ErrResealTimeMissing},
+		{"bad daily time", strings.Replace(validReseal, `daily_time = "03:15"`, `daily_time = "3:15"`, 1), ErrResealTimeFormat},
+		{"bad override time", strings.Replace(validReseal, `monday = "04:30"`, `monday = "24:00"`, 1), ErrResealTimeFormat},
+		{"bad weekday key", strings.Replace(validReseal, `monday = "04:30"`, `Monday = "04:30"`, 1), ErrResealWeekdayInvalid},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s, err := loadBody(t, minimalBody(t)+tc.reseal)
+			if tc.sentinel != nil {
+				require.Error(t, err)
+				assert.True(t, errors.Is(err, tc.sentinel), "expected %v, got %v", tc.sentinel, err)
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, s.Reseal)
+			assert.Equal(t, "America/New_York", s.Reseal.Location.String())
+			assert.Equal(t, hhmm{Hour: 3, Minute: 15}, s.Reseal.DailyTime)
+			assert.Equal(t, hhmm{Hour: 4, Minute: 30}, s.Reseal.Overrides[time.Monday])
+			assert.Equal(t, hhmm{Hour: 0, Minute: 0}, s.Reseal.Overrides[time.Sunday])
+		})
+	}
+}
+
 func TestSuperviseConfig_RejectsInvalidDuration(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -540,6 +585,13 @@ func TestSupervisor_Validate_DetectsAllRulesIndependently(t *testing.T) {
 		{"server url invalid", func(s *Supervisor) { s.ServerURL = "ftp://bad" }, ErrServerURLInvalid},
 		{"missing name", func(s *Supervisor) { s.Name = "" }, ErrMissingRequiredField},
 		{"missing reason", func(s *Supervisor) { s.Reason = "" }, ErrMissingRequiredField},
+		{"reseal timezone missing", func(s *Supervisor) { s.Reseal = &ResealSchedule{} }, ErrResealTimezoneMissing},
+		{"reseal daily time invalid", func(s *Supervisor) {
+			s.Reseal = &ResealSchedule{Location: time.UTC, DailyTime: hhmm{Hour: 24}}
+		}, ErrResealTimeFormat},
+		{"reseal weekday invalid", func(s *Supervisor) {
+			s.Reseal = &ResealSchedule{Location: time.UTC, Overrides: map[time.Weekday]hhmm{time.Weekday(7): {}}}
+		}, ErrResealWeekdayInvalid},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
