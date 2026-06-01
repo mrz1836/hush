@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/mrz1836/hush/internal/supervise/config"
 )
 
 // errors and lint-suppressions for the parser are declared near the
@@ -20,13 +22,13 @@ var errRefresherAlreadyRan = errors.New("supervise: Refresher.Run already invoke
 
 // refresherTickInterval is the wall-clock granularity at which the
 // Refresher re-evaluates its window predicates. The contract is "at
-// most one fire per (window, calendar-day) pair" + "at most one T-30
-// fallback per session" — minute-level granularity is well below any
+// most one fire per (window, calendar-day) pair" + "at most one
+// pre-deadline fallback per session" — minute-level granularity is well below any
 // operator-perceptible delay and avoids busy-spin.
 const refresherTickInterval = time.Minute
 
 // Refresher schedules at most one refill callback fire per configured
-// local-time window per calendar day, plus at most one T-30 fallback
+// local-time window per calendar day, plus at most one pre-deadline fallback
 // fire per session. Run blocks until ctx is cancelled. Single-shot —
 // Run returns a sentinel error on second call.
 type Refresher struct {
@@ -42,6 +44,10 @@ type Refresher struct {
 	bornAt       time.Time
 	lastFiredDay time.Time
 	t30Fired     bool
+
+	nudge      time.Duration
+	deadlineFn func() time.Time
+	publish    func(time.Time)
 
 	// testTickC, when non-nil, replaces the internal time.Timer
 	// driving Run's tick loop. Set by package-private tests via
@@ -167,7 +173,18 @@ func (r *Refresher) tick(ctx context.Context) {
 	// The refresh window is operator-configured local-time;
 	// time.Local is the anchor.
 	now := r.now().In(time.Local) //nolint:gosmopolitan // window is operator-configured local-time
+	defer func() {
+		if r.publish != nil {
+			r.publish(r.nextFire(now))
+		}
+	}()
 	today := dateOnly(now)
+	deadline := r.effectiveDeadline(now)
+	nudge := r.effectiveNudge()
+
+	if r.t30Fired && deadline.Sub(now) >= nudge {
+		r.t30Fired = false
+	}
 
 	if r.windowContains(now) {
 		if !sameDay(today, r.lastFiredDay) {
@@ -177,19 +194,61 @@ func (r *Refresher) tick(ctx context.Context) {
 		return
 	}
 
-	// Window passed for today; consider T-30 fallback.
+	// Consider the fallback before the session deadline.
 	if r.t30Fired {
 		return
 	}
-	if !r.windowEndedBefore(now) {
-		return
-	}
-	deadline := r.bornAt.Add(r.ttl)
-	if deadline.Sub(now) < 30*time.Minute && !sameDay(today, r.lastFiredDay) {
+	if deadline.Sub(now) <= nudge && !sameDay(today, r.lastFiredDay) {
 		r.fire(ctx)
 		r.lastFiredDay = today
 		r.t30Fired = true
 	}
+}
+
+func (r *Refresher) effectiveNudge() time.Duration {
+	if r.nudge != 0 {
+		return r.nudge
+	}
+	return config.DefaultRefreshNudgeBefore
+}
+
+func (r *Refresher) effectiveDeadline(now time.Time) time.Time {
+	if r.deadlineFn != nil {
+		if deadline := r.deadlineFn(); !deadline.IsZero() {
+			return deadline.In(now.Location())
+		}
+	}
+	return r.bornAt.Add(r.ttl).In(now.Location())
+}
+
+func (r *Refresher) nextFire(now time.Time) time.Time {
+	now = now.In(time.Local) //nolint:gosmopolitan // window is operator-configured local-time
+	windowStart := r.nextWindowStart(now)
+	deadlineCandidate := r.effectiveDeadline(now).Add(-r.effectiveNudge())
+	candidateDay := dateOnly(deadlineCandidate)
+
+	if !deadlineCandidate.Before(now) && deadlineCandidate.Before(windowStart) && !sameDay(candidateDay, r.lastFiredDay) {
+		return deadlineCandidate
+	}
+	return windowStart
+}
+
+func (r *Refresher) nextWindowStart(now time.Time) time.Time {
+	today := dateOnly(now)
+	windowStart := time.Date(
+		now.Year(),
+		now.Month(),
+		now.Day(),
+		r.startHour,
+		r.startMin,
+		0,
+		0,
+		now.Location(),
+	)
+	if windowStart.Before(now) || sameDay(today, r.lastFiredDay) {
+		windowStart = windowStart.AddDate(0, 0, 1)
+	}
+	return windowStart
 }
 
 // fire invokes the operator-supplied refill callback. A non-nil
@@ -225,7 +284,7 @@ func (r *Refresher) windowContains(t time.Time) bool {
 }
 
 // windowEndedBefore reports whether the window's end-instant has
-// already elapsed *today* in local time. Used to gate the T-30
+// already elapsed *today* in local time. Used to gate the pre-deadline
 // fallback: only fires when the window has already passed.
 func (r *Refresher) windowEndedBefore(t time.Time) bool {
 	mins := t.Hour()*60 + t.Minute()
