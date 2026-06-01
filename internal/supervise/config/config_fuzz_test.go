@@ -7,7 +7,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/pelletier/go-toml/v2"
 )
 
 // FuzzSuperviseTOML feeds random byte streams to Load. Contract:
@@ -84,12 +87,23 @@ func FuzzSuperviseTOML(f *testing.F) { //nolint:gocognit,gocyclo // fuzz target:
 	})
 }
 
+func tomlString(t *testing.T, value string) string {
+	t.Helper()
+
+	encoded, err := toml.Marshal(map[string]string{"value": strings.ToValidUTF8(value, "\uFFFD")})
+	if err != nil {
+		t.Fatalf("marshal TOML string: %v", err)
+	}
+	return strings.TrimPrefix(strings.TrimSpace(string(encoded)), "value = ")
+}
+
 func FuzzResealScheduleStrings(f *testing.F) { //nolint:gocognit // fuzz target: seed setup + sentinel assertions are intentionally in one harness
 	f.Add("America/New_York", "03:00", "04:00")
 	f.Add("", "03:00", "04:00")
 	f.Add("Not/AZone", "03:00", "04:00")
 	f.Add("America/New_York", "3:00", "04:00")
 	f.Add("America/New_York", "03:00", "24:00")
+	f.Add("America/New_York", `\\x`, "04:00")
 
 	base, err := os.ReadFile("testdata/valid_minimal.toml")
 	if err != nil {
@@ -114,12 +128,12 @@ func FuzzResealScheduleStrings(f *testing.F) { //nolint:gocognit // fuzz target:
 		cfg := filepath.Join(dir, "reseal.toml")
 		body := string(base) + fmt.Sprintf(`
 [reseal]
-timezone = %q
-daily_time = %q
+timezone = %s
+daily_time = %s
 
 [reseal.overrides]
-monday = %q
-`, timezone, dailyTime, mondayOverride)
+monday = %s
+`, tomlString(t, timezone), tomlString(t, dailyTime), tomlString(t, mondayOverride))
 		if writeErr := os.WriteFile(cfg, []byte(body), 0o600); writeErr != nil {
 			return
 		}
