@@ -274,6 +274,14 @@ scope = [
   "GITHUB_TOKEN"
 ]
 
+[reseal]
+timezone = "America/New_York"   # IANA time zone for scheduled reseal slots
+daily_time = "10:00"            # default daily HH:MM slot
+
+[reseal.overrides]              # optional per-weekday HH:MM overrides
+saturday = "14:00"
+sunday = "14:00"
+
 [child]
 command = ["/usr/local/bin/your-daemon-binary", "start"]   # absolute path; no shell parsing
 working_dir = "~"
@@ -388,6 +396,87 @@ Optional:
   - rules:
     - non-empty
     - each item is an exact secret name approved for this daemon
+
+### `[reseal]`
+
+Optional. Presence opts the supervisor into scheduled reseal. Without this
+section, every claim keeps using the static `requested_ttl` root field.
+
+Scheduled reseal uses dynamic claim TTLs, not a separate timer or approval
+path. On each supervisor `/claim`, hush computes:
+
+```text
+requested_ttl = min(24h, next_configured_reseal_slot - now)
+```
+
+The resulting session expires at the configured wall-clock slot when the slot
+is reachable within the 24h ceiling. The normal expiry-to-approval path then
+requests the next operator approval. This design keeps the server-side 24h
+supervisor TTL ceiling intact: the schedule can shorten a session, but it
+never lengthens one beyond the ceiling.
+
+Required fields:
+
+- `timezone`
+  - type: string
+  - example: `America/New_York`
+  - rules:
+    - required when `[reseal]` is present
+    - must be a valid IANA time zone accepted by `time.LoadLocation`
+    - all slot arithmetic is computed in this time zone
+
+- `daily_time`
+  - type: string
+  - example: `10:00`
+  - rules:
+    - required when `[reseal]` is present
+    - exact `HH:MM` format with leading zeroes
+    - `00:00` through `23:59`
+    - default slot for every day without an override
+
+Optional fields:
+
+- `[reseal.overrides]`
+  - type: map of lowercase weekday name to `HH:MM`
+  - allowed keys:
+    - `sunday`
+    - `monday`
+    - `tuesday`
+    - `wednesday`
+    - `thursday`
+    - `friday`
+    - `saturday`
+  - purpose:
+    - replace `daily_time` for a specific weekday
+  - rules:
+    - every value must use the same exact `HH:MM` format as `daily_time`
+    - unknown weekday keys are startup errors
+
+Example:
+
+```toml
+[reseal]
+timezone = "America/New_York"
+daily_time = "10:00"
+
+[reseal.overrides]
+saturday = "14:00"
+sunday = "14:00"
+```
+
+The schedule has a minimum-session floor named `ResealMinSessionFloor`,
+currently `1h`. If the next civil slot is less than one hour away, hush skips
+that too-near slot and targets the following configured slot. Because the
+requested TTL is still clamped at 24h, a supervisor that boots just before a
+daily slot can stabilize up to one hour before the configured wall-clock time
+until the next normal cycle.
+
+The 24h clamp is always applied client-side before a claim is sent, and the
+server applies the same maximum supervisor TTL as a security backstop. If the
+computed next slot is more than 24h away, hush requests exactly 24h and logs
+that the schedule was clamped. A per-day override can only move the slot
+earlier or to a chosen time within 24h; it can never skip a day or extend past
+the ceiling.
 
 ### `[child]`
 
@@ -552,6 +641,7 @@ Rules:
   "state": "running",
   "session_expires_at": "2026-04-15T06:12:00-07:00",
   "refresh_window_next": "2026-04-15T09:00:00-07:00",
+  "reseal_next": "2026-04-16T10:00:00-04:00",
   "scope_healthy": ["ANTHROPIC_API_KEY"],
   "scope_stale": [],
   "last_auth_failure": null,
@@ -566,12 +656,16 @@ Required fields:
 - `state`
 - `session_expires_at`
 - `refresh_window_next`
+- `reseal_next`
 - `scope_healthy`
 - `scope_stale`
 - `last_auth_failure`
 - `child_pid`
 - `child_uptime`
 - `discord_connected`
+
+`reseal_next` is a timestamp string for the next scheduled reseal when
+`[reseal]` is configured, otherwise `null`.
 
 ---
 
@@ -589,6 +683,11 @@ Startup must fail if any of these are true:
 - supervisor scope is empty
 - unknown validator is declared
 - refresh window is malformed
+- requested TTL exceeds the 24h ceiling
+- reseal timezone is missing or not a valid IANA location
+- reseal daily time is missing or not exact `HH:MM`
+- reseal override weekday is unknown
+- reseal override time is not exact `HH:MM`
 - grace cache TTL exceeds the 4h cap
 - status socket or pid file path is unsafe/unwritable
 

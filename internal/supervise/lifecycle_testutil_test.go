@@ -171,6 +171,7 @@ type mockVaultBehaviour struct {
 	mu         sync.Mutex
 	scopeValue map[string][]byte // plaintext per scope; encrypted per request
 	scopeFail  map[string]int    // per-scope failure status (>0 → return it)
+	lastClaim  claimWireRequest
 }
 
 // claimOutcome describes one /claim response.
@@ -216,6 +217,13 @@ func (m *mockVault) Client() *http.Client { return m.srv.Client() }
 
 // ClaimCount returns the number of /claim calls served.
 func (m *mockVault) ClaimCount() int { return int(m.claimCount.Load()) }
+
+// LastClaim returns the most recent /claim request body.
+func (m *mockVault) LastClaim() claimWireRequest {
+	m.behaviour.mu.Lock()
+	defer m.behaviour.mu.Unlock()
+	return m.behaviour.lastClaim
+}
 
 // SetHzStatus sets the /hz response status. 0 means 200.
 func (m *mockVault) SetHzStatus(s int) { m.behaviour.hzStatus.Store(int32(s)) }
@@ -302,8 +310,14 @@ func (m *mockVault) handle(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleClaim consumes the next queued outcome.
-func (m *mockVault) handleClaim(w http.ResponseWriter, _ *http.Request) {
+func (m *mockVault) handleClaim(w http.ResponseWriter, r *http.Request) {
 	m.claimCount.Add(1)
+	var req claimWireRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
+		m.behaviour.mu.Lock()
+		m.behaviour.lastClaim = req
+		m.behaviour.mu.Unlock()
+	}
 	var o claimOutcome
 	select {
 	case o = <-m.behaviour.claimQueue:
@@ -337,6 +351,38 @@ func (m *mockVault) handleClaim(w http.ResponseWriter, _ *http.Request) {
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		m.t.Errorf("encode claim response: %v", err)
 	}
+}
+
+func loadTestResealSchedule(t *testing.T, section string) *config.ResealSchedule {
+	t.Helper()
+	dir := t.TempDir()
+	p := filepath.Join(dir, "supervise.toml")
+	body := `name = "example-daemon"
+reason = "Example long-running daemon"
+server_url = "http://127.0.0.1:7743/h/example"
+client_machine_index = 2
+session_type = "supervisor"
+requested_ttl = "20h"
+refresh_window = "09:00-10:00"
+status_socket = "` + filepath.Join(dir, "status.sock") + `"
+pid_file = "` + filepath.Join(dir, "supervise.pid") + `"
+scope = ["ANTHROPIC_API_KEY"]
+
+[child]
+command = ["/bin/echo", "ok"]
+
+` + section
+	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+		t.Fatalf("write reseal config: %v", err)
+	}
+	cfg, err := config.Load(context.Background(), p)
+	if err != nil {
+		t.Fatalf("load reseal config: %v", err)
+	}
+	if cfg.Reseal == nil {
+		t.Fatal("loaded reseal schedule is nil")
+	}
+	return cfg.Reseal
 }
 
 // handleSecret returns the ECIES-encrypted scope value for /s/{name}.

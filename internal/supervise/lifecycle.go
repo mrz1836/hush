@@ -136,6 +136,7 @@ type statusInputs struct {
 	sessionExp       atomic.Pointer[time.Time]
 	sessionJTI       atomic.Pointer[string]
 	refreshNext      atomic.Pointer[time.Time]
+	resealNext       atomic.Pointer[time.Time]
 	restartCount     atomic.Uint64
 	discordConnected atomic.Bool
 }
@@ -167,6 +168,14 @@ func (o *statusInputs) RestartCount() uint64 {
 // RefreshWindowNext returns the next refresh-window instant.
 func (o *statusInputs) RefreshWindowNext() time.Time {
 	if p := o.refreshNext.Load(); p != nil {
+		return *p
+	}
+	return time.Time{}
+}
+
+// ResealNext returns the next scheduled reseal instant, when configured.
+func (o *statusInputs) ResealNext() time.Time {
+	if p := o.resealNext.Load(); p != nil {
 		return *p
 	}
 	return time.Time{}
@@ -297,7 +306,7 @@ type Lifecycle struct {
 	backendPort uint16
 
 	// proxyMu guards proxy. proxy is the HTTP reverse proxy listener
-	// attached for reload-eligible supervisors (T-306 Phase 5). nil when
+	// attached for reload-eligible supervisors. nil when
 	// the config does not opt into [child.handoff] mode = "http-proxy"
 	// or the orchestration layer has not yet attached one. Mutated only
 	// via AttachProxy; SwapChild reads it under proxyMu.
@@ -379,6 +388,7 @@ func NewLifecycle(ctx context.Context, cfg *config.Supervisor, deps Deps) *Lifec
 	lc.refresher.nudge = cfg.RefreshNudgeBefore
 	lc.refresher.deadlineFn = func() time.Time { return lc.inputs.SessionExpiresAt() }
 	lc.refresher.publish = func(t time.Time) { lc.inputs.refreshNext.Store(&t) }
+	lc.publishResealNextForNow(deps.NowFn())
 
 	// AttachRefreshHandler binds the status-socket refresh verb to a closure
 	// that posts on refreshVerbCh and blocks on ack. State-conditional
@@ -437,6 +447,20 @@ func (l *Lifecycle) Run(ctx context.Context) error {
 	var runErr error
 	l.runOnce.Do(func() { runErr = l.run(ctx) })
 	return runErr
+}
+
+func (l *Lifecycle) publishResealNextForNow(now time.Time) {
+	if l.config.Reseal == nil {
+		return
+	}
+	l.publishResealNext(l.config.Reseal.NextReseal(now))
+}
+
+func (l *Lifecycle) publishResealNext(t time.Time) {
+	if t.IsZero() {
+		return
+	}
+	l.inputs.resealNext.Store(&t)
 }
 
 // run is the top-level dispatcher. Spawns the StatusServer + Refresher,

@@ -29,6 +29,7 @@ type statusDoc struct {
 	State             string   `json:"state"`
 	SessionExpiresAt  string   `json:"session_expires_at"`
 	RefreshWindowNext string   `json:"refresh_window_next"`
+	ResealNext        *string  `json:"reseal_next"`
 	ScopeHealthy      []string `json:"scope_healthy"`
 	ScopeStale        []string `json:"scope_stale"`
 	LastAuthFailure   *string  `json:"last_auth_failure"`
@@ -272,6 +273,10 @@ func writeHumanStatus(w io.Writer, doc statusDoc) error {
 	if doc.DiscordConnected {
 		discord = "connected"
 	}
+	resealNext := "none"
+	if doc.ResealNext != nil {
+		resealNext = *doc.ResealNext
+	}
 	state := doc.State
 	if state == "" {
 		state = "(unknown)"
@@ -283,6 +288,7 @@ func writeHumanStatus(w io.Writer, doc statusDoc) error {
 		fmt.Sprintf("Child up:   %s", doc.ChildUptime),
 		fmt.Sprintf("Session expires: %s", doc.SessionExpiresAt),
 		fmt.Sprintf("Next refresh:    %s", doc.RefreshWindowNext),
+		fmt.Sprintf("Next reseal:     %s", resealNext),
 		fmt.Sprintf("Healthy scopes:  %s", healthy),
 		fmt.Sprintf("Stale scopes:    %s", stale),
 		fmt.Sprintf("Discord:    %s", discord),

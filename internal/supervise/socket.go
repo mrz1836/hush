@@ -43,6 +43,7 @@ type StatusInputs interface {
 	SessionJTI() string
 	RestartCount() uint64
 	RefreshWindowNext() time.Time
+	ResealNext() time.Time
 	ScopeHealthy() []string
 	ScopeStale() []string
 	LastAuthFailure() *time.Time
@@ -505,6 +506,7 @@ type statusJSON struct {
 	SessionJTI        string   `json:"session_jti"`
 	RestartCount      uint64   `json:"restart_count"`
 	RefreshWindowNext string   `json:"refresh_window_next"`
+	ResealNext        *string  `json:"reseal_next"`
 	ScopeHealthy      []string `json:"scope_healthy"`
 	ScopeStale        []string `json:"scope_stale"`
 	LastAuthFailure   *string  `json:"last_auth_failure"`
@@ -535,26 +537,34 @@ func (s *StatusServer) renderStatus(snap Snapshot) ([]byte, error) {
 	doc.RefreshWindowNext = time.Time{}.Format(time.RFC3339)
 
 	if inputs != nil {
-		doc.Supervisor = inputs.Name()
-		doc.SessionExpiresAt = inputs.SessionExpiresAt().Format(time.RFC3339)
-		doc.SessionJTI = inputs.SessionJTI()
-		doc.RestartCount = inputs.RestartCount()
-		doc.RefreshWindowNext = inputs.RefreshWindowNext().Format(time.RFC3339)
-		if h := inputs.ScopeHealthy(); h != nil {
-			doc.ScopeHealthy = h
-		}
-		if st := inputs.ScopeStale(); st != nil {
-			doc.ScopeStale = st
-		}
-		if laf := inputs.LastAuthFailure(); laf != nil {
-			s := laf.Format(time.RFC3339)
-			doc.LastAuthFailure = &s
-		}
-		doc.ChildUptime = inputs.ChildUptime().String()
-		doc.DiscordConnected = inputs.DiscordConnected()
+		applyStatusInputs(&doc, inputs)
 	}
 
 	return json.Marshal(doc)
+}
+
+func applyStatusInputs(doc *statusJSON, inputs StatusInputs) {
+	doc.Supervisor = inputs.Name()
+	doc.SessionExpiresAt = inputs.SessionExpiresAt().Format(time.RFC3339)
+	doc.SessionJTI = inputs.SessionJTI()
+	doc.RestartCount = inputs.RestartCount()
+	doc.RefreshWindowNext = inputs.RefreshWindowNext().Format(time.RFC3339)
+	if next := inputs.ResealNext(); !next.IsZero() {
+		s := next.Format(time.RFC3339)
+		doc.ResealNext = &s
+	}
+	if h := inputs.ScopeHealthy(); h != nil {
+		doc.ScopeHealthy = h
+	}
+	if st := inputs.ScopeStale(); st != nil {
+		doc.ScopeStale = st
+	}
+	if laf := inputs.LastAuthFailure(); laf != nil {
+		s := laf.Format(time.RFC3339)
+		doc.LastAuthFailure = &s
+	}
+	doc.ChildUptime = inputs.ChildUptime().String()
+	doc.DiscordConnected = inputs.DiscordConnected()
 }
 
 // ensureParentMode0700 is consumed by both AcquirePidFile and

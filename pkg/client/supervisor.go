@@ -219,6 +219,7 @@ type statusWire struct {
 	SessionJTI        string   `json:"session_jti"`
 	RestartCount      uint64   `json:"restart_count"`
 	RefreshWindowNext string   `json:"refresh_window_next"`
+	ResealNext        *string  `json:"reseal_next"`
 	ScopeHealthy      []string `json:"scope_healthy"`
 	ScopeStale        []string `json:"scope_stale"`
 	LastAuthFailure   *string  `json:"last_auth_failure"`
@@ -237,12 +238,13 @@ func (w *statusWire) toStatus() (*Status, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: refresh_window_next: %w", ErrInvalidResponse, err)
 	}
-	var lastFail time.Time
-	if w.LastAuthFailure != nil {
-		lastFail, err = parseRFC3339OrZero(*w.LastAuthFailure)
-		if err != nil {
-			return nil, fmt.Errorf("%w: last_auth_failure: %w", ErrInvalidResponse, err)
-		}
+	resealNext, err := parseOptionalRFC3339(w.ResealNext, "reseal_next")
+	if err != nil {
+		return nil, err
+	}
+	lastFail, err := parseOptionalRFC3339(w.LastAuthFailure, "last_auth_failure")
+	if err != nil {
+		return nil, err
 	}
 	uptime := time.Duration(0)
 	if w.ChildUptime != "" {
@@ -262,6 +264,7 @@ func (w *statusWire) toStatus() (*Status, error) {
 		SessionExpiresAt:  exp,
 		RestartCount:      w.RestartCount,
 		RefreshWindowNext: next,
+		ResealNext:        resealNext,
 		ScopeHealthy:      w.ScopeHealthy,
 		ScopeStale:        w.ScopeStale,
 		LastAuthFailure:   lastFail,
@@ -269,6 +272,17 @@ func (w *statusWire) toStatus() (*Status, error) {
 		ChildUptime:       uptime,
 		DiscordConnected:  w.DiscordConnected,
 	}, nil
+}
+
+func parseOptionalRFC3339(value *string, field string) (time.Time, error) {
+	if value == nil {
+		return time.Time{}, nil
+	}
+	parsed, err := parseRFC3339OrZero(*value)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("%w: %s: %w", ErrInvalidResponse, field, err)
+	}
+	return parsed, nil
 }
 
 // refreshAckWire mirrors the supervise refresh-ack DTO.

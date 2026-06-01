@@ -43,6 +43,7 @@ type Supervisor struct {
 	Discord    DiscordRouting
 	Validators map[string]Validator
 	Watchdog   Watchdog
+	Reseal     *ResealSchedule
 }
 
 // Child is the [child] section of the supervisor config.
@@ -118,6 +119,20 @@ type Watchdog struct {
 	MaxAlertsPerHour int
 }
 
+// ResealSchedule is the optional [reseal] section of the supervisor config.
+// A nil *ResealSchedule means the operator did not configure scheduled reseal,
+// so the supervisor keeps using the static requested_ttl path.
+type ResealSchedule struct {
+	Location  *time.Location
+	DailyTime hhmm
+	Overrides map[time.Weekday]hhmm
+}
+
+type hhmm struct {
+	Hour   int
+	Minute int
+}
+
 // Validator is the constrained-string typedef used for [validators] map
 // values. A Validator value held by a successfully loaded *Supervisor is
 // guaranteed to be in the package-level allow-list.
@@ -154,6 +169,7 @@ type supervisorDecoded struct {
 	Discord    discordDecoded    `toml:"discord"`
 	Validators map[string]string `toml:"validators"`
 	Watchdog   *watchdogDecoded  `toml:"watchdog"`
+	Reseal     *resealDecoded    `toml:"reseal"`
 }
 
 type childDecoded struct {
@@ -194,6 +210,12 @@ type watchdogDecoded struct {
 	Enabled          *bool    `toml:"enabled"`
 	Patterns         []string `toml:"patterns"`
 	MaxAlertsPerHour *int     `toml:"max_alerts_per_hour"`
+}
+
+type resealDecoded struct {
+	Timezone  string            `toml:"timezone"`
+	DailyTime string            `toml:"daily_time"`
+	Overrides map[string]string `toml:"overrides"`
 }
 
 // ---- Load -------------------------------------------------------------------
@@ -515,7 +537,57 @@ func materialize(d supervisorDecoded) (*Supervisor, error) {
 		return nil, fmt.Errorf("%w: got %d", ErrWatchdogRateInvalid, s.Watchdog.MaxAlertsPerHour)
 	}
 
+	// [reseal] — pointer preserves absence. Validation and parsing of the
+	// configured timezone, daily time, and weekday overrides are required when
+	// the section is present.
+	if d.Reseal != nil {
+		reseal, resealErr := materializeReseal(d.Reseal)
+		if resealErr != nil {
+			return nil, resealErr
+		}
+		s.Reseal = reseal
+	}
+
 	return s, nil
+}
+
+// materializeReseal validates and parses the optional [reseal] section.
+func materializeReseal(d *resealDecoded) (*ResealSchedule, error) {
+	if strings.TrimSpace(d.Timezone) == "" {
+		return nil, fmt.Errorf("%w: reseal.timezone", ErrResealTimezoneMissing)
+	}
+	// Go installations built without zoneinfo need the caller's binary to
+	// import time/tzdata for IANA timezone loading to work reliably.
+	location, err := time.LoadLocation(d.Timezone)
+	if err != nil {
+		return nil, fmt.Errorf("%w: got %q", ErrResealTimezoneInvalid, d.Timezone)
+	}
+	if strings.TrimSpace(d.DailyTime) == "" {
+		return nil, fmt.Errorf("%w: reseal.daily_time", ErrResealTimeMissing)
+	}
+	dailyTime, err := parseResealHHMM(d.DailyTime)
+	if err != nil {
+		return nil, err
+	}
+
+	overrides := make(map[time.Weekday]hhmm, len(d.Overrides))
+	for name, raw := range d.Overrides {
+		weekday, ok := weekdayByLowercaseName[name]
+		if !ok {
+			return nil, fmt.Errorf("%w: got %q", ErrResealWeekdayInvalid, name)
+		}
+		override, err := parseResealHHMM(raw)
+		if err != nil {
+			return nil, err
+		}
+		overrides[weekday] = override
+	}
+
+	return &ResealSchedule{
+		Location:  location,
+		DailyTime: dailyTime,
+		Overrides: overrides,
+	}, nil
 }
 
 // materializeReadiness applies defaults and validates the [child.readiness]
