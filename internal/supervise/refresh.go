@@ -159,7 +159,7 @@ func (r *Refresher) setTickerForTest(c <-chan time.Time) {
 
 // primeForTest sets internal flags directly (lastFiredDay, t30Fired)
 // so tests can simulate "we already fired at 09:30 today" before Run.
-func (r *Refresher) primeForTest(lastFiredDay time.Time, t30Fired bool) {
+func (r *Refresher) primeForTest(lastFiredDay time.Time, t30Fired bool) { //nolint:unparam // t30Fired=true caller lives in export_for_integration.go (//go:build integration), invisible to the default lint build
 	r.lastFiredDay = lastFiredDay
 	r.t30Fired = t30Fired
 }
