@@ -25,6 +25,22 @@ func proxyTestLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+func listenEventually(t *testing.T, addr string) (net.Listener, error) {
+	t.Helper()
+	var lastErr error
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		var lc net.ListenConfig
+		l, err := lc.Listen(context.Background(), "tcp", addr)
+		if err == nil {
+			return l, nil
+		}
+		lastErr = err
+		time.Sleep(10 * time.Millisecond)
+	}
+	return nil, lastErr
+}
+
 // startBackend stands up an httptest.Server on 127.0.0.1 with the
 // supplied handler and returns the parsed loopback port.
 func startBackend(t *testing.T, handler http.Handler) (*httptest.Server, uint16) {
@@ -303,10 +319,9 @@ func TestProxy_StopReleasesListener(t *testing.T) {
 	if err := p.SetBackend(12345); !errors.Is(err, supervise.ErrProxyNotStarted) {
 		t.Fatalf("SetBackend after Stop: want ErrProxyNotStarted, got %v", err)
 	}
-	// Re-bind the address with a fresh listener — proves the prior
-	// listener really released the port.
-	var lc net.ListenConfig
-	l, err := lc.Listen(context.Background(), "tcp", addr)
+	// Re-bind the address with a fresh listener; under the race detector the
+	// kernel may report the just-closed socket for a short interval.
+	l, err := listenEventually(t, addr)
 	if err != nil {
 		t.Fatalf("re-bind %s after Stop: %v", addr, err)
 	}

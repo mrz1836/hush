@@ -306,7 +306,7 @@ type Lifecycle struct {
 	backendPort uint16
 
 	// proxyMu guards proxy. proxy is the HTTP reverse proxy listener
-	// attached for reload-eligible supervisors (T-306 Phase 5). nil when
+	// attached for reload-eligible supervisors. nil when
 	// the config does not opt into [child.handoff] mode = "http-proxy"
 	// or the orchestration layer has not yet attached one. Mutated only
 	// via AttachProxy; SwapChild reads it under proxyMu.
@@ -398,20 +398,6 @@ func NewLifecycle(ctx context.Context, cfg *config.Supervisor, deps Deps) *Lifec
 	return lc
 }
 
-func (l *Lifecycle) publishResealNextForNow(now time.Time) {
-	if l.config.Reseal == nil {
-		return
-	}
-	l.publishResealNext(l.config.Reseal.NextReseal(now))
-}
-
-func (l *Lifecycle) publishResealNext(t time.Time) {
-	if t.IsZero() {
-		return
-	}
-	l.inputs.resealNext.Store(&t)
-}
-
 // wireDepsDefaults fills in the no-op / default seams for any nil-safe
 // Deps field. Required fields are pre-validated.
 //
@@ -461,6 +447,20 @@ func (l *Lifecycle) Run(ctx context.Context) error {
 	var runErr error
 	l.runOnce.Do(func() { runErr = l.run(ctx) })
 	return runErr
+}
+
+func (l *Lifecycle) publishResealNextForNow(now time.Time) {
+	if l.config.Reseal == nil {
+		return
+	}
+	l.publishResealNext(l.config.Reseal.NextReseal(now))
+}
+
+func (l *Lifecycle) publishResealNext(t time.Time) {
+	if t.IsZero() {
+		return
+	}
+	l.inputs.resealNext.Store(&t)
 }
 
 // run is the top-level dispatcher. Spawns the StatusServer + Refresher,

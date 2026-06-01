@@ -238,19 +238,13 @@ func (w *statusWire) toStatus() (*Status, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: refresh_window_next: %w", ErrInvalidResponse, err)
 	}
-	var resealNext time.Time
-	if w.ResealNext != nil {
-		resealNext, err = parseRFC3339OrZero(*w.ResealNext)
-		if err != nil {
-			return nil, fmt.Errorf("%w: reseal_next: %w", ErrInvalidResponse, err)
-		}
+	resealNext, err := parseOptionalRFC3339(w.ResealNext, "reseal_next")
+	if err != nil {
+		return nil, err
 	}
-	var lastFail time.Time
-	if w.LastAuthFailure != nil {
-		lastFail, err = parseRFC3339OrZero(*w.LastAuthFailure)
-		if err != nil {
-			return nil, fmt.Errorf("%w: last_auth_failure: %w", ErrInvalidResponse, err)
-		}
+	lastFail, err := parseOptionalRFC3339(w.LastAuthFailure, "last_auth_failure")
+	if err != nil {
+		return nil, err
 	}
 	uptime := time.Duration(0)
 	if w.ChildUptime != "" {
@@ -278,6 +272,17 @@ func (w *statusWire) toStatus() (*Status, error) {
 		ChildUptime:       uptime,
 		DiscordConnected:  w.DiscordConnected,
 	}, nil
+}
+
+func parseOptionalRFC3339(value *string, field string) (time.Time, error) {
+	if value == nil {
+		return time.Time{}, nil
+	}
+	parsed, err := parseRFC3339OrZero(*value)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("%w: %s: %w", ErrInvalidResponse, field, err)
+	}
+	return parsed, nil
 }
 
 // refreshAckWire mirrors the supervise refresh-ack DTO.

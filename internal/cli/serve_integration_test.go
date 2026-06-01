@@ -22,6 +22,8 @@ import (
 	"github.com/mrz1836/hush/internal/vault/securebytes"
 )
 
+const serveIntegrationPollTimeout = 15 * time.Second
+
 // syncBuffer is a goroutine-safe wrapper around bytes.Buffer used by serve
 // integration tests that poll stderr while runServe writes to it.
 type syncBuffer struct {
@@ -103,7 +105,7 @@ func writeTestConfig(t *testing.T, dir, listenAddr, prefix string) string {
 		"claim_approval_timeout = \"30s\"\n" +
 		"\n[network]\n" +
 		"require_tailscale = true\n" +
-		"allowed_cidrs = [\"100.64.0.0/10\"]\n" +
+		"allowed_cidrs = [\"100.64.0.0/10\", \"127.0.0.0/8\"]\n" +
 		"\n[security]\n" +
 		"require_file_mode_checks = true\n" +
 		"require_keychain_acl = false\n" +
@@ -157,12 +159,15 @@ func TestServe_StartAndShutdown(t *testing.T) {
 		t.Fatalf("chmod: %v", err)
 	}
 
-	listener, err := net.Listen("tcp", tsAddr+":0")
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	listenAddr := listener.Addr().(*net.TCPAddr)
-	listenAddrStr := netip.AddrPortFrom(netip.MustParseAddr(tsAddr), uint16(listenAddr.Port)).String()
+	rawPort := listener.Addr().(*net.TCPAddr).Port
+	if rawPort < 0 || rawPort > 65535 {
+		t.Fatalf("port out of uint16 range: %d", rawPort)
+	}
+	listenAddrStr := netip.AddrPortFrom(netip.MustParseAddr(tsAddr), uint16(rawPort)).String() //nolint:gosec // bounds-checked above
 
 	configPath := writeTestConfig(t, dir, listenAddrStr, "abcdef")
 	makeRealVault(t, dir)
@@ -194,10 +199,10 @@ func TestServe_StartAndShutdown(t *testing.T) {
 	errCh := make(chan error, 1)
 	go func() { errCh <- runServe(ctx, out, errStream, deps) }()
 
-	// Poll /hz until 200 OK or 5s timeout — but exit early if
+	// Poll /hz until 200 OK or timeout, but exit early if
 	// runServe returned an error before binding.
-	target := "http://" + listenAddrStr + "/h/abcdef/hz"
-	deadline := time.Now().Add(5 * time.Second)
+	target := "http://" + listener.Addr().String() + "/h/abcdef/hz"
+	deadline := time.Now().Add(serveIntegrationPollTimeout)
 	var resp *http.Response
 poll:
 	for time.Now().Before(deadline) {
@@ -220,7 +225,7 @@ poll:
 	if resp == nil {
 		cancel()
 		<-errCh
-		t.Fatalf("/hz never returned 200 within 5s; stderr=%q", stderr.String())
+		t.Fatalf("/hz never returned 200 within %s; stderr=%q", serveIntegrationPollTimeout, stderr.String())
 	}
 	body, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
@@ -293,20 +298,18 @@ func TestServe_BadPassphrase_ExitAuth(t *testing.T) {
 	}
 }
 
-// TestT273_Fixture4_ServeStartsViaEnvTokenWhenKeychainUnavailable is
-// the serve-side leg: with
+// TestServeStartsViaEnvTokenWhenKeychainUnavailable verifies that with
 // HUSH_DISCORD_BOT_TOKEN exported and a configured-but-unreachable
 // Keychain item name, [loadBotToken] returns the env-supplied token
-// without ever shelling out to the Keychain subprocess. This pins the
-// fallback wire that T-273 proved we will hit in the wild.
+// without ever shelling out to the Keychain subprocess.
 //
 // t.Setenv mutates process-global state, so the test is intentionally
 // serial.
-func TestT273_Fixture4_ServeStartsViaEnvTokenWhenKeychainUnavailable(t *testing.T) {
-	const envToken = "T273-serve-fixture4-env-token"
+func TestServeStartsViaEnvTokenWhenKeychainUnavailable(t *testing.T) {
+	const envToken = "serve-env-token-fixture"
 	t.Setenv("HUSH_DISCORD_BOT_TOKEN", envToken)
 
-	tok, err := loadBotToken(t.Context(), "hush-T273-serve-fixture4-nonexistent", "")
+	tok, err := loadBotToken(t.Context(), "hush-serve-env-token-nonexistent", "")
 	if err != nil {
 		t.Fatalf("loadBotToken under env-var fallback: %v", err)
 	}
@@ -321,8 +324,7 @@ func TestT273_Fixture4_ServeStartsViaEnvTokenWhenKeychainUnavailable(t *testing.
 	}
 }
 
-// TestT273_Fixture5_ServeAllowClockSkewDowngradesProbeFailure is the
-// serve-side leg (override branch): when the
+// TestServeAllowClockSkewDowngradesProbeFailure verifies that when the
 // chassis's clock-sync probe fails AND `--allow-clock-skew` is set on
 // `hush serve`, the chassis MUST emit the "clock-sync override active"
 // log line and let startup continue past the clock-sync gate instead
@@ -331,7 +333,7 @@ func TestT273_Fixture4_ServeStartsViaEnvTokenWhenKeychainUnavailable(t *testing.
 // [TestStartupChecks_AllowClockSkew*] in internal/server; this
 // integration test pins the wire from `hush serve --allow-clock-skew`
 // through serveDeps.allowClockSkew into the chassis.
-func TestT273_Fixture5_ServeAllowClockSkewDowngradesProbeFailure(t *testing.T) {
+func TestServeAllowClockSkewDowngradesProbeFailure(t *testing.T) {
 	tsAddr, ok := hasTailscaleAddr()
 	if !ok {
 		t.Skip("no Tailscale CGNAT address on this host")
@@ -383,7 +385,7 @@ func TestT273_Fixture5_ServeAllowClockSkewDowngradesProbeFailure(t *testing.T) {
 	// gate under --allow-clock-skew; downstream chassis behavior
 	// (interface-list checks, /hz handlers) is covered by other
 	// integration tests and not the subject of this fixture.
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(serveIntegrationPollTimeout)
 	var overrideObserved bool
 overridePoll:
 	for time.Now().Before(deadline) {

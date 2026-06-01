@@ -84,7 +84,7 @@ func FuzzSuperviseTOML(f *testing.F) { //nolint:gocognit,gocyclo // fuzz target:
 	})
 }
 
-func FuzzResealScheduleStrings(f *testing.F) {
+func FuzzResealScheduleStrings(f *testing.F) { //nolint:gocognit // fuzz target: seed setup + sentinel assertions are intentionally in one harness
 	f.Add("America/New_York", "03:00", "04:00")
 	f.Add("", "03:00", "04:00")
 	f.Add("Not/AZone", "03:00", "04:00")
@@ -99,6 +99,14 @@ func FuzzResealScheduleStrings(f *testing.F) {
 	newSentinels := []error{
 		ErrResealTimezoneInvalid, ErrResealTimezoneMissing,
 		ErrResealTimeFormat, ErrResealTimeMissing, ErrResealWeekdayInvalid,
+	}
+	isKnownResealError := func(err error) bool {
+		for _, sentinel := range newSentinels {
+			if errors.Is(err, sentinel) {
+				return true
+			}
+		}
+		return false
 	}
 
 	f.Fuzz(func(t *testing.T, timezone, dailyTime, mondayOverride string) {
@@ -118,12 +126,9 @@ monday = %q
 
 		s, err := Load(context.Background(), cfg)
 		if err != nil {
-			for _, sentinel := range newSentinels {
-				if errors.Is(err, sentinel) {
-					return
-				}
+			if !isKnownResealError(err) {
+				t.Errorf("FuzzResealScheduleStrings: unknown error type: %v", err)
 			}
-			t.Errorf("FuzzResealScheduleStrings: unknown error type: %v", err)
 			return
 		}
 		if s.Reseal == nil {
