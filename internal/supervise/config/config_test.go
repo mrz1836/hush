@@ -66,6 +66,7 @@ func TestSuperviseConfig_FullMinimal(t *testing.T) {
 	assert.Equal(t, DefaultWatchdogMaxAlertsPerHour, s.Watchdog.MaxAlertsPerHour)
 	assert.NotNil(t, s.Watchdog.Patterns)
 	assert.Empty(t, s.Watchdog.Patterns)
+	assert.Nil(t, s.Reseal)
 }
 
 func TestSuperviseConfig_FullMaximal(t *testing.T) {
@@ -85,6 +86,7 @@ func TestSuperviseConfig_FullMaximal(t *testing.T) {
 	assert.Equal(t, DefaultRestartOnCleanExit, s.Child.RestartOnCleanExit)
 	assert.Equal(t, DefaultRestartOnExit78, s.Child.RestartOnExit78)
 	assert.Len(t, s.Validators, 3)
+	assert.Nil(t, s.Reseal)
 }
 
 func TestLoad_Idempotent(t *testing.T) {
@@ -235,6 +237,21 @@ func TestSuperviseConfig_MaxRequestedTTLConstant(t *testing.T) {
 	assert.Equal(t, 24*time.Hour, MaxRequestedTTL)
 }
 
+func TestSuperviseConfig_ResealMinSessionFloorConstant(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, time.Hour, ResealMinSessionFloor)
+}
+
+func TestSuperviseConfig_ResealSectionAbsent_IsUnset(t *testing.T) {
+	t.Parallel()
+	body := minimalBody(t)
+	require.NotContains(t, body, "[reseal]")
+	p := writeConfig(t, body)
+	s, err := Load(context.Background(), p)
+	require.NoError(t, err)
+	assert.Nil(t, s.Reseal)
+}
+
 func TestSuperviseConfig_WatchdogSectionAbsent_AppliesAllDefaults(t *testing.T) {
 	t.Parallel()
 	body := minimalBody(t) // minimal already omits [watchdog]
@@ -287,6 +304,8 @@ func TestSuperviseConfig_RejectsUnknownField(t *testing.T) {
 		{"discord", base + "\n[discord]\nunknown = \"x\"\n"},
 		// Watchdog: append a new [watchdog] table at the end.
 		{"watchdog", base + "\n[watchdog]\nbogus = 1\n"},
+		// Reseal: append a new [reseal] table at the end.
+		{"reseal", base + "\n[reseal]\nbogus = \"x\"\n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -355,7 +374,7 @@ func TestSchema_HasNoSecretFields(t *testing.T) {
 			assert.False(t, strings.Contains(f.Name, w), "field %s contains secret-shaped name %q", f.Name, w)
 		}
 	}
-	for _, sub := range []reflect.Type{reflect.TypeOf(Child{}), reflect.TypeOf(DiscordRouting{}), reflect.TypeOf(Watchdog{}), reflect.TypeOf(ChildReadiness{}), reflect.TypeOf(ChildShutdown{}), reflect.TypeOf(ChildHandoff{})} {
+	for _, sub := range []reflect.Type{reflect.TypeOf(Child{}), reflect.TypeOf(DiscordRouting{}), reflect.TypeOf(Watchdog{}), reflect.TypeOf(ResealSchedule{}), reflect.TypeOf(ChildReadiness{}), reflect.TypeOf(ChildShutdown{}), reflect.TypeOf(ChildHandoff{})} {
 		for i := 0; i < sub.NumField(); i++ {
 			f := sub.Field(i)
 			for _, w := range guard {

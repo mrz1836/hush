@@ -60,6 +60,7 @@ var (
 	MaxRequestedTTL       = 24 * time.Hour // v0.1.0 ceiling per docs/CONFIG-SCHEMA.md max_supervisor_ttl
 	MaxBootRetryTimeout   = 1 * time.Hour  // operator typo guard: 100h would silently disable boot timeout
 	MaxRefreshNudgeBefore = 6 * time.Hour  // bounded to a fraction of MaxRequestedTTL
+	ResealMinSessionFloor = 1 * time.Hour  // v1 scheduled reseal floor for avoiding too-short sessions
 )
 
 // validatorAllowList is the fixed set of validator type names accepted in the

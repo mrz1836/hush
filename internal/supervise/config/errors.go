@@ -25,6 +25,13 @@ var (
 	ErrRefreshWindowFormat = errors.New("hush/supervise/config: refresh_window must be HH:MM-HH:MM")
 	ErrRefreshWindowOrder  = errors.New("hush/supervise/config: refresh_window start must be earlier than end")
 
+	// Reseal schedule errors.
+	ErrResealTimezoneInvalid = errors.New("hush/supervise/config: reseal.timezone must be a valid IANA location")
+	ErrResealTimezoneMissing = errors.New("hush/supervise/config: reseal.timezone is required")
+	ErrResealTimeFormat      = errors.New("hush/supervise/config: reseal time must be HH:MM")
+	ErrResealTimeMissing     = errors.New("hush/supervise/config: reseal.daily_time is required")
+	ErrResealWeekdayInvalid  = errors.New("hush/supervise/config: reseal override weekday is invalid")
+
 	// Child-command errors.
 	ErrCommandEmpty        = errors.New("hush/supervise/config: child.command must be a non-empty array")
 	ErrCommandPathRelative = errors.New("hush/supervise/config: child.command first element must be an absolute path")
