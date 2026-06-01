@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -39,6 +40,8 @@ func FuzzSuperviseTOML(f *testing.F) { //nolint:gocognit,gocyclo // fuzz target:
 		ErrScopeEmpty, ErrSessionTypeInvalid,
 		ErrRequestedTTLOutOfRange, ErrServerURLInvalid,
 		ErrLogLevelInvalid, ErrWatchdogRateInvalid,
+		ErrResealTimezoneInvalid, ErrResealTimezoneMissing,
+		ErrResealTimeFormat, ErrResealTimeMissing, ErrResealWeekdayInvalid,
 	}
 
 	isKnownError := func(err error) bool {
@@ -77,6 +80,58 @@ func FuzzSuperviseTOML(f *testing.F) { //nolint:gocognit,gocyclo // fuzz target:
 			if _, ok := validatorAllowList[string(v)]; !ok {
 				t.Errorf("FuzzSuperviseTOML: loaded config contains non-allow-listed validator %q", v)
 			}
+		}
+	})
+}
+
+func FuzzResealScheduleStrings(f *testing.F) {
+	f.Add("America/New_York", "03:00", "04:00")
+	f.Add("", "03:00", "04:00")
+	f.Add("Not/AZone", "03:00", "04:00")
+	f.Add("America/New_York", "3:00", "04:00")
+	f.Add("America/New_York", "03:00", "24:00")
+
+	base, err := os.ReadFile("testdata/valid_minimal.toml")
+	if err != nil {
+		f.Fatalf("read seed config: %v", err)
+	}
+
+	newSentinels := []error{
+		ErrResealTimezoneInvalid, ErrResealTimezoneMissing,
+		ErrResealTimeFormat, ErrResealTimeMissing, ErrResealWeekdayInvalid,
+	}
+
+	f.Fuzz(func(t *testing.T, timezone, dailyTime, mondayOverride string) {
+		dir := t.TempDir()
+		cfg := filepath.Join(dir, "reseal.toml")
+		body := string(base) + fmt.Sprintf(`
+[reseal]
+timezone = %q
+daily_time = %q
+
+[reseal.overrides]
+monday = %q
+`, timezone, dailyTime, mondayOverride)
+		if writeErr := os.WriteFile(cfg, []byte(body), 0o600); writeErr != nil {
+			return
+		}
+
+		s, err := Load(context.Background(), cfg)
+		if err != nil {
+			for _, sentinel := range newSentinels {
+				if errors.Is(err, sentinel) {
+					return
+				}
+			}
+			t.Errorf("FuzzResealScheduleStrings: unknown error type: %v", err)
+			return
+		}
+		if s.Reseal == nil {
+			t.Error("FuzzResealScheduleStrings: loaded config has nil reseal schedule")
+			return
+		}
+		if validateErr := s.Validate(); validateErr != nil {
+			t.Errorf("FuzzResealScheduleStrings: loaded invalid schedule: %v", validateErr)
 		}
 	})
 }
