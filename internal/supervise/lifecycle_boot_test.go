@@ -2,7 +2,14 @@ package supervise
 
 import (
 	"bytes"
+	"context"
+	"io"
+	"log/slog"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/mrz1836/hush/internal/supervise/config"
 )
 
 // TestZeroBytes covers V5: the small helper used in doClaimRequest and
@@ -47,4 +54,81 @@ func TestZeroBytes_NoPanicOnNil(t *testing.T) {
 		}
 	}()
 	zeroBytes(nil)
+}
+
+func TestBuildClaimPayload_UsesStaticTTLWithoutReseal(t *testing.T) {
+	tl := newTestLifecycle(t, longChildCmd(), func(cfg *config.Supervisor) {
+		cfg.RequestedTTL = 17 * time.Hour
+	})
+	tl.lc.deps.NowFn = func() time.Time { return time.Date(2026, 1, 2, 8, 0, 0, 0, time.UTC) }
+	tl.lc.deps.NonceFn = func() string { return "nonce" }
+	tl.lc.deps.RequestIDFn = func() string { return "request-id" }
+
+	payload := tl.lc.buildClaimPayload()
+	if payload.TTL != "17h0m0s" {
+		t.Fatalf("TTL=%q want %q", payload.TTL, "17h0m0s")
+	}
+}
+
+func TestSubmitClaim_UsesScheduledResealTTL(t *testing.T) {
+	now := time.Date(2026, 1, 2, 8, 0, 0, 0, time.UTC)
+	tl := newTestLifecycle(t, longChildCmd(), func(cfg *config.Supervisor) {
+		cfg.Reseal = loadTestResealSchedule(t, `[reseal]
+timezone = "UTC"
+daily_time = "10:00"
+`)
+	})
+	tl.lc.deps.NowFn = func() time.Time { return now }
+
+	tl.vault.QueueOK()
+	if err := tl.lc.submitClaim(context.Background()); err != nil {
+		t.Fatalf("submitClaim: %v", err)
+	}
+	if got := tl.vault.LastClaim().TTL; got != "2h0m0s" {
+		t.Fatalf("wire TTL=%q want %q", got, "2h0m0s")
+	}
+}
+
+func TestPerformRefreshClaim_UsesScheduledResealTTL(t *testing.T) {
+	now := time.Date(2026, 1, 2, 8, 0, 0, 0, time.UTC)
+	tl := newTestLifecycle(t, longChildCmd(), func(cfg *config.Supervisor) {
+		cfg.Reseal = loadTestResealSchedule(t, `[reseal]
+timezone = "UTC"
+daily_time = "10:00"
+`)
+	})
+	tl.lc.deps.NowFn = func() time.Time { return now }
+
+	tl.vault.QueueOK()
+	if got := tl.lc.performRefreshClaim(context.Background()); got.err != nil {
+		t.Fatalf("performRefreshClaim: %v", got.err)
+	}
+	if got := tl.vault.LastClaim().TTL; got != "2h0m0s" {
+		t.Fatalf("wire TTL=%q want %q", got, "2h0m0s")
+	}
+}
+
+func TestBuildClaimPayload_LogsClampWhenResealGapExceedsCeiling(t *testing.T) {
+	var logs bytes.Buffer
+	now := time.Date(2026, 1, 2, 9, 30, 0, 0, time.UTC)
+	tl := newTestLifecycle(t, longChildCmd(), func(cfg *config.Supervisor) {
+		cfg.Reseal = loadTestResealSchedule(t, `[reseal]
+timezone = "UTC"
+daily_time = "10:00"
+`)
+	})
+	tl.lc.deps.NowFn = func() time.Time { return now }
+	tl.lc.deps.Logger = slog.New(slog.NewTextHandler(io.MultiWriter(&logs), &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	payload := tl.lc.buildClaimPayload()
+	if payload.TTL != "24h0m0s" {
+		t.Fatalf("TTL=%q want %q", payload.TTL, "24h0m0s")
+	}
+	out := logs.String()
+	if !strings.Contains(out, "supervise: reseal schedule clamped to max TTL") {
+		t.Fatalf("clamp log missing: %s", out)
+	}
+	if !strings.Contains(out, "computed_gap=24h30m0s") || !strings.Contains(out, "ceiling=24h0m0s") {
+		t.Fatalf("clamp log fields missing: %s", out)
+	}
 }

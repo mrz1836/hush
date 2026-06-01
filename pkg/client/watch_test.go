@@ -101,6 +101,7 @@ func statusBytes(t *testing.T, m map[string]any) []byte {
 		"session_jti":         "",
 		"restart_count":       0,
 		"refresh_window_next": "0001-01-01T00:00:00Z",
+		"reseal_next":         nil,
 		"scope_healthy":       []string{},
 		"scope_stale":         []string{},
 		"last_auth_failure":   nil,

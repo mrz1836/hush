@@ -72,6 +72,7 @@ func statusFixture(t *testing.T) []byte {
 	t.Helper()
 	pid := 4242
 	lastFail := "2026-04-15T12:00:00Z"
+	resealNext := "2026-04-16T14:30:00Z"
 	doc := map[string]any{
 		"supervisor":          "ex",
 		"state":               "running",
@@ -79,6 +80,7 @@ func statusFixture(t *testing.T) []byte {
 		"session_jti":         "abc-uuid",
 		"restart_count":       uint64(2),
 		"refresh_window_next": "2026-04-15T16:00:00Z",
+		"reseal_next":         &resealNext,
 		"scope_healthy":       []string{"ANTHROPIC_API_KEY"},
 		"scope_stale":         []string{"OPENAI_API_KEY"},
 		"last_auth_failure":   &lastFail,
@@ -107,6 +109,7 @@ func TestSnapshot_Typed(t *testing.T) {
 	assert.Equal(t, uint64(2), got.RestartCount)
 	assert.Equal(t, time.Date(2026, 4, 15, 13, 12, 0, 0, time.UTC), got.SessionExpiresAt)
 	assert.Equal(t, time.Date(2026, 4, 15, 16, 0, 0, 0, time.UTC), got.RefreshWindowNext)
+	assert.Equal(t, time.Date(2026, 4, 16, 14, 30, 0, 0, time.UTC), got.ResealNext)
 	assert.Equal(t, time.Date(2026, 4, 15, 12, 0, 0, 0, time.UTC), got.LastAuthFailure)
 	assert.Equal(t, []string{"ANTHROPIC_API_KEY"}, got.ScopeHealthy)
 	assert.Equal(t, []string{"OPENAI_API_KEY"}, got.ScopeStale)
@@ -124,6 +127,7 @@ func TestSnapshot_NullFieldsRenderAsZero(t *testing.T) {
 		"session_jti":"",
 		"restart_count":0,
 		"refresh_window_next":"0001-01-01T00:00:00Z",
+		"reseal_next":null,
 		"scope_healthy":[],
 		"scope_stale":[],
 		"last_auth_failure":null,
@@ -138,6 +142,7 @@ func TestSnapshot_NullFieldsRenderAsZero(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, got.SessionExpiresAt.IsZero())
 	assert.True(t, got.RefreshWindowNext.IsZero())
+	assert.True(t, got.ResealNext.IsZero())
 	assert.True(t, got.LastAuthFailure.IsZero())
 	assert.Equal(t, 0, got.ChildPID)
 	assert.Equal(t, time.Duration(0), got.ChildUptime)
@@ -197,7 +202,7 @@ func TestSnapshot_MalformedJSON(t *testing.T) {
 }
 
 func TestSnapshot_BadUptimeField(t *testing.T) {
-	body := []byte(`{"supervisor":"ex","state":"running","session_expires_at":"0001-01-01T00:00:00Z","refresh_window_next":"0001-01-01T00:00:00Z","scope_healthy":[],"scope_stale":[],"last_auth_failure":null,"child_pid":null,"child_uptime":"not-a-duration","discord_connected":false}` + "\n")
+	body := []byte(`{"supervisor":"ex","state":"running","session_expires_at":"0001-01-01T00:00:00Z","refresh_window_next":"0001-01-01T00:00:00Z","reseal_next":null,"scope_healthy":[],"scope_stale":[],"last_auth_failure":null,"child_pid":null,"child_uptime":"not-a-duration","discord_connected":false}` + "\n")
 	path := fakeSocket(t, body)
 	sup := client.NewSupervisorStatus(path)
 	_, err := sup.Snapshot(context.Background())

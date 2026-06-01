@@ -11,9 +11,9 @@ type State string
 // All time fields use zero values to signal absence rather than
 // separate "set" booleans:
 //
-//   - SessionExpiresAt / RefreshWindowNext / LastAuthFailure: zero
+//   - SessionExpiresAt / RefreshWindowNext / ResealNext / LastAuthFailure: zero
 //     time means "not applicable" (no session yet, no refresh window
-//     configured, never failed).
+//     configured, no reseal schedule, never failed).
 //   - ChildPID == 0 means the supervisor has no child running.
 //   - ChildUptime == 0 means no child or child just started.
 type Status struct {
@@ -23,6 +23,7 @@ type Status struct {
 	SessionExpiresAt  time.Time
 	RestartCount      uint64
 	RefreshWindowNext time.Time
+	ResealNext        time.Time
 	ScopeHealthy      []string
 	ScopeStale        []string
 	LastAuthFailure   time.Time

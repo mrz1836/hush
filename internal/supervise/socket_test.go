@@ -30,6 +30,7 @@ type stubStatusInputs struct {
 	sessionJTI        string
 	restartCount      uint64
 	refreshWindowNext time.Time
+	resealNext        time.Time
 	scopeHealthy      []string
 	scopeStale        []string
 	lastAuthFailure   *time.Time
@@ -42,6 +43,7 @@ func (s *stubStatusInputs) SessionExpiresAt() time.Time  { return s.sessionExpir
 func (s *stubStatusInputs) SessionJTI() string           { return s.sessionJTI }
 func (s *stubStatusInputs) RestartCount() uint64         { return s.restartCount }
 func (s *stubStatusInputs) RefreshWindowNext() time.Time { return s.refreshWindowNext }
+func (s *stubStatusInputs) ResealNext() time.Time        { return s.resealNext }
 func (s *stubStatusInputs) ScopeHealthy() []string       { return s.scopeHealthy }
 func (s *stubStatusInputs) ScopeStale() []string         { return s.scopeStale }
 func (s *stubStatusInputs) LastAuthFailure() *time.Time  { return s.lastAuthFailure }
@@ -137,6 +139,7 @@ func TestSocket_StatusJSONShape(t *testing.T) {
 		sessionJTI:        "jti-123",
 		restartCount:      2,
 		refreshWindowNext: time.Date(2026, 4, 15, 16, 0, 0, 0, time.UTC),
+		resealNext:        time.Date(2026, 4, 16, 14, 30, 0, 0, time.UTC),
 		scopeHealthy:      []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY"},
 		scopeStale:        []string{},
 		lastAuthFailure:   nil,
@@ -153,7 +156,7 @@ func TestSocket_StatusJSONShape(t *testing.T) {
 	require.NoError(t, json.Unmarshal(body, &doc))
 
 	for _, key := range []string{
-		"supervisor", "session_expires_at", "refresh_window_next",
+		"supervisor", "session_expires_at", "refresh_window_next", "reseal_next",
 		"scope_healthy", "scope_stale", "last_auth_failure",
 		"child_pid", "child_uptime", "discord_connected", "state",
 	} {
@@ -169,6 +172,10 @@ func TestSocket_StatusJSONShape(t *testing.T) {
 	var sea string
 	require.NoError(t, json.Unmarshal(doc["session_expires_at"], &sea))
 	assert.Equal(t, "2026-04-15T13:12:00Z", sea)
+
+	var rn string
+	require.NoError(t, json.Unmarshal(doc["reseal_next"], &rn))
+	assert.Equal(t, "2026-04-16T14:30:00Z", rn)
 
 	var sh []string
 	require.NoError(t, json.Unmarshal(doc["scope_healthy"], &sh))
@@ -202,11 +209,12 @@ func TestSocket_StatusJSONShape(t *testing.T) {
 func TestSocket_StatusJSONFromSnapshot(t *testing.T) {
 	srv := NewStatusServer("/dev/null/ignored", nil, silentLogger())
 	srv.attach(&stubStatusInputs{
-		name:              "openclaw",
+		name:              "example",
 		sessionExpiresAt:  time.Date(2026, 4, 15, 13, 12, 0, 0, time.UTC),
 		sessionJTI:        "jti-123",
 		restartCount:      2,
 		refreshWindowNext: time.Date(2026, 4, 15, 16, 0, 0, 0, time.UTC),
+		resealNext:        time.Date(2026, 4, 16, 14, 30, 0, 0, time.UTC),
 		scopeHealthy:      []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY"},
 		scopeStale:        []string{},
 		childUptime:       8*time.Hour + 12*time.Minute,
@@ -217,7 +225,7 @@ func TestSocket_StatusJSONFromSnapshot(t *testing.T) {
 	body, err := srv.renderStatus(snap)
 	require.NoError(t, err)
 
-	expected := `{"supervisor":"openclaw","session_expires_at":"2026-04-15T13:12:00Z","session_jti":"jti-123","restart_count":2,"refresh_window_next":"2026-04-15T16:00:00Z","scope_healthy":["ANTHROPIC_API_KEY","OPENAI_API_KEY"],"scope_stale":[],"last_auth_failure":null,"child_pid":51234,"child_uptime":"8h12m0s","discord_connected":true,"state":"running"}`
+	expected := `{"supervisor":"example","session_expires_at":"2026-04-15T13:12:00Z","session_jti":"jti-123","restart_count":2,"refresh_window_next":"2026-04-15T16:00:00Z","reseal_next":"2026-04-16T14:30:00Z","scope_healthy":["ANTHROPIC_API_KEY","OPENAI_API_KEY"],"scope_stale":[],"last_auth_failure":null,"child_pid":51234,"child_uptime":"8h12m0s","discord_connected":true,"state":"running"}`
 	assert.Equal(t, expected, string(body))
 }
 
@@ -257,6 +265,7 @@ func TestSocket_PreAttachDefaultsRenderShapeConformant(t *testing.T) {
 	assert.Equal(t, `""`, string(doc["supervisor"]))
 	assert.Equal(t, `"0001-01-01T00:00:00Z"`, string(doc["session_expires_at"]))
 	assert.Equal(t, `"0001-01-01T00:00:00Z"`, string(doc["refresh_window_next"]))
+	assert.Equal(t, `null`, string(doc["reseal_next"]))
 	assert.Equal(t, `[]`, string(doc["scope_healthy"]))
 	assert.Equal(t, `[]`, string(doc["scope_stale"]))
 	assert.Equal(t, `null`, string(doc["last_auth_failure"]))
@@ -579,6 +588,7 @@ func (panickyInputs) SessionExpiresAt() time.Time  { return time.Time{} }
 func (panickyInputs) SessionJTI() string           { return "" }
 func (panickyInputs) RestartCount() uint64         { return 0 }
 func (panickyInputs) RefreshWindowNext() time.Time { return time.Time{} }
+func (panickyInputs) ResealNext() time.Time        { return time.Time{} }
 func (panickyInputs) ScopeHealthy() []string       { return nil }
 func (panickyInputs) ScopeStale() []string         { return nil }
 func (panickyInputs) LastAuthFailure() *time.Time  { return nil }
@@ -1170,7 +1180,7 @@ func TestEnumerateSupervisorSockets_MissingDirReturnsEmptySlice(t *testing.T) {
 // ============================================================
 
 // FuzzStatusJSON_Encode fuzzes the renderStatus encoder. Goal: panic-
-// free, output unmarshals into a map[string]json.RawMessage with all 10
+// free, output unmarshals into a map[string]json.RawMessage with all 11
 // status keys present.
 func FuzzStatusJSON_Encode(f *testing.F) {
 	// Seed corpus from documented examples.
@@ -1201,7 +1211,7 @@ func FuzzStatusJSON_Encode(f *testing.F) {
 			t.Fatalf("unmarshal: %v: %s", err, body)
 		}
 		for _, k := range []string{
-			"supervisor", "session_expires_at", "refresh_window_next",
+			"supervisor", "session_expires_at", "refresh_window_next", "reseal_next",
 			"scope_healthy", "scope_stale", "last_auth_failure",
 			"child_pid", "child_uptime", "discord_connected", "state",
 		} {

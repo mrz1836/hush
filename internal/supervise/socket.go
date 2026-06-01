@@ -43,6 +43,7 @@ type StatusInputs interface {
 	SessionJTI() string
 	RestartCount() uint64
 	RefreshWindowNext() time.Time
+	ResealNext() time.Time
 	ScopeHealthy() []string
 	ScopeStale() []string
 	LastAuthFailure() *time.Time
@@ -505,6 +506,7 @@ type statusJSON struct {
 	SessionJTI        string   `json:"session_jti"`
 	RestartCount      uint64   `json:"restart_count"`
 	RefreshWindowNext string   `json:"refresh_window_next"`
+	ResealNext        *string  `json:"reseal_next"`
 	ScopeHealthy      []string `json:"scope_healthy"`
 	ScopeStale        []string `json:"scope_stale"`
 	LastAuthFailure   *string  `json:"last_auth_failure"`
@@ -540,6 +542,10 @@ func (s *StatusServer) renderStatus(snap Snapshot) ([]byte, error) {
 		doc.SessionJTI = inputs.SessionJTI()
 		doc.RestartCount = inputs.RestartCount()
 		doc.RefreshWindowNext = inputs.RefreshWindowNext().Format(time.RFC3339)
+		if next := inputs.ResealNext(); !next.IsZero() {
+			s := next.Format(time.RFC3339)
+			doc.ResealNext = &s
+		}
 		if h := inputs.ScopeHealthy(); h != nil {
 			doc.ScopeHealthy = h
 		}

@@ -29,6 +29,9 @@ func testStatusInputsEmptyDefaults(t *testing.T) {
 	if !o.RefreshWindowNext().IsZero() {
 		t.Error("RefreshWindowNext: want zero")
 	}
+	if !o.ResealNext().IsZero() {
+		t.Error("ResealNext: want zero")
+	}
 	if o.ScopeHealthy() != nil {
 		t.Errorf("ScopeHealthy: %+v", o.ScopeHealthy())
 	}
@@ -50,10 +53,12 @@ func testStatusInputsPopulated(t *testing.T) {
 	o := &statusInputs{name: "p"}
 	sea := time.Date(2026, 4, 15, 12, 0, 0, 0, time.UTC)
 	rwn := time.Date(2026, 4, 15, 16, 0, 0, 0, time.UTC)
+	rn := time.Date(2026, 4, 16, 14, 30, 0, 0, time.UTC)
 	laf := time.Date(2026, 4, 14, 12, 0, 0, 0, time.UTC)
 	startedAt := time.Now().Add(-2 * time.Hour)
 	o.sessionExp.Store(&sea)
 	o.refreshNext.Store(&rwn)
+	o.resealNext.Store(&rn)
 	healthy := []string{"A", "B"}
 	stale := []string{"C"}
 	o.scopeHealthy.Store(&healthy)
@@ -67,6 +72,9 @@ func testStatusInputsPopulated(t *testing.T) {
 	}
 	if got := o.RefreshWindowNext(); got != rwn {
 		t.Errorf("RefreshWindowNext: %v", got)
+	}
+	if got := o.ResealNext(); got != rn {
+		t.Errorf("ResealNext: %v", got)
 	}
 	if got := o.ScopeHealthy(); !equalStrings(got, []string{"A", "B"}) {
 		t.Errorf("ScopeHealthy: %+v", got)

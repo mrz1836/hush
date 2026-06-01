@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mrz1836/hush/internal/supervise/config"
 	"github.com/mrz1836/hush/internal/transport/sign"
 	"github.com/mrz1836/hush/internal/vault/securebytes"
 )
@@ -341,6 +342,22 @@ func (l *Lifecycle) applyClaimResponse(ctx context.Context, resp claimWireRespon
 // is populated from the supervisor config [name] field — the server
 // requires it for session_type=supervisor.
 func (l *Lifecycle) buildClaimPayload() claimSignedPayload {
+	now := l.deps.NowFn()
+	ttl := l.config.RequestedTTL
+	if l.config.Reseal != nil {
+		ttl = l.config.Reseal.NextRequestedTTL(now)
+		if next := l.config.Reseal.NextReseal(now); !next.IsZero() {
+			gap := next.Sub(now)
+			if gap > config.MaxRequestedTTL {
+				l.deps.Logger.Info(
+					"supervise: reseal schedule clamped to max TTL",
+					slog.Duration("computed_gap", gap),
+					slog.Duration("ceiling", config.MaxRequestedTTL),
+				)
+			}
+			l.publishResealNext(next)
+		}
+	}
 	return claimSignedPayload{
 		EphemeralPubKey: l.deps.EphemeralPubKeyHex,
 		MachineName:     l.deps.MachineName,
@@ -350,8 +367,8 @@ func (l *Lifecycle) buildClaimPayload() claimSignedPayload {
 		Scope:           append([]string(nil), l.config.Scope...),
 		SessionType:     l.config.SessionType,
 		SupervisorName:  l.config.Name,
-		Timestamp:       l.deps.NowFn().UTC().Format(time.RFC3339Nano),
-		TTL:             l.config.RequestedTTL.String(),
+		Timestamp:       now.UTC().Format(time.RFC3339Nano),
+		TTL:             ttl.String(),
 	}
 }
 

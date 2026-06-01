@@ -219,6 +219,7 @@ type statusWire struct {
 	SessionJTI        string   `json:"session_jti"`
 	RestartCount      uint64   `json:"restart_count"`
 	RefreshWindowNext string   `json:"refresh_window_next"`
+	ResealNext        *string  `json:"reseal_next"`
 	ScopeHealthy      []string `json:"scope_healthy"`
 	ScopeStale        []string `json:"scope_stale"`
 	LastAuthFailure   *string  `json:"last_auth_failure"`
@@ -236,6 +237,13 @@ func (w *statusWire) toStatus() (*Status, error) {
 	next, err := parseRFC3339OrZero(w.RefreshWindowNext)
 	if err != nil {
 		return nil, fmt.Errorf("%w: refresh_window_next: %w", ErrInvalidResponse, err)
+	}
+	var resealNext time.Time
+	if w.ResealNext != nil {
+		resealNext, err = parseRFC3339OrZero(*w.ResealNext)
+		if err != nil {
+			return nil, fmt.Errorf("%w: reseal_next: %w", ErrInvalidResponse, err)
+		}
 	}
 	var lastFail time.Time
 	if w.LastAuthFailure != nil {
@@ -262,6 +270,7 @@ func (w *statusWire) toStatus() (*Status, error) {
 		SessionExpiresAt:  exp,
 		RestartCount:      w.RestartCount,
 		RefreshWindowNext: next,
+		ResealNext:        resealNext,
 		ScopeHealthy:      w.ScopeHealthy,
 		ScopeStale:        w.ScopeStale,
 		LastAuthFailure:   lastFail,

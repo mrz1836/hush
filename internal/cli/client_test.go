@@ -77,11 +77,13 @@ func withHangAfterAccept() fakeOpt {
 // responses.
 func statusFixture(t *testing.T) []byte {
 	t.Helper()
+	resealNext := "2026-04-16T14:30:00Z"
 	doc := statusDoc{
 		Supervisor:        "ex",
 		State:             "running",
 		SessionExpiresAt:  "2026-04-15T13:12:00Z",
 		RefreshWindowNext: "2026-04-15T16:00:00Z",
+		ResealNext:        &resealNext,
 		ScopeHealthy:      []string{"ANTHROPIC_API_KEY"},
 		ScopeStale:        []string{},
 		ChildUptime:       "8h12m0s",
@@ -167,7 +169,7 @@ func TestClientStatus_TTYHumanSummary(t *testing.T) {
 	out := string(body)
 	for _, label := range []string{
 		"Supervisor:", "State:", "Child PID:", "Child up:",
-		"Session expires:", "Next refresh:",
+		"Session expires:", "Next refresh:", "Next reseal:",
 		"Healthy scopes:", "Stale scopes:", "Discord:", "Last auth fail:",
 	} {
 		assert.Contains(t, out, label)
