@@ -376,6 +376,9 @@ func NewLifecycle(ctx context.Context, cfg *config.Supervisor, deps Deps) *Lifec
 		}
 		return nil
 	}, deps.Logger)
+	lc.refresher.nudge = cfg.RefreshNudgeBefore
+	lc.refresher.deadlineFn = func() time.Time { return lc.inputs.SessionExpiresAt() }
+	lc.refresher.publish = func(t time.Time) { lc.inputs.refreshNext.Store(&t) }
 
 	// AttachRefreshHandler binds the status-socket refresh verb to a closure
 	// that posts on refreshVerbCh and blocks on ack. State-conditional

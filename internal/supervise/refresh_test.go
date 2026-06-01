@@ -121,7 +121,7 @@ func TestRefresh_T30MinFallback(t *testing.T) {
 	clk := testutil.NewFakeClock(time.Date(2026, 5, 10, 11, 0, 0, 0, loc))
 	fr := &fireRecorder{}
 	// Window already passed (09:00-10:00); ttl puts deadline 25 min
-	// from now (11:25), well inside the T-30 fallback budget.
+	// from now (11:25), well inside the pre-deadline fallback budget.
 	tickC, stop := startRefresher(t, "09:00-10:00", 25*time.Minute, fr, clk)
 	defer stop()
 
@@ -132,6 +132,174 @@ func TestRefresh_T30MinFallback(t *testing.T) {
 	expectNoFire(t, tickC, fr, 1)
 	clk.Advance(5 * time.Minute)
 	expectNoFire(t, tickC, fr, 1)
+}
+
+func TestRefresh_T30FallbackBeforeWindow(t *testing.T) {
+	loc := time.Local //nolint:gosmopolitan // refresh tests pin to local time
+	now := time.Date(2026, 5, 10, 5, 7, 0, 0, loc)
+	deadline := time.Date(2026, 5, 10, 5, 37, 0, 0, loc)
+	fr := &fireRecorder{}
+	logger, _ := newRecordingLogger()
+	r := NewRefresher("09:00-10:00", 12*time.Hour, fr.callback, logger)
+	r.setClockForTest(func() time.Time { return now })
+	r.nudge = 30 * time.Minute
+	r.deadlineFn = func() time.Time { return deadline }
+	r.primeForTest(now.AddDate(0, 0, -1), false)
+
+	r.tick(context.Background())
+
+	if got := fr.calls.Load(); got != 1 {
+		t.Fatalf("calls=%d want 1", got)
+	}
+	if !r.t30Fired {
+		t.Fatal("t30Fired=false want true")
+	}
+
+	r.tick(context.Background())
+	if got := fr.calls.Load(); got != 1 {
+		t.Fatalf("second tick calls=%d want 1", got)
+	}
+}
+
+func TestRefresh_T30FallbackRearmsAfterDeadlineMovesForward(t *testing.T) {
+	loc := time.Local //nolint:gosmopolitan // refresh tests pin to local time
+	now := time.Date(2026, 5, 10, 5, 7, 0, 0, loc)
+	deadline := time.Date(2026, 5, 10, 5, 37, 0, 0, loc)
+	fr := &fireRecorder{}
+	logger, _ := newRecordingLogger()
+	r := NewRefresher("09:00-10:00", 12*time.Hour, fr.callback, logger)
+	r.setClockForTest(func() time.Time { return now })
+	r.nudge = 30 * time.Minute
+	r.deadlineFn = func() time.Time { return deadline }
+	r.primeForTest(now.AddDate(0, 0, -1), false)
+
+	r.tick(context.Background())
+	if got := fr.calls.Load(); got != 1 {
+		t.Fatalf("initial calls=%d want 1", got)
+	}
+	if !r.t30Fired {
+		t.Fatal("initial t30Fired=false want true")
+	}
+
+	now = time.Date(2026, 5, 11, 4, 0, 0, 0, loc)
+	deadline = time.Date(2026, 5, 11, 5, 30, 0, 0, loc)
+	r.tick(context.Background())
+	if got := fr.calls.Load(); got != 1 {
+		t.Fatalf("rearm tick calls=%d want 1", got)
+	}
+	if r.t30Fired {
+		t.Fatal("t30Fired remained set after deadline moved forward")
+	}
+
+	now = time.Date(2026, 5, 11, 5, 7, 0, 0, loc)
+	r.tick(context.Background())
+	if got := fr.calls.Load(); got != 2 {
+		t.Fatalf("second fallback calls=%d want 2", got)
+	}
+}
+
+func TestRefresh_NextFire(t *testing.T) {
+	loc := time.Local //nolint:gosmopolitan // refresh tests pin to local time
+	cases := []struct {
+		name         string
+		window       string
+		now          time.Time
+		deadline     time.Time
+		lastFiredDay time.Time
+		want         time.Time
+	}{
+		{
+			name:     "before today window not fired",
+			window:   "09:00-10:00",
+			now:      time.Date(2026, 5, 10, 8, 0, 0, 0, loc),
+			deadline: time.Date(2026, 5, 10, 20, 0, 0, 0, loc),
+			want:     time.Date(2026, 5, 10, 9, 0, 0, 0, loc),
+		},
+		{
+			name:         "after window fired today",
+			window:       "09:00-10:00",
+			now:          time.Date(2026, 5, 10, 11, 0, 0, 0, loc),
+			deadline:     time.Date(2026, 5, 10, 20, 0, 0, 0, loc),
+			lastFiredDay: time.Date(2026, 5, 10, 0, 0, 0, 0, loc),
+			want:         time.Date(2026, 5, 11, 9, 0, 0, 0, loc),
+		},
+		{
+			name:     "deadline nudge before next window",
+			window:   "09:00-10:00",
+			now:      time.Date(2026, 5, 10, 8, 0, 0, 0, loc),
+			deadline: time.Date(2026, 5, 10, 9, 15, 0, 0, loc),
+			want:     time.Date(2026, 5, 10, 8, 45, 0, 0, loc),
+		},
+		{
+			name:     "midnight crossing before window",
+			window:   "23:00-01:00",
+			now:      time.Date(2026, 5, 10, 22, 0, 0, 0, loc),
+			deadline: time.Date(2026, 5, 11, 12, 0, 0, 0, loc),
+			want:     time.Date(2026, 5, 10, 23, 0, 0, 0, loc),
+		},
+		{
+			name:     "elapsed deadline candidate uses window",
+			window:   "09:00-10:00",
+			now:      time.Date(2026, 5, 10, 8, 0, 0, 0, loc),
+			deadline: time.Date(2026, 5, 10, 8, 20, 0, 0, loc),
+			want:     time.Date(2026, 5, 10, 9, 0, 0, 0, loc),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fr := &fireRecorder{}
+			logger, _ := newRecordingLogger()
+			r := NewRefresher(tc.window, 12*time.Hour, fr.callback, logger)
+			r.nudge = 30 * time.Minute
+			r.deadlineFn = func() time.Time { return tc.deadline }
+			if !tc.lastFiredDay.IsZero() {
+				r.primeForTest(tc.lastFiredDay, false)
+			}
+
+			if got := r.nextFire(tc.now); !got.Equal(tc.want) {
+				t.Fatalf("nextFire=%v want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRefresh_PublishesNextFire(t *testing.T) {
+	loc := time.Local //nolint:gosmopolitan // refresh tests pin to local time
+	now := time.Date(2026, 5, 10, 8, 0, 0, 0, loc)
+	fr := &fireRecorder{}
+	logger, _ := newRecordingLogger()
+	r := NewRefresher("09:00-10:00", 12*time.Hour, fr.callback, logger)
+	r.setClockForTest(func() time.Time { return now })
+	r.deadlineFn = func() time.Time { return now.Add(12 * time.Hour) }
+
+	var published time.Time
+	r.publish = func(t time.Time) { published = t }
+
+	r.tick(context.Background())
+
+	want := time.Date(2026, 5, 10, 9, 0, 0, 0, loc)
+	if !published.Equal(want) {
+		t.Fatalf("published=%v want %v", published, want)
+	}
+}
+
+func TestRefresh_PublishesNextFireToStatusInputs(t *testing.T) {
+	loc := time.Local //nolint:gosmopolitan // refresh tests pin to local time
+	now := time.Date(2026, 5, 10, 8, 0, 0, 0, loc)
+	fr := &fireRecorder{}
+	logger, _ := newRecordingLogger()
+	inputs := &statusInputs{name: "test"}
+	r := NewRefresher("09:00-10:00", 12*time.Hour, fr.callback, logger)
+	r.setClockForTest(func() time.Time { return now })
+	r.deadlineFn = func() time.Time { return now.Add(12 * time.Hour) }
+	r.publish = func(t time.Time) { inputs.refreshNext.Store(&t) }
+
+	r.tick(context.Background())
+
+	want := time.Date(2026, 5, 10, 9, 0, 0, 0, loc)
+	if got := inputs.RefreshWindowNext(); got.IsZero() || !got.Equal(want) {
+		t.Fatalf("RefreshWindowNext=%v want %v", got, want)
+	}
 }
 
 // TestRefresh_StopsOnCtxCancel: cancel ctx, Run returns within 100ms;
