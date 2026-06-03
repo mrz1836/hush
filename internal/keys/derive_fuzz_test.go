@@ -20,13 +20,26 @@ func FuzzDeriveMaster(f *testing.F) {
 	})
 }
 
+// Cheap Argon2id parameters for fuzzing. The fuzz target validates the
+// input-handling logic, the 64-byte output length, and the determinism
+// property — none of which depend on the KDF cost. Production parameters
+// (time=4, memory=256 MiB, threads=4) are deliberately slow, and running
+// them on every fuzz exec oversubscribes CI workers until a worker misses
+// Go's fuzz-coordinator deadline ("context deadline exceeded"). The locked
+// production parameters are pinned separately by the KAT in derive_test.go.
+const (
+	fuzzArgon2Time    = 1
+	fuzzArgon2MemoryK = 8
+	fuzzArgon2Threads = 1
+)
+
 // fuzzAssertDeriveMaster runs the fuzz assertion body; extracted to reduce
 // cognitive complexity of FuzzDeriveMaster below the project threshold.
 func fuzzAssertDeriveMaster(t *testing.T, passphrase, salt []byte) {
 	t.Helper()
 
 	ctx := context.Background()
-	seed1, err := DeriveMasterSeed(ctx, passphrase, salt)
+	seed1, err := deriveMasterSeed(ctx, passphrase, salt, fuzzArgon2Time, fuzzArgon2MemoryK, fuzzArgon2Threads)
 	if err != nil {
 		knownErr := errors.Is(err, ErrPassphraseTooShort) ||
 			errors.Is(err, ErrSaltMissing) ||
@@ -43,7 +56,7 @@ func fuzzAssertDeriveMaster(t *testing.T, passphrase, salt []byte) {
 		return
 	}
 
-	seed2, err := DeriveMasterSeed(ctx, passphrase, salt)
+	seed2, err := deriveMasterSeed(ctx, passphrase, salt, fuzzArgon2Time, fuzzArgon2MemoryK, fuzzArgon2Threads)
 	if err != nil {
 		t.Errorf("re-derivation failed: %v", err)
 		return

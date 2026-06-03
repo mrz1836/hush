@@ -30,6 +30,17 @@ var ErrSaltMissing = errors.New("hush/keys: salt missing or wrong length")
 // ctx is inspected once at entry; a non-nil ctx.Err() returns immediately without
 // invoking Argon2id. Cancellation arriving after entry does not abort the derivation.
 func DeriveMasterSeed(ctx context.Context, passphrase, salt []byte) ([]byte, error) {
+	return deriveMasterSeed(ctx, passphrase, salt, argon2Time, argon2MemoryK, argon2Threads)
+}
+
+// deriveMasterSeed is the parameterised core shared by DeriveMasterSeed and the
+// fuzz harness. Production callers go through DeriveMasterSeed, which pins the
+// locked Argon2id cost (time=4, memory=256 MiB, threads=4). The fuzz target
+// supplies deliberately cheap parameters so it can hammer the input-validation
+// and determinism logic at thousands of execs/sec — fuzzing the full-strength
+// KDF oversubscribes CI workers and trips Go's fuzz-coordinator deadline. The
+// locked parameters themselves are pinned by the KAT in derive_test.go.
+func deriveMasterSeed(ctx context.Context, passphrase, salt []byte, time, memoryK uint32, threads uint8) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -39,5 +50,5 @@ func DeriveMasterSeed(ctx context.Context, passphrase, salt []byte) ([]byte, err
 	if len(salt) != saltLen {
 		return nil, ErrSaltMissing
 	}
-	return argon2.IDKey(passphrase, salt, argon2Time, argon2MemoryK, argon2Threads, argon2KeyLen), nil
+	return argon2.IDKey(passphrase, salt, time, memoryK, threads, argon2KeyLen), nil
 }
