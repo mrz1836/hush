@@ -151,12 +151,14 @@ func newClientRenewCmd() *cobra.Command {
 	flags := clientRenewFlags{}
 	cmd := &cobra.Command{
 		Use:   "renew",
-		Short: "Request a fresh supervisor approval",
+		Short: "Request a fresh Discord approval for a supervisor",
 		Long: strings.TrimSpace(`
-Request a fresh supervisor approval through the existing claim flow.
+Request a fresh supervisor approval through the existing Discord claim flow.
 
 By default renew swaps the approved session without restarting the
 supervised child. Pass --restart to restart the child after approval.
+Use "hush client refresh" for a silent secret refill under the existing
+session.
 `),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {

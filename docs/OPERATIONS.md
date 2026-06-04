@@ -491,7 +491,8 @@ The operational topics every hush install eventually needs:
 - Vault secret rotation (`hush secret rotate`)
 - Vault root-key rotation (`hush vault rekey`, see
   [`docs/VAULT-REKEY.md`](VAULT-REKEY.md))
-- `hush client refresh` flow after rotation
+- `hush client renew` flow for fresh daemon re-approval
+- `hush client refresh` flow for secret-only refill after rotation
 - Validator failure response
 - Child exit 78 (stale-credential) response
 - Discord outage behaviour

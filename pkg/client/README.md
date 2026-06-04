@@ -43,6 +43,11 @@ fmt.Println("expires at:", status.SessionExpiresAt)
 
 `Renew` returns a `RenewResult` on approval and session swap. By default it is seamless: the supervised child keeps running. Pass `RenewOptions{Restart: true}` to ask the supervisor to restart the child after approval.
 
+Use `Renew` when the operator wants a fresh Discord approval for the next
+supervisor session window. Use `Refresh` for the narrower secret-refill
+operation: it re-fetches secrets under the existing session and restarts
+the child, but it does not issue `/claim` or send a Discord prompt.
+
 When the supervisor refuses or fails the renewal, compare the returned error with `errors.Is`:
 
 | Error | Server outcome code | Meaning |
@@ -106,7 +111,10 @@ All exports are part of hush's v1 public API. Wire-format additions appear as ne
 ## Related docs
 
 - [`docs/AGENT-INTEGRATION.md`](../docs/AGENT-INTEGRATION.md) —
-  complete agent integration guide (Snapshot, Me, Watch, Reload).
+  complete agent integration guide (Snapshot, Me, Watch, Renew, Reload).
+- [`docs/DAEMONS.md`](../docs/DAEMONS.md) —
+  operator-side supervisor guide covering `client renew` and
+  `client refresh`.
 - [`docs/SUPERVISE-RELOAD.md`](../docs/SUPERVISE-RELOAD.md) —
   operator-side runbook for the HTTP-proxy reload surface backing
   `Reload()`.
