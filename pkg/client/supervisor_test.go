@@ -255,6 +255,85 @@ func TestRefresh_SocketMissing(t *testing.T) {
 }
 
 // =============================================================
+// Renew
+// =============================================================
+
+func TestRenew_HappyPath(t *testing.T) {
+	body := []byte(`{"ok":true,"outcome":"renewed","restarted":true,"session_expires_at":"2026-04-15T13:12:00Z","jti":"jti-renew"}` + "\n")
+	var captured []byte
+	path := fakeSocketCapturing(t, body, &captured)
+	sup := client.NewSupervisorStatus(path)
+
+	res, err := sup.Renew(context.Background(), client.RenewOptions{Restart: true})
+	require.NoError(t, err)
+	assert.Equal(t, "renewed", res.Outcome)
+	assert.True(t, res.Restarted)
+	assert.Equal(t, time.Date(2026, 4, 15, 13, 12, 0, 0, time.UTC), res.SessionExpiresAt)
+	assert.Equal(t, "jti-renew", res.JTI)
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && len(captured) == 0 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	require.NotEmpty(t, captured, "server did not capture a request")
+	assert.True(t, strings.HasPrefix(string(captured), "renew "), "wire frame must start with renew verb: %q", captured)
+	assert.True(t, strings.HasSuffix(string(captured), "\n"), "wire frame must end with newline")
+	jsonPart := strings.TrimSuffix(strings.TrimPrefix(string(captured), "renew "), "\n")
+	var sent map[string]bool
+	require.NoError(t, json.Unmarshal([]byte(jsonPart), &sent))
+	assert.True(t, sent["restart"])
+}
+
+func TestRenew_ErrorOutcomesMapToSentinels(t *testing.T) {
+	cases := []struct {
+		name     string
+		body     string
+		sentinel error
+	}{
+		{"denied", `{"ok":false,"outcome":"denied","error":"approval denied"}`, client.ErrRenewDenied},
+		{"timeout", `{"ok":false,"outcome":"timeout","error":"approval timed out"}`, client.ErrRenewTimeout},
+		{"refused-state", `{"ok":false,"outcome":"refused-state","error":"fetching"}`, client.ErrRenewRefusedState},
+		{"generic", `{"ok":false,"outcome":"error","error":"vault unavailable"}`, client.ErrRenewFailed},
+		{"unknown", `{"ok":false,"outcome":"surprise","error":"new code"}`, client.ErrRenewFailed},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			path := fakeSocket(t, []byte(c.body+"\n"))
+			sup := client.NewSupervisorStatus(path)
+
+			_, err := sup.Renew(context.Background(), client.RenewOptions{})
+			require.Error(t, err)
+			assert.True(t, errors.Is(err, c.sentinel), "got %v", err)
+		})
+	}
+}
+
+func TestRenew_MalformedResponseIsInvalid(t *testing.T) {
+	path := fakeSocket(t, []byte("not json\n"))
+	sup := client.NewSupervisorStatus(path)
+
+	_, err := sup.Renew(context.Background(), client.RenewOptions{})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, client.ErrInvalidResponse), "got %v", err)
+}
+
+func TestRenew_InvalidExpiryIsInvalid(t *testing.T) {
+	path := fakeSocket(t, []byte(`{"ok":true,"outcome":"renewed","session_expires_at":"not-a-time"}`+"\n"))
+	sup := client.NewSupervisorStatus(path)
+
+	_, err := sup.Renew(context.Background(), client.RenewOptions{})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, client.ErrInvalidResponse), "got %v", err)
+}
+
+func TestRenew_SocketMissingMapsToUnreachable(t *testing.T) {
+	sup := client.NewSupervisorStatus("/tmp/hush-pkg-client-nope-renew.sock")
+	_, err := sup.Renew(context.Background(), client.RenewOptions{})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, client.ErrSocketUnavailable), "got %v", err)
+}
+
+// =============================================================
 // Reload — T-306 Phase 6 SDK coverage
 // =============================================================
 

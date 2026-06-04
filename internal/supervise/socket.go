@@ -314,7 +314,7 @@ func (s *StatusServer) acceptLoop(ctx context.Context, listener net.Listener) {
 //     backward-compatibility.
 //   - "refresh": invoke the attached refresh handler; serialise the
 //     terminal ack as {"ok":true}\n or {"ok":false,"error":"<msg>"}\n.
-func (s *StatusServer) handle(ctx context.Context, conn net.Conn) {
+func (s *StatusServer) handle(ctx context.Context, conn net.Conn) { //nolint:gocognit // small closed-set verb router
 	defer s.wg.Done()
 	defer func() {
 		s.mu.Lock()

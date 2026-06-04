@@ -188,7 +188,7 @@ func (s *SupervisorStatus) Reload(ctx context.Context, configPath string) (Reloa
 //
 // Compare with errors.Is.
 func (s *SupervisorStatus) Renew(ctx context.Context, options RenewOptions) (RenewResult, error) {
-	reqBody, mErr := json.Marshal(renewReqWire{Restart: options.Restart})
+	reqBody, mErr := json.Marshal(renewReqWire(options))
 	if mErr != nil {
 		return RenewResult{}, fmt.Errorf("%w: marshal renew request: %w", ErrInvalidResponse, mErr)
 	}
