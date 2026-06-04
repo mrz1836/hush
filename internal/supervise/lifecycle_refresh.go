@@ -36,6 +36,10 @@ type rejectStateError struct {
 // Error returns the state name.
 func (e *rejectStateError) Error() string { return e.state }
 
+// errRenewPanic is returned to renew callers when the asynchronous renew
+// worker recovers from a panic. This keeps the socket caller from hanging.
+var errRenewPanic = errors.New("supervise: renew worker panic")
+
 // claimRefreshLoop is owned by Lifecycle.wg; consumes refreshTickCh and
 // performs each refresh /claim swap. Posts the outcome on refreshDoneCh
 // so mainLoop swaps the Store JWT atomically.
@@ -140,6 +144,24 @@ func (l *Lifecycle) handleStatusRefreshVerb(ctx context.Context) error {
 	}
 }
 
+// handleStatusRenewVerb is bound to StatusServer.AttachRenewHandler.
+// It posts on renewVerbCh so the state gate runs inside mainLoop, then
+// blocks on the renew worker's terminal ack.
+func (l *Lifecycle) handleStatusRenewVerb(ctx context.Context, req RenewRequest) (RenewResult, error) {
+	verb := renewVerb{req: req, ack: make(chan renewResult, 1)}
+	select {
+	case l.renewVerbCh <- verb:
+	case <-ctx.Done():
+		return RenewResult{}, ctx.Err()
+	}
+	select {
+	case res := <-verb.ack:
+		return res.res, res.err
+	case <-ctx.Done():
+		return RenewResult{}, ctx.Err()
+	}
+}
+
 // dispatchRefreshVerb is mainLoop's arm for the status-socket refresh verb:
 //   - StateAwaitingApproval → re-approve: refill + validate + restart
 //   - StateRunning / StateGraceRestart → stop the child, refetch, restart it
@@ -194,5 +216,103 @@ func (l *Lifecycle) dispatchRefreshVerb(ctx context.Context, verb refreshVerb) {
 		case verb.ack <- &rejectStateError{state: "unknown:" + string(state)}:
 		default:
 		}
+	}
+}
+
+// dispatchRenewVerb is mainLoop's arm for the status-socket renew verb.
+// It performs only the state gate and single-flight check in mainLoop, then
+// runs the potentially long human approval wait in a wg-tracked worker.
+func (l *Lifecycle) dispatchRenewVerb(ctx context.Context, verb renewVerb) {
+	snap := l.store.Snapshot()
+	state := snap.State
+	switch state {
+	case StateRunning, StateGraceRestart, StateAwaitingApproval:
+	case StateFetching, StateStopped, StateSwapping:
+		l.emitClientRenewInvoked(ctx, string(state), "rejected", false)
+		ackRenew(verb, RenewResult{Outcome: RenewOutcomeRefusedState}, &rejectStateError{state: string(state)})
+		return
+	default:
+		l.emitClientRenewInvoked(ctx, string(state), "rejected", false)
+		ackRenew(verb, RenewResult{Outcome: RenewOutcomeRefusedState}, &rejectStateError{state: "unknown:" + string(state)})
+		return
+	}
+
+	if l.renewInFlight.Swap(true) {
+		l.emitClientRenewInvoked(ctx, string(state), "rejected", false)
+		ackRenew(verb, RenewResult{Outcome: RenewOutcomeRefusedState}, &rejectStateError{state: "renew already in flight"})
+		return
+	}
+
+	l.wg.Add(1)
+	go l.runRenewVerb(ctx, state, verb)
+}
+
+func (l *Lifecycle) runRenewVerb(ctx context.Context, state State, verb renewVerb) {
+	defer l.wg.Done()
+	defer l.renewInFlight.Store(false)
+	defer func() {
+		if r := recover(); r != nil {
+			l.deps.Logger.Error("supervise: renew worker panic", slog.Any("recover", r))
+			ackRenew(verb, RenewResult{Outcome: RenewOutcomeError}, fmt.Errorf("supervise: %w", errRenewPanic))
+		}
+	}()
+
+	res, err := l.performRenewClaim(ctx)
+	if err != nil {
+		l.emitClientRenewInvoked(ctx, string(state), res.Outcome, verb.req.Restart)
+		ackRenew(verb, res, err)
+		return
+	}
+
+	restartErr := l.applyRenewPostClaim(ctx, state, verb.req)
+	if restartErr != nil {
+		err = fmt.Errorf("supervise: renew restart: %w", restartErr)
+	}
+	res.Restarted = restartErr == nil && verb.req.Restart
+	l.emitClientRenewInvoked(ctx, string(state), res.Outcome, res.Restarted)
+	ackRenew(verb, res, err)
+}
+
+func (l *Lifecycle) performRenewClaim(ctx context.Context) (RenewResult, error) {
+	refresh := l.performRefreshClaim(ctx)
+	outcome := RenewOutcomeRenewed
+	if refresh.err != nil {
+		outcome = renewOutcomeForRefreshError(refresh.err)
+		return RenewResult{Outcome: outcome}, refresh.err
+	}
+	return RenewResult{
+		Outcome:          outcome,
+		SessionExpiresAt: l.inputs.SessionExpiresAt(),
+		JTI:              l.inputs.SessionJTI(),
+	}, nil
+}
+
+func renewOutcomeForRefreshError(err error) string {
+	switch {
+	case errors.Is(err, errRefreshDenied):
+		return RenewOutcomeDenied
+	case errors.Is(err, errRefreshTimeout):
+		return RenewOutcomeTimeout
+	}
+	return RenewOutcomeError
+}
+
+func (l *Lifecycle) applyRenewPostClaim(ctx context.Context, state State, req RenewRequest) error {
+	if state == StateAwaitingApproval {
+		l.transition(ctx, EventApprovalGranted)
+		return l.silentRefillAndRestart(ctx)
+	}
+	if req.Restart {
+		l.stopChildForRefresh()
+		l.transition(ctx, EventRefreshRequested)
+		return l.silentRefillAndRestart(ctx)
+	}
+	return nil
+}
+
+func ackRenew(verb renewVerb, res RenewResult, err error) {
+	select {
+	case verb.ack <- renewResult{res: res, err: err}:
+	default:
 	}
 }

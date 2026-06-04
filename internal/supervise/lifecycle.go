@@ -14,7 +14,7 @@
 //   1. StatusServer.Run  — Lifecycle.wg
 //   2. Refresher.Run     — Lifecycle.wg
 //   3. mainLoop          (this file) — dispatches childExit / refreshDone /
-//                                       refreshVerb / ctx.Done
+//                                       refreshVerb / renewVerb / ctx.Done
 //   4. childWaitLoop     (lifecycle_child.go) — invokes Child.Wait
 //   5. claimRefreshLoop  (lifecycle_refresh.go) — performs the refresh /claim
 
@@ -238,6 +238,21 @@ type refreshVerb struct {
 	ack chan error
 }
 
+// renewVerb is the message the status-socket renew handler posts so the
+// state gate runs inside mainLoop before the long-running claim approval
+// is handed off to a wg-tracked goroutine.
+type renewVerb struct {
+	req RenewRequest
+	ack chan renewResult
+}
+
+// renewResult is the payload sent back on renewVerb.ack: either the
+// successful RenewResult or a wrapped error sentinel.
+type renewResult struct {
+	res RenewResult
+	err error
+}
+
 // swapVerb is the message SwapChild posts on swapVerbCh so the actual
 // swap orchestration runs inside mainLoop's single goroutine. Routing
 // SwapChild through mainLoop is what guarantees it cannot interleave with
@@ -272,6 +287,7 @@ type Lifecycle struct {
 	refreshTickCh chan struct{}
 	refreshDoneCh chan refreshResult
 	refreshVerbCh chan refreshVerb
+	renewVerbCh   chan renewVerb
 	swapVerbCh    chan swapVerb
 
 	runOnce sync.Once
@@ -318,6 +334,11 @@ type Lifecycle struct {
 	// ErrSwapInFlight rather than colliding on backend pointer or
 	// child-slot writes.
 	swapInFlight atomic.Bool
+
+	// renewInFlight is the single-flight guard around operator-driven
+	// renewals. true while a fresh /claim is awaiting approval or applying
+	// its optional restart; concurrent renew callers receive refused-state.
+	renewInFlight atomic.Bool
 }
 
 // NewLifecycle constructs a Lifecycle. Validates required Deps fields and
@@ -362,6 +383,7 @@ func NewLifecycle(ctx context.Context, cfg *config.Supervisor, deps Deps) *Lifec
 		refreshTickCh: make(chan struct{}, 1),
 		refreshDoneCh: make(chan refreshResult, 1),
 		refreshVerbCh: make(chan refreshVerb, 1),
+		renewVerbCh:   make(chan renewVerb, 1),
 		swapVerbCh:    make(chan swapVerb, 1),
 		inputs:        &statusInputs{name: cfg.Name},
 	}
@@ -394,6 +416,7 @@ func NewLifecycle(ctx context.Context, cfg *config.Supervisor, deps Deps) *Lifec
 	// that posts on refreshVerbCh and blocks on ack. State-conditional
 	// dispatch lives in lifecycle_refresh.go.
 	lc.statusServer.AttachRefreshHandler(lc.handleStatusRefreshVerb)
+	lc.statusServer.AttachRenewHandler(lc.handleStatusRenewVerb)
 
 	return lc
 }
@@ -506,15 +529,14 @@ func (l *Lifecycle) run(parentCtx context.Context) error {
 		return err
 	}
 
-	// mainLoop dispatches childExit / refreshDone / refreshVerb / ctx.Done.
+	// mainLoop dispatches childExit / refreshDone / refreshVerb / renewVerb / ctx.Done.
 	l.mainLoop(ctx)
 	l.runShutdown(ctx)
 	return nil
 }
 
 // mainLoop is the orchestrator's central dispatcher. It runs until ctx is
-// cancelled or a terminal stop-event fires. The four arms are: childExit,
-// refreshDone, refreshVerb, ctx.Done.
+// cancelled or a terminal stop-event fires.
 func (l *Lifecycle) mainLoop(ctx context.Context) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -532,6 +554,8 @@ func (l *Lifecycle) mainLoop(ctx context.Context) {
 			l.dispatchRefreshResult(ctx, res)
 		case verb := <-l.refreshVerbCh:
 			l.dispatchRefreshVerb(ctx, verb)
+		case verb := <-l.renewVerbCh:
+			l.dispatchRenewVerb(ctx, verb)
 		case verb := <-l.swapVerbCh:
 			l.dispatchSwapVerb(ctx, verb)
 		}

@@ -86,6 +86,7 @@ const (
 	// map in lifecycle_audit.go; never any secret value.
 	ActionSupervisorSwapCandidateReaped = "supervisor_swap_candidate_reaped"
 	ActionClientRefreshInvoked          = "client_refresh_invoked"
+	ActionClientRenewInvoked            = "client_renew_invoked"
 )
 
 // genesisDomainTag is the domain-separator string hashed once to derive
