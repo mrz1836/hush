@@ -26,7 +26,6 @@
 //
 // # Scope
 //
-// PR 1 (this release) ships SupervisorStatus with Snapshot, SnapshotRaw,
-// and Refresh. Later releases extend the type with a Subscribe method
-// for streaming lifecycle events.
+// SupervisorStatus exposes Snapshot, SnapshotRaw, Refresh, Renew,
+// Reload, and Watch methods for local supervisor operations.
 package client

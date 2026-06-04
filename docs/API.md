@@ -158,7 +158,11 @@ Side-effect-free relative to session state:
 
 ## Local supervisor socket endpoint
 
-### `GET /status`
+The local supervisor socket is a Unix-domain control plane protected by
+filesystem permissions. It accepts one line per connection. Unknown or empty
+input renders the status document for backward compatibility.
+
+### `status`
 
 Purpose:
 - provide agent-visible freshness and runtime state for one local supervisor
@@ -176,6 +180,60 @@ Expected response shape:
 - `discord_connected`
 
 See `docs/CONFIG-SCHEMA.md` for the canonical JSON shape.
+
+### `refresh`
+
+Purpose:
+- silently refill secrets under the existing supervisor session
+- re-run validators and restart the supervised child with the refilled
+  environment
+
+Behavior:
+- does not issue `/claim`
+- does not trigger a Discord approval prompt
+- returns `{"ok":true}` on success, or `{"ok":false,"error":"..."}`
+
+Use `refresh` after vault-side secret rotation or stale-credential repair
+when the current supervisor session is still the intended approval boundary.
+
+### `renew[ <json>]`
+
+Purpose:
+- request a fresh supervisor approval through `/claim`
+- swap the supervisor to the newly-approved session
+- optionally restart the child after approval
+
+Request body:
+- omitted or `{}` — seamless renewal; child keeps running
+- `{"restart":true}` — restart the child after the session renewal succeeds
+
+Response:
+- `ok` (bool)
+- `outcome` (`renewed`, `denied`, `timeout`, `refused-state`, `error`)
+- `restarted` (bool)
+- `session_expires_at` (RFC3339, present on success when known)
+- `jti` (session identifier, present on success when known)
+- `error` (string, present on failure)
+
+`renew` preserves the normal Discord approval path. It never
+auto-approves and never returns JWT or secret bytes.
+
+### `reload[ <json>]`
+
+Purpose:
+- request a zero-downtime HTTP-proxy child handoff for reload-eligible
+  supervisors
+
+Request body:
+- `{"config_path":"..."}` — operator-supplied config path for audit
+  attribution; the supervisor performs the swap from its already-loaded
+  config
+
+Response:
+- `ok` (bool)
+- `result` (`ok`, `readiness-failed`, `config-invalid`,
+  `swap-in-flight`, `error`)
+- old/new PID, readiness duration, strategy, and error fields as applicable
 
 ---
 

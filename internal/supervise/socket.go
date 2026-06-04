@@ -63,6 +63,7 @@ type StatusServer struct {
 	inputs         StatusInputs
 	refreshHandler func(ctx context.Context) error
 	reloadHandler  func(ctx context.Context, req ReloadRequest) (SwapResult, error)
+	renewHandler   func(ctx context.Context, req RenewRequest) (RenewResult, error)
 	started        bool
 	conns          map[net.Conn]struct{}
 	wg             sync.WaitGroup
@@ -78,6 +79,24 @@ type ReloadRequest struct {
 	ConfigPath string `json:"config_path"`
 }
 
+// RenewRequest is the parsed renew-request payload from the status
+// socket. Restart is false by default, preserving the scheduled refresh
+// path's seamless JWT/session swap unless the operator explicitly asks
+// for a child restart after approval.
+type RenewRequest struct {
+	Restart bool `json:"restart"`
+}
+
+// RenewResult is the non-secret outcome of an operator-driven renewal.
+// It never carries JWT/token bytes; only the public session identifier
+// and expiry metadata needed by operators and SDK callers.
+type RenewResult struct {
+	Outcome          string
+	Restarted        bool
+	SessionExpiresAt time.Time
+	JTI              string
+}
+
 // Reload result-code constants. These strings are wire-stable: the
 // pkg/client SDK switches on them to translate into typed errors.
 // `supervisor-unreachable` is a client-side code only and is never
@@ -88,6 +107,16 @@ const (
 	ReloadResultConfigInvalid   = "config-invalid"
 	ReloadResultSwapInFlight    = "swap-in-flight"
 	ReloadResultError           = "error"
+)
+
+// Renew outcome-code constants. These strings are wire-stable: the
+// pkg/client SDK switches on them to translate into typed errors.
+const (
+	RenewOutcomeRenewed      = "renewed"
+	RenewOutcomeDenied       = "denied"
+	RenewOutcomeTimeout      = "timeout"
+	RenewOutcomeRefusedState = "refused-state"
+	RenewOutcomeError        = "error"
 )
 
 // NewStatusServer constructs a fresh StatusServer. Pure value constructor
@@ -200,6 +229,24 @@ func (s *StatusServer) AttachReloadHandler(handler func(ctx context.Context, req
 	s.reloadHandler = handler
 }
 
+// AttachRenewHandler wires the orchestrator's renew (fresh approval)
+// callback into the status server. The handler is invoked for every
+// `renew[ <json-body>]\n` verb received on the status socket. Until
+// called, the renew path returns a stable
+// `{"ok":false,"outcome":"error","error":"renew handler not wired"}`
+// response rather than panicking.
+//
+// Single-shot: a second call panics (matches the one-shot `Run`
+// semantics).
+func (s *StatusServer) AttachRenewHandler(handler func(ctx context.Context, req RenewRequest) (RenewResult, error)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.renewHandler != nil {
+		panic("supervise: AttachRenewHandler called twice on same StatusServer")
+	}
+	s.renewHandler = handler
+}
+
 // attach wires inputs into the status server. Package-private; called by
 // the orchestrator from inside package supervise via AttachStatusInputs.
 // Mirrors the (*Refiller).attach precedent.
@@ -267,7 +314,7 @@ func (s *StatusServer) acceptLoop(ctx context.Context, listener net.Listener) {
 //     backward-compatibility.
 //   - "refresh": invoke the attached refresh handler; serialise the
 //     terminal ack as {"ok":true}\n or {"ok":false,"error":"<msg>"}\n.
-func (s *StatusServer) handle(ctx context.Context, conn net.Conn) {
+func (s *StatusServer) handle(ctx context.Context, conn net.Conn) { //nolint:gocognit // small closed-set verb router
 	defer s.wg.Done()
 	defer func() {
 		s.mu.Lock()
@@ -300,6 +347,12 @@ func (s *StatusServer) handle(ctx context.Context, conn net.Conn) {
 	if verb == "reload" || strings.HasPrefix(verb, "reload ") {
 		args := strings.TrimSpace(strings.TrimPrefix(verb, "reload"))
 		s.writeReloadAck(ctx, conn, args)
+		return
+	}
+
+	if verb == "renew" || strings.HasPrefix(verb, "renew ") {
+		args := strings.TrimSpace(strings.TrimPrefix(verb, "renew"))
+		s.writeRenewAck(ctx, conn, args)
 		return
 	}
 
@@ -400,6 +453,20 @@ type reloadAckWire struct {
 	ConfigPath          string `json:"config_path,omitempty"`
 }
 
+// renewAckWire is the unified success/failure response shape for the
+// `renew` verb. OK + Outcome together encode the outcome; session fields
+// are populated on success. Error carries a one-line diagnostic on
+// failure or restart-after-renew failure; it never carries env/secret
+// material.
+type renewAckWire struct {
+	OK               bool   `json:"ok"`
+	Outcome          string `json:"outcome"`
+	Restarted        bool   `json:"restarted"`
+	SessionExpiresAt string `json:"session_expires_at,omitempty"`
+	JTI              string `json:"jti,omitempty"`
+	Error            string `json:"error,omitempty"`
+}
+
 // writeReloadAck dispatches the reload verb to the attached handler
 // and writes the terminal ack to conn. args is the (possibly empty)
 // JSON body that followed the `reload` verb token on the request
@@ -459,6 +526,55 @@ func (s *StatusServer) writeReloadAck(ctx context.Context, conn net.Conn, args s
 	s.writeOrLog(conn, body, "supervise: reload ack")
 }
 
+// writeRenewAck dispatches the renew verb to the attached handler and
+// writes the terminal ack to conn. args is the (possibly empty) JSON body
+// that followed the `renew` verb token on the request line.
+func (s *StatusServer) writeRenewAck(ctx context.Context, conn net.Conn, args string) {
+	s.mu.Lock()
+	handler := s.renewHandler
+	s.mu.Unlock()
+
+	if handler == nil {
+		body := marshalRenewAck(renewAckWire{
+			Outcome: RenewOutcomeError,
+			Error:   "renew handler not wired",
+		})
+		s.writeOrLog(conn, body, "supervise: renew ack")
+		return
+	}
+
+	var req RenewRequest
+	if args != "" {
+		if jerr := json.Unmarshal([]byte(args), &req); jerr != nil {
+			body := marshalRenewAck(renewAckWire{
+				Outcome: RenewOutcomeError,
+				Error:   "invalid renew request body",
+			})
+			s.writeOrLog(conn, body, "supervise: renew ack")
+			return
+		}
+	}
+
+	res, handlerErr := handler(ctx, req)
+	if handlerErr == nil {
+		body := marshalRenewResult(res, "")
+		s.writeOrLog(conn, body, "supervise: renew ack")
+		return
+	}
+
+	msg := strings.ReplaceAll(handlerErr.Error(), "\n", " ")
+	if res.Outcome == RenewOutcomeRenewed {
+		body := marshalRenewResult(res, msg)
+		s.writeOrLog(conn, body, "supervise: renew ack")
+		return
+	}
+	body := marshalRenewAck(renewAckWire{
+		Outcome: classifyRenewError(handlerErr),
+		Error:   msg,
+	})
+	s.writeOrLog(conn, body, "supervise: renew ack")
+}
+
 // classifyReloadError maps a SwapChild error onto the wire-stable
 // reload result code. Unknown errors fall through to ReloadResultError
 // so the operator still receives a non-zero outcome with the wrapped
@@ -477,6 +593,21 @@ func classifyReloadError(err error) string {
 	return ReloadResultError
 }
 
+// classifyRenewError maps a renew handler error onto the wire-stable
+// renew outcome code. Unknown errors fall through to RenewOutcomeError.
+func classifyRenewError(err error) string {
+	var stateErr *rejectStateError
+	switch {
+	case errors.As(err, &stateErr):
+		return RenewOutcomeRefusedState
+	case errors.Is(err, errRefreshDenied):
+		return RenewOutcomeDenied
+	case errors.Is(err, errRefreshTimeout):
+		return RenewOutcomeTimeout
+	}
+	return RenewOutcomeError
+}
+
 // marshalReloadAck encodes a reloadAckWire and appends a single
 // trailing newline. Falls back to a hand-built one-liner when
 // json.Marshal returns an error (effectively impossible for this
@@ -485,6 +616,31 @@ func marshalReloadAck(ack reloadAckWire) []byte {
 	body, err := json.Marshal(ack)
 	if err != nil {
 		return []byte(`{"ok":false,"result":"error","error":"reload ack serialization failed"}` + "\n")
+	}
+	return append(body, '\n')
+}
+
+func marshalRenewResult(res RenewResult, msg string) []byte {
+	ack := renewAckWire{
+		OK:        res.Outcome == RenewOutcomeRenewed,
+		Outcome:   res.Outcome,
+		Restarted: res.Restarted,
+		JTI:       res.JTI,
+		Error:     msg,
+	}
+	if !res.SessionExpiresAt.IsZero() {
+		ack.SessionExpiresAt = res.SessionExpiresAt.Format(time.RFC3339)
+	}
+	return marshalRenewAck(ack)
+}
+
+// marshalRenewAck encodes a renewAckWire and appends a single trailing
+// newline. Falls back to a hand-built one-liner when json.Marshal returns
+// an error.
+func marshalRenewAck(ack renewAckWire) []byte {
+	body, err := json.Marshal(ack)
+	if err != nil {
+		return []byte(`{"ok":false,"outcome":"error","error":"renew ack serialization failed"}` + "\n")
 	}
 	return append(body, '\n')
 }

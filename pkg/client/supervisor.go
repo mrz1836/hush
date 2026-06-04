@@ -102,6 +102,24 @@ type ReloadResult struct {
 	Strategy          string
 }
 
+// RenewOptions controls an operator-driven renewal request.
+type RenewOptions struct {
+	// Restart asks the supervisor to restart the child after approval
+	// and session renewal. The default false path renews the session
+	// without disturbing the running child.
+	Restart bool
+}
+
+// RenewResult is the outcome of (*SupervisorStatus).Renew. All fields
+// are non-secret operator metadata; JTI is the public session
+// identifier, never the JWT or token bytes.
+type RenewResult struct {
+	Outcome          string
+	Restarted        bool
+	SessionExpiresAt time.Time
+	JTI              string
+}
+
 // Reload asks the supervisor to perform a zero-downtime HTTP-proxy
 // handoff against its currently-loaded config. configPath is the path
 // the operator validated locally before triggering the reload; the
@@ -150,6 +168,53 @@ func (s *SupervisorStatus) Reload(ctx context.Context, configPath string) (Reloa
 	return ReloadResult{}, classifyReloadAck(ack)
 }
 
+// Renew asks the supervisor to request a fresh operator approval and
+// swap to the newly-approved session. By default the child keeps
+// running; set options.Restart to ask the supervisor to restart the
+// child after the renewal succeeds.
+//
+// Returns the populated RenewResult and nil on success. On failure, the
+// error wraps one of:
+//
+//   - ErrRenewDenied — the operator denied the approval request.
+//   - ErrRenewTimeout — the approval request timed out.
+//   - ErrRenewRefusedState — the supervisor was not in a renewable
+//     state, or another renewal was already in flight.
+//   - ErrRenewFailed — any other supervisor-side renewal failure.
+//   - ErrSocketUnavailable — the supervisor socket could not be
+//     reached.
+//   - ErrInvalidResponse — the supervisor responded but the payload
+//     could not be parsed.
+//
+// Compare with errors.Is.
+func (s *SupervisorStatus) Renew(ctx context.Context, options RenewOptions) (RenewResult, error) {
+	reqBody, mErr := json.Marshal(renewReqWire(options))
+	if mErr != nil {
+		return RenewResult{}, fmt.Errorf("%w: marshal renew request: %w", ErrInvalidResponse, mErr)
+	}
+	body, err := s.roundTrip(ctx, "renew "+string(reqBody)+"\n")
+	if err != nil {
+		return RenewResult{}, err
+	}
+	var ack renewAckWire
+	if jerr := json.Unmarshal(bytes.TrimSpace(body), &ack); jerr != nil {
+		return RenewResult{}, fmt.Errorf("%w: %w", ErrInvalidResponse, jerr)
+	}
+	if !ack.OK {
+		return RenewResult{}, classifyRenewAck(ack)
+	}
+	expiresAt, perr := parseRFC3339OrZero(ack.SessionExpiresAt)
+	if perr != nil {
+		return RenewResult{}, fmt.Errorf("%w: session_expires_at: %w", ErrInvalidResponse, perr)
+	}
+	return RenewResult{
+		Outcome:          ack.Outcome,
+		Restarted:        ack.Restarted,
+		SessionExpiresAt: expiresAt,
+		JTI:              ack.JTI,
+	}, nil
+}
+
 // classifyReloadAck maps a failure ack onto the typed reload error.
 // Unknown result strings fall through to ErrReloadFailed so the
 // caller still receives a non-nil error with the supervisor's
@@ -168,6 +233,25 @@ func classifyReloadAck(ack reloadAckWire) error {
 		return fmt.Errorf("%w: %s", ErrReloadInFlight, reason)
 	}
 	return fmt.Errorf("%w: %s", ErrReloadFailed, reason)
+}
+
+// classifyRenewAck maps a failure ack onto the typed renew error.
+// Unknown outcome strings fall through to ErrRenewFailed so the caller
+// still receives a non-nil error with the supervisor's reason string.
+func classifyRenewAck(ack renewAckWire) error {
+	reason := ack.Error
+	if reason == "" {
+		reason = ack.Outcome
+	}
+	switch ack.Outcome {
+	case renewOutcomeDenied:
+		return fmt.Errorf("%w: %s", ErrRenewDenied, reason)
+	case renewOutcomeTimeout:
+		return fmt.Errorf("%w: %s", ErrRenewTimeout, reason)
+	case renewOutcomeRefusedState:
+		return fmt.Errorf("%w: %s", ErrRenewRefusedState, reason)
+	}
+	return fmt.Errorf("%w: %s", ErrRenewFailed, reason)
 }
 
 // supervisorDefaultTimeout caps a single status-socket round-trip
@@ -297,6 +381,12 @@ type reloadReqWire struct {
 	ConfigPath string `json:"config_path"`
 }
 
+// renewReqWire mirrors supervise.RenewRequest — the JSON body that
+// follows the `renew` verb on the request line.
+type renewReqWire struct {
+	Restart bool `json:"restart"`
+}
+
 // reloadAckWire mirrors supervise.reloadAckWire — the unified
 // success/failure response shape for the `reload` verb.
 type reloadAckWire struct {
@@ -310,6 +400,17 @@ type reloadAckWire struct {
 	ConfigPath          string `json:"config_path,omitempty"`
 }
 
+// renewAckWire mirrors supervise.renewAckWire — the unified
+// success/failure response shape for the `renew` verb.
+type renewAckWire struct {
+	OK               bool   `json:"ok"`
+	Outcome          string `json:"outcome"`
+	Restarted        bool   `json:"restarted"`
+	SessionExpiresAt string `json:"session_expires_at,omitempty"`
+	JTI              string `json:"jti,omitempty"`
+	Error            string `json:"error,omitempty"`
+}
+
 // Reload result code constants (mirrored from the server's
 // wire-stable strings). Kept package-private because callers compare
 // against the typed sentinels (ErrReloadConfigInvalid, ...) rather
@@ -318,6 +419,15 @@ const (
 	reloadResultConfigInvalid   = "config-invalid"
 	reloadResultReadinessFailed = "readiness-failed"
 	reloadResultSwapInFlight    = "swap-in-flight"
+)
+
+// Renew outcome constants (mirrored from the server's wire-stable
+// strings). Kept package-private because callers compare against the
+// typed sentinels (ErrRenewDenied, ...) rather than the raw codes.
+const (
+	renewOutcomeDenied       = "denied"
+	renewOutcomeTimeout      = "timeout"
+	renewOutcomeRefusedState = "refused-state"
 )
 
 // parseRFC3339OrZero accepts either an RFC3339 string or an empty

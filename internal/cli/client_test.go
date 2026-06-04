@@ -130,6 +130,15 @@ func withTimeouts(t *testing.T, status, refresh time.Duration) {
 	})
 }
 
+func withRenewTimeout(t *testing.T, renew time.Duration) {
+	t.Helper()
+	old := clientRenewTimeout
+	clientRenewTimeout = renew
+	t.Cleanup(func() {
+		clientRenewTimeout = old
+	})
+}
+
 // ============================================================
 // resolveSocketPath
 // ============================================================
@@ -275,7 +284,8 @@ func TestClientRefresh_AckMapsToExitOK(t *testing.T) {
 	path := fakeStatusServer(t, []byte(`{"ok":true}`+"\n"))
 	stdout, stderr, err := runClientCmd(t, context.Background(), "refresh", "--socket", path)
 	require.NoError(t, err)
-	assert.Empty(t, stdout)
+	assert.Contains(t, stdout, "hush: client refresh: secret refill complete (no re-approval)")
+	assert.Contains(t, stdout, "hush client renew --supervisor <name>")
 	assert.Empty(t, stderr)
 }
 
@@ -318,6 +328,70 @@ func TestClientRefresh_NoFormatFlag(t *testing.T) {
 	require.Error(t, err)
 	// Cobra surfaces unknown-flag errors; not necessarily a sentinel.
 	assert.NotEqual(t, ExitOK, mapErr(err))
+}
+
+// ============================================================
+// renew
+// ============================================================
+
+func TestClientRenew_AckMapsToExitOK(t *testing.T) {
+	path := fakeStatusServer(t, []byte(`{"ok":true,"outcome":"renewed","restarted":false,"session_expires_at":"2026-04-15T13:12:00Z","jti":"jti-renew"}`+"\n"))
+	stdout, stderr, err := runClientCmd(t, context.Background(), "renew", "--socket", path)
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "hush: client renew: session renewed (approval granted); next expiry 2026-04-15T13:12:00Z")
+	assert.NotContains(t, stdout, "child restarted")
+	assert.Empty(t, stderr)
+}
+
+func TestClientRenew_RestartedOutput(t *testing.T) {
+	path := fakeStatusServer(t, []byte(`{"ok":true,"outcome":"renewed","restarted":true,"session_expires_at":"2026-04-15T13:12:00Z","jti":"jti-renew"}`+"\n"))
+	stdout, _, err := runClientCmd(t, context.Background(), "renew", "--socket", path, "--restart")
+	require.NoError(t, err)
+	assert.Contains(t, stdout, "child restarted")
+}
+
+func TestClientRenew_DeniedMapsToExitErr(t *testing.T) {
+	path := fakeStatusServer(t, []byte(`{"ok":false,"outcome":"denied","error":"approval denied"}`+"\n"))
+	_, stderr, err := runClientCmd(t, context.Background(), "renew", "--socket", path)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, errSupervisorRefused))
+	assert.Equal(t, ExitErr, mapErr(err))
+	assert.Contains(t, stderr, "approval denied")
+}
+
+func TestClientRenew_TimeoutMapsToExitErr(t *testing.T) {
+	path := fakeStatusServer(t, []byte(`{"ok":false,"outcome":"timeout","error":"approval timed out"}`+"\n"))
+	_, stderr, err := runClientCmd(t, context.Background(), "renew", "--socket", path)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, errSupervisorRefused))
+	assert.Equal(t, ExitErr, mapErr(err))
+	assert.Contains(t, stderr, "approval timed out")
+}
+
+func TestClientRenew_RefusedStateMapsToExitErr(t *testing.T) {
+	path := fakeStatusServer(t, []byte(`{"ok":false,"outcome":"refused-state","error":"fetching"}`+"\n"))
+	_, stderr, err := runClientCmd(t, context.Background(), "renew", "--socket", path)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, errSupervisorRefused))
+	assert.Equal(t, ExitErr, mapErr(err))
+	assert.Contains(t, stderr, "fetching")
+}
+
+func TestClientRenew_SocketUnreachableExitErr(t *testing.T) {
+	_, stderr, err := runClientCmd(t, context.Background(), "renew", "--socket", "/tmp/does-not-exist-h23-renew.sock")
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, errSocketUnreachable))
+	assert.Equal(t, ExitErr, mapErr(err))
+	assert.Contains(t, stderr, "hush: client renew:")
+}
+
+func TestClientRenew_TimeoutExitErr(t *testing.T) {
+	withRenewTimeout(t, 200*time.Millisecond)
+	path := fakeStatusServer(t, nil, withHangAfterAccept())
+	_, _, err := runClientCmd(t, context.Background(), "renew", "--socket", path)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, errSocketUnreachable))
+	assert.Equal(t, ExitErr, mapErr(err))
 }
 
 // ============================================================

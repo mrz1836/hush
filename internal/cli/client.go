@@ -50,6 +50,13 @@ var clientStatusTimeout = 2 * time.Second
 //nolint:gochecknoglobals // sentinel-class timeout knob; mutated only by tests via withTimeouts.
 var clientRefreshTimeout = 90 * time.Second
 
+// clientRenewTimeout is the wall-clock ceiling on `client renew`.
+// Approval is human-gated, so the default is intentionally longer than
+// the same-host refill/status calls. Overridable from test code.
+//
+//nolint:gochecknoglobals // sentinel-class timeout knob; mutated only by tests via withTimeouts.
+var clientRenewTimeout = 120 * time.Second
+
 // isTerminalFn is the TTY-detect seam. Production wires
 // term.IsTerminal; tests override to force one branch or the other.
 //
@@ -65,6 +72,7 @@ func newClientCmd() *cobra.Command {
 	}
 	cmd.AddCommand(newClientStatusCmd())
 	cmd.AddCommand(newClientRefreshCmd())
+	cmd.AddCommand(newClientRenewCmd())
 	return cmd
 }
 
@@ -109,8 +117,15 @@ func newClientRefreshCmd() *cobra.Command {
 	flags := clientRefreshFlags{}
 	cmd := &cobra.Command{
 		Use:   "refresh",
-		Short: "Trigger an immediate refresh on a running supervisor",
-		Args:  cobra.NoArgs,
+		Short: "Refill secrets under the existing supervisor session",
+		Long: strings.TrimSpace(`
+Refill supervisor secrets under the existing approved session.
+
+This is a silent secret refill and child restart; it does not request a
+fresh Discord approval. Use "hush client renew" when you need a new
+operator approval for the next session window.
+`),
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runClientRefresh(cmd, flags)
 		},
@@ -119,6 +134,43 @@ func newClientRefreshCmd() *cobra.Command {
 		"Absolute path to the supervisor's status socket (wins over --supervisor)")
 	cmd.Flags().StringVar(&flags.supervisorName, "supervisor", "",
 		"Supervisor name (derives the socket path)")
+	return cmd
+}
+
+// clientRenewFlags holds the parsed flag values for `hush client
+// renew`.
+type clientRenewFlags struct {
+	socketPath     string
+	supervisorName string
+	restart        bool
+}
+
+// newClientRenewCmd constructs the `hush client renew` leaf. No --json
+// flag — renew is an operator workflow with fixed human output.
+func newClientRenewCmd() *cobra.Command {
+	flags := clientRenewFlags{}
+	cmd := &cobra.Command{
+		Use:   "renew",
+		Short: "Request a fresh Discord approval for a supervisor",
+		Long: strings.TrimSpace(`
+Request a fresh supervisor approval through the existing Discord claim flow.
+
+By default renew swaps the approved session without restarting the
+supervised child. Pass --restart to restart the child after approval.
+Use "hush client refresh" for a silent secret refill under the existing
+session.
+`),
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runClientRenew(cmd, flags)
+		},
+	}
+	cmd.Flags().StringVar(&flags.socketPath, "socket", "",
+		"Absolute path to the supervisor's status socket (wins over --supervisor)")
+	cmd.Flags().StringVar(&flags.supervisorName, "supervisor", "",
+		"Supervisor name (derives the socket path)")
+	cmd.Flags().BoolVar(&flags.restart, "restart", false,
+		"Restart the supervised child after approval succeeds")
 	return cmd
 }
 
@@ -225,6 +277,63 @@ func runClientRefresh(cmd *cobra.Command, flags clientRefreshFlags) error {
 		printClientErr(stderr, "refresh", wrapped)
 		return wrapped
 	}
+	stdout := cmd.OutOrStdout()
+	if _, werr := fmt.Fprintln(stdout, "hush: client refresh: secret refill complete (no re-approval)"); werr != nil {
+		return fmt.Errorf("hush: client refresh: write: %w", werr)
+	}
+	renewTarget := "<name>"
+	if flags.supervisorName != "" {
+		renewTarget = flags.supervisorName
+	}
+	if _, werr := fmt.Fprintf(stdout,
+		"note: refresh refills secrets under the existing session; to request a fresh Discord approval run: hush client renew --supervisor %s\n",
+		renewTarget,
+	); werr != nil {
+		return fmt.Errorf("hush: client refresh: write: %w", werr)
+	}
+	return nil
+}
+
+func runClientRenew(cmd *cobra.Command, flags clientRenewFlags) error {
+	stderr := cmd.ErrOrStderr()
+
+	path, err := resolveSocketPath(flags.socketPath, flags.supervisorName)
+	if err != nil {
+		printClientErr(stderr, "renew", err)
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(cmd.Context(), clientRenewTimeout)
+	defer cancel()
+
+	sup := client.NewSupervisorStatus(path)
+	res, sdkErr := sup.Renew(ctx, client.RenewOptions{Restart: flags.restart})
+	if sdkErr != nil {
+		wrapped := wrapRenewSDKErr(sdkErr)
+		printClientErr(stderr, "renew", wrapped)
+		return wrapped
+	}
+	stdout := cmd.OutOrStdout()
+	outcome := res.Outcome
+	if outcome == "" {
+		outcome = supervise.RenewOutcomeRenewed
+	}
+	if outcome != supervise.RenewOutcomeRenewed {
+		wrapped := fmt.Errorf("%w renew: unexpected successful outcome %q", errSupervisorRefused, outcome)
+		printClientErr(stderr, "renew", wrapped)
+		return wrapped
+	}
+	restartSuffix := ""
+	if res.Restarted {
+		restartSuffix = "; child restarted"
+	}
+	if _, werr := fmt.Fprintf(stdout,
+		"hush: client renew: session renewed (approval granted); next expiry %s%s\n",
+		formatRenewExpiry(res.SessionExpiresAt),
+		restartSuffix,
+	); werr != nil {
+		return fmt.Errorf("hush: client renew: write: %w", werr)
+	}
 	return nil
 }
 
@@ -254,6 +363,43 @@ func wrapRefreshSDKErr(err error) error {
 		return fmt.Errorf("%w: %s", errSupervisorRefused, reason)
 	}
 	return fmt.Errorf("%w: %w", errSocketUnreachable, err)
+}
+
+// wrapRenewSDKErr translates pkg/client renew errors into CLI
+// sentinels. Operator-visible renew refusals keep the existing
+// errSupervisorRefused exit class; socket/parse failures remain
+// errSocketUnreachable.
+func wrapRenewSDKErr(err error) error {
+	switch {
+	case errors.Is(err, client.ErrRenewDenied):
+		return fmt.Errorf("%w renew: %s", errSupervisorRefused, trimSDKReason(err, client.ErrRenewDenied))
+	case errors.Is(err, client.ErrRenewTimeout):
+		return fmt.Errorf("%w renew: approval timed out", errSupervisorRefused)
+	case errors.Is(err, client.ErrRenewRefusedState):
+		return fmt.Errorf("%w renew: %s", errSupervisorRefused, trimSDKReason(err, client.ErrRenewRefusedState))
+	case errors.Is(err, client.ErrRenewFailed):
+		return fmt.Errorf("%w renew: %s", errSupervisorRefused, trimSDKReason(err, client.ErrRenewFailed))
+	case errors.Is(err, client.ErrSocketUnavailable),
+		errors.Is(err, client.ErrInvalidResponse):
+		return fmt.Errorf("%w: %w", errSocketUnreachable, err)
+	default:
+		return fmt.Errorf("%w: %w", errSocketUnreachable, err)
+	}
+}
+
+func trimSDKReason(err error, sentinel error) string {
+	reason := strings.TrimPrefix(err.Error(), sentinel.Error()+": ")
+	if strings.TrimSpace(reason) == "" || reason == err.Error() {
+		return err.Error()
+	}
+	return reason
+}
+
+func formatRenewExpiry(t time.Time) string {
+	if t.IsZero() {
+		return "unknown"
+	}
+	return t.Format(time.RFC3339)
 }
 
 // writeHumanStatus renders doc as the locked human-summary format

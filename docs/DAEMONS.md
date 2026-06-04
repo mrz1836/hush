@@ -134,6 +134,11 @@ step here maps to one of the 15 scenarios in `docs/LIFECYCLE-SCENARIOS.md`.
 - The child is **not** restarted; only the supervisor's refill capability is
   refreshed. (Scenario 8)
 
+The scheduler's approval claim is distinct from the operator-facing
+`hush client refresh` command. The scheduled claim can obtain a fresh
+approval and swap the supervisor session; the `client refresh` command
+only refills secrets under the session the supervisor already holds.
+
 ### Day 2, 14:30 — secret rotated mid-session
 
 - Operator runs `hush secret rotate ANTHROPIC_API_KEY` on the vault host.
@@ -308,15 +313,48 @@ fi
 This closes the "the agent has no way to know its credentials are bad"
 gap that motivated `hush supervise` in the first place.
 
+### Manual renewal
+
+`hush client renew --supervisor <daemon>` posts a renewal command to the
+supervisor's status socket. The supervisor sends a fresh `/claim` request
+through the normal Discord approval path, swaps to the newly-approved
+session, and leaves the child running by default. Use this when the
+operator wants to extend a daemon's approval horizon before the next
+reseal or expiry window:
+
+```bash
+hush client renew --supervisor <daemon>
+```
+
+Pass `--restart` only when you also want a clean child restart after the
+approval succeeds:
+
+```bash
+hush client renew --supervisor <daemon> --restart
+```
+
+Renewal preserves the human-in-the-loop boundary: it does not
+auto-approve and it does not silently extend a session. Denial, timeout,
+and ineligible supervisor states are reported as explicit failures.
+
 ### Manual refresh
 
 `hush client refresh --supervisor <daemon>` posts a refresh command to the
 supervisor's status socket. The supervisor re-fetches secrets, re-runs
-validators, and gracefully restarts the child. Use this:
+validators, and gracefully restarts the child under the existing approved
+session. It is a silent secret refill: no fresh `/claim` is issued and no
+Discord approval prompt is sent. Use this:
 
 - After `hush secret rotate <name>` on the vault host (Scenario 13).
 - After a `[STALE] Child Exit 78` alert if you've fixed the underlying
-  credential and want to recover without waiting for a fresh approval.
+  credential and want to recover under the current session.
+
+If the goal is a fresh operator approval for the next window, run
+`hush client renew --supervisor <daemon>` instead.
+
+The scheduled refresh window's refill step and the `client refresh` verb
+both refill under the existing session; only `client renew`, first boot,
+or the scheduler's fresh approval claim requests a new approval.
 
 ---
 

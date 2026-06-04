@@ -23,6 +23,31 @@ var ErrInvalidResponse = errors.New("hush/client: supervisor response invalid")
 // string verbatim.
 var ErrRefreshDenied = errors.New("hush/client: supervisor refused refresh")
 
+// ErrRenewDenied is returned by (*SupervisorStatus).Renew when the
+// operator approval was explicitly denied. The wrapped error message
+// carries the supervisor's reason string verbatim. Compare via
+// errors.Is.
+var ErrRenewDenied = errors.New("hush/client: supervisor renewal denied")
+
+// ErrRenewTimeout is returned by (*SupervisorStatus).Renew when the
+// approval request timed out before the operator granted or denied it.
+// The wrapped error message carries the supervisor's reason string
+// verbatim. Compare via errors.Is.
+var ErrRenewTimeout = errors.New("hush/client: supervisor renewal timed out")
+
+// ErrRenewRefusedState is returned by (*SupervisorStatus).Renew when
+// the supervisor refused to start a renewal because its current state
+// is not eligible, or because another renewal is already in flight.
+// The wrapped error message carries the supervisor's reason string
+// verbatim. Compare via errors.Is.
+var ErrRenewRefusedState = errors.New("hush/client: supervisor refused renewal state")
+
+// ErrRenewFailed is returned by (*SupervisorStatus).Renew for any
+// supervisor-side renewal failure that does not match the more specific
+// sentinels above. The wrapped error message carries the supervisor's
+// reason string verbatim. Compare via errors.Is.
+var ErrRenewFailed = errors.New("hush/client: supervisor renewal failed")
+
 // ErrReloadConfigInvalid is returned by (*SupervisorStatus).Reload when
 // the supervisor refused the reload because the running config is not
 // reload-eligible — typically missing [child.readiness] or

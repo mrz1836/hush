@@ -34,9 +34,29 @@ fmt.Println("expires at:", status.SessionExpiresAt)
 | `Snapshot(ctx)` | Fetch the typed status document. |
 | `SnapshotRaw(ctx)` | Fetch the raw JSON bytes (forward-compatible pass-through). |
 | `Refresh(ctx)` | Ask the supervisor to refill and restart its child immediately. |
+| `Renew(ctx, RenewOptions)` | Ask the supervisor to request a fresh operator approval, swap to the newly-approved session, and optionally restart the child. |
 | `Reload(ctx, configPath)` | Trigger a zero-downtime HTTP-proxy handoff against the supervisor's already-loaded config; returns a `ReloadResult` with old/new PIDs, readiness duration, and the strategy string (`"http-proxy"`). Operator should load + validate `configPath` locally before calling. |
 | `Watch(ctx, WatchOptions)` | Stream lifecycle `Event`s (state changes, scope-health changes, session renewals, pre-expiry warnings) so an agent can wind down gracefully. |
 | `Close()` | Release resources. No-op in v1; reserved for future use. |
+
+#### `Renew()` typed errors
+
+`Renew` returns a `RenewResult` on approval and session swap. By default it is seamless: the supervised child keeps running. Pass `RenewOptions{Restart: true}` to ask the supervisor to restart the child after approval.
+
+Use `Renew` when the operator wants a fresh Discord approval for the next
+supervisor session window. Use `Refresh` for the narrower secret-refill
+operation: it re-fetches secrets under the existing session and restarts
+the child, but it does not issue `/claim` or send a Discord prompt.
+
+When the supervisor refuses or fails the renewal, compare the returned error with `errors.Is`:
+
+| Error | Server outcome code | Meaning |
+|---|---|---|
+| `ErrRenewDenied` | `denied` | Operator approval was denied. |
+| `ErrRenewTimeout` | `timeout` | The approval request timed out before grant or denial. |
+| `ErrRenewRefusedState` | `refused-state` | The supervisor is not in a renewable state, or another renewal is already in flight. |
+| `ErrRenewFailed` | `error` | Any other supervisor-side renewal failure. Wrapped message carries the supervisor's reason verbatim. |
+| `ErrSocketUnavailable` | `supervisor-unreachable` (client-side) | The supervisor socket could not be dialed or the round-trip failed. |
 
 #### `Reload()` typed errors
 
@@ -78,6 +98,7 @@ batch multiple scopes into a single human approval.
 - `ErrSocketUnavailable` — supervisor not running, socket missing, HTTP transport failure, or context cancelled mid-round-trip.
 - `ErrInvalidResponse` — server responded but the payload could not be parsed (or had a non-2xx status that isn't an auth failure).
 - `ErrRefreshDenied` — supervisor accepted the refresh request but refused (vault unreachable, window closed, etc.).
+- `ErrRenewDenied`, `ErrRenewTimeout`, `ErrRenewRefusedState`, `ErrRenewFailed` — see the `Renew()` table above.
 - `ErrReloadConfigInvalid`, `ErrReloadReadinessFailed`, `ErrReloadInFlight`, `ErrReloadFailed` — see the `Reload()` table above.
 - `ErrUnauthenticated` — `/me` returned 401/403 (bad signature, unknown fingerprint, replayed nonce, stale timestamp, or non-Tailscale source IP).
 
@@ -90,7 +111,10 @@ All exports are part of hush's v1 public API. Wire-format additions appear as ne
 ## Related docs
 
 - [`docs/AGENT-INTEGRATION.md`](../docs/AGENT-INTEGRATION.md) —
-  complete agent integration guide (Snapshot, Me, Watch, Reload).
+  complete agent integration guide (Snapshot, Me, Watch, Renew, Reload).
+- [`docs/DAEMONS.md`](../docs/DAEMONS.md) —
+  operator-side supervisor guide covering `client renew` and
+  `client refresh`.
 - [`docs/SUPERVISE-RELOAD.md`](../docs/SUPERVISE-RELOAD.md) —
   operator-side runbook for the HTTP-proxy reload surface backing
   `Reload()`.

@@ -48,6 +48,7 @@ const (
 	reasonGraceEntered         = "entered grace cache restart"
 	reasonLogPatternMatch      = "log pattern matched"
 	reasonClientRefreshInvoked = "client refresh invoked"
+	reasonClientRenewInvoked   = "client renew invoked"
 
 	// reasonReap* are the closed-set reason labels for the
 	// supervisor_swap_candidate_reaped audit event emitted by
@@ -209,6 +210,16 @@ func (l *Lifecycle) emitClientRefreshInvoked(ctx context.Context, state, outcome
 	l.appendAudit(ctx, audit.ActionClientRefreshInvoked, map[string]any{
 		"state":   state,
 		"outcome": outcome,
+	})
+}
+
+// emitClientRenewInvoked appends client_renew_invoked when the
+// status-socket renew verb is consumed.
+func (l *Lifecycle) emitClientRenewInvoked(ctx context.Context, state, outcome string, restarted bool) {
+	l.appendAudit(ctx, audit.ActionClientRenewInvoked, map[string]any{
+		"state":     state,
+		"outcome":   outcome,
+		"restarted": restarted,
 	})
 }
 

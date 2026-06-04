@@ -1072,6 +1072,132 @@ func TestStatusSocketReloadAttachTwicePanics(t *testing.T) {
 	})
 }
 
+// ============================================================
+// Renew verb dispatch
+// ============================================================
+
+func TestStatusSocketRenewOK(t *testing.T) {
+	exp := time.Date(2026, 4, 15, 13, 12, 0, 0, time.UTC)
+	path := tempSocketPath(t)
+	srv := NewStatusServer(path, nil, silentLogger())
+	srv.AttachRenewHandler(func(_ context.Context, req RenewRequest) (RenewResult, error) {
+		assert.False(t, req.Restart)
+		return RenewResult{
+			Outcome:          RenewOutcomeRenewed,
+			SessionExpiresAt: exp,
+			JTI:              "jti-renew",
+		}, nil
+	})
+
+	stop := startServer(t, srv)
+	body := dialAndDriveVerb(t, path, "renew")
+	require.NoError(t, stop())
+
+	var ack renewAckWire
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(body), &ack))
+	assert.True(t, ack.OK)
+	assert.Equal(t, RenewOutcomeRenewed, ack.Outcome)
+	assert.False(t, ack.Restarted)
+	assert.Equal(t, exp.Format(time.RFC3339), ack.SessionExpiresAt)
+	assert.Equal(t, "jti-renew", ack.JTI)
+}
+
+func TestStatusSocketRenewWithRestartBody(t *testing.T) {
+	path := tempSocketPath(t)
+	srv := NewStatusServer(path, nil, silentLogger())
+	var got RenewRequest
+	srv.AttachRenewHandler(func(_ context.Context, req RenewRequest) (RenewResult, error) {
+		got = req
+		return RenewResult{Outcome: RenewOutcomeRenewed, Restarted: req.Restart}, nil
+	})
+
+	stop := startServer(t, srv)
+	body := dialAndDriveRaw(t, path, []byte(`renew {"restart":true}`+"\n"))
+	require.NoError(t, stop())
+
+	assert.True(t, got.Restart)
+	var ack renewAckWire
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(body), &ack))
+	assert.True(t, ack.OK)
+	assert.True(t, ack.Restarted)
+}
+
+func TestStatusSocketRenewHandlerUnwired(t *testing.T) {
+	path := tempSocketPath(t)
+	srv := NewStatusServer(path, nil, silentLogger())
+
+	stop := startServer(t, srv)
+	body := dialAndDriveVerb(t, path, "renew")
+	require.NoError(t, stop())
+
+	var ack renewAckWire
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(body), &ack))
+	assert.False(t, ack.OK)
+	assert.Equal(t, RenewOutcomeError, ack.Outcome)
+	assert.Equal(t, "renew handler not wired", ack.Error)
+}
+
+func TestStatusSocketRenewMalformedArgsRejected(t *testing.T) {
+	path := tempSocketPath(t)
+	srv := NewStatusServer(path, nil, silentLogger())
+	called := false
+	srv.AttachRenewHandler(func(_ context.Context, _ RenewRequest) (RenewResult, error) {
+		called = true
+		return RenewResult{}, nil
+	})
+
+	stop := startServer(t, srv)
+	body := dialAndDriveRaw(t, path, []byte("renew {not-json}\n"))
+	require.NoError(t, stop())
+
+	assert.False(t, called, "handler must not be invoked on malformed args")
+	var ack renewAckWire
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(body), &ack))
+	assert.False(t, ack.OK)
+	assert.Equal(t, RenewOutcomeError, ack.Outcome)
+	assert.Contains(t, ack.Error, "invalid renew request body")
+}
+
+func TestStatusSocketRenewErrorClassified(t *testing.T) {
+	cases := []struct {
+		name    string
+		err     error
+		outcome string
+	}{
+		{"denied", errRefreshDenied, RenewOutcomeDenied},
+		{"timeout", errRefreshTimeout, RenewOutcomeTimeout},
+		{"refused-state", &rejectStateError{state: "fetching"}, RenewOutcomeRefusedState},
+		{"generic", errors.New("disk full"), RenewOutcomeError},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			path := tempSocketPath(t)
+			srv := NewStatusServer(path, nil, silentLogger())
+			srv.AttachRenewHandler(func(_ context.Context, _ RenewRequest) (RenewResult, error) {
+				return RenewResult{}, c.err
+			})
+
+			stop := startServer(t, srv)
+			body := dialAndDriveVerb(t, path, "renew")
+			require.NoError(t, stop())
+
+			var ack renewAckWire
+			require.NoError(t, json.Unmarshal(bytes.TrimSpace(body), &ack))
+			assert.False(t, ack.OK)
+			assert.Equal(t, c.outcome, ack.Outcome)
+			assert.NotEmpty(t, ack.Error)
+		})
+	}
+}
+
+func TestStatusSocketRenewAttachTwicePanics(t *testing.T) {
+	srv := NewStatusServer("/dev/null/ignored", nil, silentLogger())
+	srv.AttachRenewHandler(func(_ context.Context, _ RenewRequest) (RenewResult, error) { return RenewResult{}, nil })
+	assert.Panics(t, func() {
+		srv.AttachRenewHandler(func(_ context.Context, _ RenewRequest) (RenewResult, error) { return RenewResult{}, nil })
+	})
+}
+
 // TestStatusSocketStatusAndRefreshUnchanged — existing verbs continue
 // to behave identically after the reload addition (regression guard
 // for preserve-compatibility requirement).

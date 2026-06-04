@@ -127,7 +127,8 @@ Flow:
 5. supervisor sends a `[STALE] Child Exit 78` alert
 6. the operator rotates/fixes the secret and either:
    - approves a fresh session request, or
-   - triggers `hush client refresh --supervisor <daemon>`
+   - triggers `hush client refresh --supervisor <daemon>` to refill under
+     the current session
 7. supervisor refetches fresh secrets, validates them, and restarts child
 
 Expected outcomes:
@@ -266,6 +267,9 @@ Flow:
 4. running child still has old env vars until next restart/refetch
 5. the operator or automation runs `hush client refresh --supervisor <name>`
 6. supervisor refetches the rotated secret, validates it, and restarts child cleanly
+7. if a fresh Discord approval is also desired, the operator runs
+   `hush client renew --supervisor <name>` instead of treating refresh as
+   an approval command
 
 Expected outcomes:
 - rotation propagation is intentional and visible
