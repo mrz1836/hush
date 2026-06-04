@@ -275,7 +275,8 @@ func TestClientRefresh_AckMapsToExitOK(t *testing.T) {
 	path := fakeStatusServer(t, []byte(`{"ok":true}`+"\n"))
 	stdout, stderr, err := runClientCmd(t, context.Background(), "refresh", "--socket", path)
 	require.NoError(t, err)
-	assert.Empty(t, stdout)
+	assert.Contains(t, stdout, "hush: client refresh: secret refill complete (no re-approval)")
+	assert.Contains(t, stdout, "hush client renew --supervisor <name>")
 	assert.Empty(t, stderr)
 }
 
