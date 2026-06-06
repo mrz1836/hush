@@ -68,7 +68,11 @@ func (l *Lifecycle) claimRefreshLoop(ctx context.Context) {
 // performRefreshClaim issues a fresh signed /claim and returns the outcome.
 // On 200 OK the JWT is wrapped and the caller (mainLoop) calls Store.setToken.
 func (l *Lifecycle) performRefreshClaim(ctx context.Context) refreshResult {
-	resp, status, errBody, err := l.doClaimRequest(ctx)
+	return l.performRefreshClaimWithOptions(ctx, false)
+}
+
+func (l *Lifecycle) performRefreshClaimWithOptions(ctx context.Context, forceApproval bool) refreshResult {
+	resp, status, errBody, err := l.doClaimRequestWithOptions(ctx, forceApproval)
 	switch {
 	case err != nil:
 		// Network / decode failure → treat as timeout.
@@ -257,7 +261,7 @@ func (l *Lifecycle) runRenewVerb(ctx context.Context, state State, verb renewVer
 		}
 	}()
 
-	res, err := l.performRenewClaim(ctx)
+	res, err := l.performRenewClaim(ctx, verb.req.ForceApproval)
 	if err != nil {
 		l.emitClientRenewInvoked(ctx, string(state), res.Outcome, verb.req.Restart)
 		ackRenew(verb, res, err)
@@ -273,8 +277,8 @@ func (l *Lifecycle) runRenewVerb(ctx context.Context, state State, verb renewVer
 	ackRenew(verb, res, err)
 }
 
-func (l *Lifecycle) performRenewClaim(ctx context.Context) (RenewResult, error) {
-	refresh := l.performRefreshClaim(ctx)
+func (l *Lifecycle) performRenewClaim(ctx context.Context, forceApproval bool) (RenewResult, error) {
+	refresh := l.performRefreshClaimWithOptions(ctx, forceApproval)
 	outcome := RenewOutcomeRenewed
 	if refresh.err != nil {
 		outcome = renewOutcomeForRefreshError(refresh.err)

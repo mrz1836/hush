@@ -108,6 +108,12 @@ type RenewOptions struct {
 	// and session renewal. The default false path renews the session
 	// without disturbing the running child.
 	Restart bool
+
+	// ForceApproval asks the vault server to bypass supervisor session
+	// resumption and require a fresh approver decision. Use this when an
+	// operator explicitly wants to extend the approval horizon rather than
+	// only rotate the session key inside the existing window.
+	ForceApproval bool
 }
 
 // RenewResult is the outcome of (*SupervisorStatus).Renew. All fields
@@ -384,7 +390,8 @@ type reloadReqWire struct {
 // renewReqWire mirrors supervise.RenewRequest — the JSON body that
 // follows the `renew` verb on the request line.
 type renewReqWire struct {
-	Restart bool `json:"restart"`
+	Restart       bool `json:"restart"`
+	ForceApproval bool `json:"force_approval,omitempty"`
 }
 
 // reloadAckWire mirrors supervise.reloadAckWire — the unified

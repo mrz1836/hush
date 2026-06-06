@@ -143,6 +143,7 @@ type clientRenewFlags struct {
 	socketPath     string
 	supervisorName string
 	restart        bool
+	force          bool
 }
 
 // newClientRenewCmd constructs the `hush client renew` leaf. No --json
@@ -171,6 +172,8 @@ session.
 		"Supervisor name (derives the socket path)")
 	cmd.Flags().BoolVar(&flags.restart, "restart", false,
 		"Restart the supervised child after approval succeeds")
+	cmd.Flags().BoolVar(&flags.force, "force", false,
+		"Require a fresh approval instead of resuming an existing supervisor session")
 	return cmd
 }
 
@@ -307,7 +310,7 @@ func runClientRenew(cmd *cobra.Command, flags clientRenewFlags) error {
 	defer cancel()
 
 	sup := client.NewSupervisorStatus(path)
-	res, sdkErr := sup.Renew(ctx, client.RenewOptions{Restart: flags.restart})
+	res, sdkErr := sup.Renew(ctx, client.RenewOptions{Restart: flags.restart, ForceApproval: flags.force})
 	if sdkErr != nil {
 		wrapped := wrapRenewSDKErr(sdkErr)
 		printClientErr(stderr, "renew", wrapped)
