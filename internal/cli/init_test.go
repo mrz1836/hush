@@ -366,7 +366,7 @@ func TestInitServer_CreatesConfigWithAllDefaults(t *testing.T) {
 	wantFields := []string{
 		"listen_addr", "path_prefix", "state_dir", "audit_log",
 		"discord_owner_id", "client_registry",
-		"bot_token_keychain_item", "application_id",
+		"bot_token_keychain_item", "bot_token_keychain_account", "application_id",
 		"argon_time", "argon_memory_mb", "argon_threads",
 		"jwt_default_ttl", "max_interactive_ttl", "max_supervisor_ttl",
 		"default_max_uses", "nonce_ttl", "clock_skew",
@@ -385,6 +385,7 @@ func TestInitServer_CreatesConfigWithAllDefaults(t *testing.T) {
 	require.Contains(t, got, fmt.Sprintf("argon_threads = %d", config.DefaultArgonThreads))
 	require.Contains(t, got, "default_max_uses = 50")
 	require.Contains(t, got, "bot_token_keychain_item = 'hush-discord'")
+	require.Contains(t, got, "bot_token_keychain_account = 'hush-server'")
 	require.Contains(t, got, "require_tailscale = true")
 	require.Contains(t, got, "allowed_cidrs = ['100.64.0.0/10']")
 }

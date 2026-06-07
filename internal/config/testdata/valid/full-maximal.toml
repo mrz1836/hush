@@ -9,6 +9,7 @@ discord_audit_channel_id = "234567890123456789"
 
 [discord]
 bot_token_keychain_item = "hush-prod-discord"
+bot_token_keychain_account = "hush-prod-server"
 application_id = "111222333444555666"
 
 [crypto]

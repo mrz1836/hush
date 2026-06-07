@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -107,6 +108,19 @@ func TestRunSmoke_OrchestratesFakeSecretPath(t *testing.T) {
 	require.FileExists(t, filepath.Join(stateDir, "config.toml"))
 	require.FileExists(t, filepath.Join(stateDir, "secrets.vault"))
 	require.FileExists(t, filepath.Join(stateDir, "client-machine-1.key"))
+	smokeToken, err := kc.Retrieve(context.Background(), smokeBotTokenKeychainItem, smokeBotTokenKeychainAccount)
+	require.NoError(t, err)
+	defer smokeToken.Destroy()
+	require.NoError(t, smokeToken.Use(func(b []byte) {
+		require.Equal(t, testBotTokenInput, string(b))
+	}))
+	require.Equal(t, testInitBinaryPath, kc.RecordedACL(smokeBotTokenKeychainItem, smokeBotTokenKeychainAccount))
+	_, err = kc.Retrieve(context.Background(), config.DefaultBotTokenKeychainItem, kcAccountServer)
+	require.True(t, errors.Is(err, keychain.ErrKeychainItemNotFound), "smoke must not touch production bot-token item")
+	cfgLoaded, err := config.LoadServer(context.Background(), filepath.Join(stateDir, "config.toml"))
+	require.NoError(t, err)
+	require.Equal(t, smokeBotTokenKeychainItem, cfgLoaded.Discord.BotTokenKeychainItem)
+	require.Equal(t, smokeBotTokenKeychainAccount, cfgLoaded.Discord.BotKeychainAccount)
 	select {
 	case <-serveStarted:
 	default:
@@ -156,6 +170,9 @@ func TestSmokeInitServer_StrictClockDisablesProbeFailureWarn(t *testing.T) {
 	passphrase, err := securebytes.New([]byte(testGoodPassphrase))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = passphrase.Destroy() })
+	botToken, err := securebytes.New([]byte(testBotTokenInput))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = botToken.Destroy() })
 
 	err = smokeInitServer(t.Context(), newStream(io.Discard, false, true), dummyTTY(t), deps, smokeOptions{
 		stateDir:          stateDir,
@@ -164,7 +181,7 @@ func TestSmokeInitServer_StrictClockDisablesProbeFailureWarn(t *testing.T) {
 		ownerID:           testOwnerIDInput,
 		applicationID:     testApplicationIDIn,
 		approvalChannelID: "1505706794406772897",
-	}, stateDir, passphrase)
+	}, stateDir, passphrase, botToken)
 	require.NoError(t, err)
 	require.True(t, preflightCalled)
 }
@@ -202,12 +219,16 @@ func smokeTestDeps(t *testing.T, stateDir string, kc keychain.Keychain) smokeDep
 		sd.stateDirRoot = stateDir
 		return sd
 	}
-	deps.keychainFactory = func() (keychain.Keychain, error) { return kc, nil }
+	deps.keychainFactory = func() (keychain.Keychain, error) { return nonDestroyingKeychain{Keychain: kc}, nil }
 	deps.promptSecret = scriptedSecretReader(t, []string{testGoodPassphrase, testGoodPassphrase, testBotTokenInput})
 	deps.promptLine = scriptedLineReader(t, []string{testListenAddrInput, testOwnerIDInput, testApplicationIDIn, "1505706794406772897"})
 	deps.isTTY = func(*os.File) bool { return true }
 	deps.nowFn = time.Now
 	return deps
+}
+
+type nonDestroyingKeychain struct {
+	keychain.Keychain
 }
 
 func mustAddrPortFromURL(t *testing.T, raw string) netip.AddrPort {

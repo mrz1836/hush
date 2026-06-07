@@ -584,14 +584,20 @@ var botTokenItemRe = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,128}$`)
 // touching Keychain — this is the explicit operator opt-in for hosts
 // where Keychain ACLs are unrepairable. Keychain remains the default
 // when the env var is unset.
-func loadBotToken(ctx context.Context, item, keychainPath string) (*securebytes.SecureBytes, error) {
+func loadBotToken(ctx context.Context, item, account, keychainPath string) (*securebytes.SecureBytes, error) {
 	if envToken, ok := os.LookupEnv("HUSH_DISCORD_BOT_TOKEN"); ok && envToken != "" {
 		return securebytes.New([]byte(envToken))
 	}
 	if !botTokenItemRe.MatchString(item) {
 		return nil, fmt.Errorf("%w: invalid item name", errBotTokenMissing)
 	}
-	cmd, err := botTokenLookupCmd(ctx, item, keychainPath)
+	if strings.TrimSpace(account) == "" {
+		account = kcAccountServer
+	}
+	if !botTokenItemRe.MatchString(account) {
+		return nil, fmt.Errorf("%w: invalid account name", errBotTokenMissing)
+	}
+	cmd, err := botTokenLookupCmd(ctx, item, account, keychainPath)
 	if err != nil {
 		return nil, err
 	}
@@ -613,16 +619,16 @@ func loadBotToken(ctx context.Context, item, keychainPath string) (*securebytes.
 	return securebytes.New(out)
 }
 
-func botTokenLookupCmd(ctx context.Context, item, keychainPath string) (*exec.Cmd, error) {
+func botTokenLookupCmd(ctx context.Context, item, account, keychainPath string) (*exec.Cmd, error) {
 	switch runtime.GOOS {
 	case "darwin":
-		args := []string{"find-generic-password", "-s", item, "-w"}
+		args := []string{"find-generic-password", "-s", item, "-a", account, "-w"}
 		if strings.TrimSpace(keychainPath) != "" {
 			args = append(args, keychainPath)
 		}
 		return exec.CommandContext(ctx, "security", args...), nil //nolint:gosec // fixed argv; item validated by regex
 	case "linux":
-		return exec.CommandContext(ctx, "secret-tool", "lookup", "service", "hush", "attribute", item), nil //nolint:gosec // fixed argv; item validated by regex
+		return exec.CommandContext(ctx, "secret-tool", "lookup", "service", item, "account", account), nil //nolint:gosec // fixed argv; item/account validated by regex
 	default:
 		return nil, fmt.Errorf("%w: unsupported platform %s", errBotTokenSubprocess, runtime.GOOS)
 	}
@@ -634,7 +640,7 @@ func botTokenLookupCmd(ctx context.Context, item, keychainPath string) (*exec.Cm
 // returns the chassis-facing Approver + the Connected() probe used
 // by /hz.
 func newProductionBotApprover(ctx context.Context, cfg *config.Server, logger *slog.Logger) (server.Approver, func() bool, error) {
-	tokenSB, err := loadBotToken(ctx, cfg.Discord.BotTokenKeychainItem, cfg.Discord.BotKeychainPath)
+	tokenSB, err := loadBotToken(ctx, cfg.Discord.BotTokenKeychainItem, cfg.Discord.BotKeychainAccount, cfg.Discord.BotKeychainPath)
 	if err != nil {
 		return nil, nil, err
 	}

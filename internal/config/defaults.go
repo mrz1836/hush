@@ -48,10 +48,12 @@ var (
 //
 //nolint:gochecknoglobals // sentinel-class: set-once at package load, never mutated
 var (
-	DefaultStateDir       = "~/.hush"
-	DefaultAuditLog       = "~/.hush/audit.jsonl"
-	DefaultClientRegistry = "~/.hush/clients.json"
-	DefaultListenPort     = 7743 // canonical port; no canonical IP
+	DefaultStateDir             = "~/.hush"
+	DefaultAuditLog             = "~/.hush/audit.jsonl"
+	DefaultClientRegistry       = "~/.hush/clients.json"
+	DefaultListenPort           = 7743 // canonical port; no canonical IP
+	DefaultBotTokenKeychainItem = "hush-discord"
+	DefaultBotKeychainAccount   = "hush-server"
 )
 
 // Network defaults.

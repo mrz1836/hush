@@ -35,6 +35,9 @@ const (
 	smokeSecretValue = "hello-from-hush"
 
 	defaultSmokeStateDir = "~/.hush-smoke"
+
+	smokeBotTokenKeychainItem    = "hush-smoke-discord"
+	smokeBotTokenKeychainAccount = "hush-smoke-server"
 )
 
 var explicitSmokeCleanTargetPattern = regexp.MustCompile(`^\.hush-[A-Za-z0-9._-]*(smoke|test|validation)[A-Za-z0-9._-]*$`)
@@ -197,7 +200,7 @@ func runSmoke(ctx context.Context, stdout, stderr *Stream, in *os.File, deps smo
 	}
 
 	cfgPath := filepath.Join(stateDir, "config.toml")
-	if initErr := smokeInitServer(ctx, stderr, in, deps, opts, stateDir, passphrase); initErr != nil {
+	if initErr := smokeInitServer(ctx, stderr, in, deps, opts, stateDir, passphrase, botToken); initErr != nil {
 		return initErr
 	}
 	_ = stderr.WriteText(smokeMsgInitServer, stateDir)
@@ -298,7 +301,7 @@ func runSmoke(ctx context.Context, stdout, stderr *Stream, in *os.File, deps smo
 	return nil
 }
 
-func smokeInitServer(ctx context.Context, stderr *Stream, in *os.File, deps smokeDeps, opts smokeOptions, stateDir string, passphrase *securebytes.SecureBytes) error {
+func smokeInitServer(ctx context.Context, stderr *Stream, in *os.File, deps smokeDeps, opts smokeOptions, stateDir string, passphrase, botToken *securebytes.SecureBytes) error {
 	initDeps, err := deps.initDepsFactory()
 	if err != nil {
 		return err
@@ -312,8 +315,14 @@ func smokeInitServer(ctx context.Context, stderr *Stream, in *os.File, deps smok
 		return err
 	}
 	defer func() { _ = passClone.Destroy() }()
+	botTokenClone, err := cloneSecureBytes(botToken)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = botTokenClone.Destroy() }()
 	initDeps.serverNonInteractive = true
 	initDeps.serverPassphrase = passClone
+	initDeps.serverBotToken = botTokenClone
 	initDeps.stateDirRoot = stateDir
 	initDeps.serverInputs = serverInputs{
 		stateDir:          stateDir,
@@ -322,6 +331,8 @@ func smokeInitServer(ctx context.Context, stderr *Stream, in *os.File, deps smok
 		applicationID:     opts.applicationID,
 		approvalChannelID: opts.approvalChannelID,
 		auditChannelID:    opts.auditChannelID,
+		botTokenKeychain:  smokeBotTokenKeychainItem,
+		botTokenAccount:   smokeBotTokenKeychainAccount,
 	}
 	initDeps.serverProbeFailureWarn = !opts.strictClock
 	return runInitServer(ctx, newStream(io.Discard, false, true), stderr, in, initDeps)

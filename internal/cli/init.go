@@ -1099,8 +1099,8 @@ func finalizeInitServerStandard(ctx context.Context, deps *initDeps, stderr *Str
 	// Hush-authored pre-explanations ensure no raw Apple `security`
 	// prompt fires without a hush-authored preamble of what / why /
 	// what-to-click.
-	emitKeychainPreExplain(stderr, "vault passphrase", keychainItems.vaultPassphraseService, kcAccountServer)
-	if storeErr := deps.keychain.Store(ctx, keychainItems.vaultPassphraseService, kcAccountServer, pass, binPath); storeErr != nil {
+	emitKeychainPreExplain(stderr, "vault passphrase", keychainItems.vaultPassphraseService, keychainItems.vaultPassphraseAccount)
+	if storeErr := deps.keychain.Store(ctx, keychainItems.vaultPassphraseService, keychainItems.vaultPassphraseAccount, pass, binPath); storeErr != nil {
 		_ = stderr.WriteText(initMsgKeychainStoreFailFmt, storeErr)
 		return storeErr
 	}
@@ -1161,6 +1161,12 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 	vaultPath := filepath.Join(stateDir, "secrets.vault")
 	configPath := filepath.Join(stateDir, "config.toml")
 	keychainItems := defaultServerKeychainItems()
+	if service := strings.TrimSpace(deps.serverInputs.botTokenKeychain); service != "" {
+		keychainItems.discordService = service
+	}
+	if account := strings.TrimSpace(deps.serverInputs.botTokenAccount); account != "" {
+		keychainItems.discordAccount = account
+	}
 	existingCfg, _ := config.LoadServer(ctx, configPath)
 
 	gathered, err := gatherInitServerInputs(deps, in, stderr, existingCfg, explicitStateDir)
@@ -1210,6 +1216,7 @@ func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *in
 		approvalChannelID: approvalChannelID,
 		auditChannelID:    auditChannelID,
 		botTokenKeychain:  keychainItems.discordService,
+		botTokenAccount:   keychainItems.discordAccount,
 	}
 	loadedCfg, err := writeInitialServerArtifacts(ctx, deps, stderr, vaultPath, configPath, stateDir, vaultEncKey, salt, &cfgInputs, decisions)
 	if err != nil {
@@ -1275,7 +1282,7 @@ func storeBotTokenUsingConfiguredKeychainPath(
 		return false, "", nil
 	}
 	path := strings.TrimSpace(cfg.Discord.BotKeychainPath)
-	if err := storeBotTokenInDedicatedKeychain(ctx, deps, stderr, botToken, path, service, binPath); err != nil {
+	if err := storeBotTokenInDedicatedKeychain(ctx, deps, stderr, botToken, path, service, cfg.Discord.BotKeychainAccount, binPath); err != nil {
 		if errors.Is(err, keychain.ErrKeychainItemExists) {
 			return true, path, nil
 		}
@@ -1313,8 +1320,8 @@ func storeBotTokenForDecision(
 	case onExistingEnvToken:
 		return true, "", nil
 	default:
-		emitKeychainPreExplain(stderr, "Discord bot token", keychainItems.discordService, kcAccountServer)
-		if err := deps.keychain.Store(ctx, keychainItems.discordService, kcAccountServer, botToken, binPath); err != nil {
+		emitKeychainPreExplain(stderr, "Discord bot token", keychainItems.discordService, keychainItems.discordAccount)
+		if err := deps.keychain.Store(ctx, keychainItems.discordService, keychainItems.discordAccount, botToken, binPath); err != nil {
 			if !isRecoverableBotTokenStoreError(err) {
 				_ = stderr.WriteText(initMsgKeychainStoreFailFmt, err)
 				return false, "", err
@@ -1359,7 +1366,7 @@ func promptKeychainStoreRecovery(
 	cause error,
 ) (bool, string, error) {
 	for attempt := 0; attempt < 5; attempt++ {
-		emitKeychainStoreCauseMessage(stderr, keychainItems.discordService, cause)
+		emitKeychainStoreCauseMessage(stderr, keychainItems.discordService, keychainItems.discordAccount, cause)
 		if deps.promptRecovery == nil {
 			return false, "", errNoRecoverySeam
 		}
@@ -1378,12 +1385,12 @@ func promptKeychainStoreRecovery(
 	return false, "", errKeychainStoreRecoveryExhausted
 }
 
-func emitKeychainStoreCauseMessage(stderr *Stream, service string, cause error) {
+func emitKeychainStoreCauseMessage(stderr *Stream, service, account string, cause error) {
 	if errors.Is(cause, keychain.ErrKeychainLocked) {
-		_ = stderr.WriteText(initMsgKeychainStoreLockedFmt, cause, service, kcAccountServer)
+		_ = stderr.WriteText(initMsgKeychainStoreLockedFmt, cause, service, account)
 		return
 	}
-	_ = stderr.WriteText(initMsgKeychainStoreDeniedFmt, cause, service, kcAccountServer)
+	_ = stderr.WriteText(initMsgKeychainStoreDeniedFmt, cause, service, account)
 }
 
 func handleKeychainStoreRecoveryChoice(
@@ -1429,7 +1436,7 @@ func retryKeychainStore(
 			return keychainStoreRecoveryOutcome{}
 		}
 	}
-	if err := deps.keychain.Store(ctx, keychainItems.discordService, kcAccountServer, botToken, binPath); err != nil {
+	if err := deps.keychain.Store(ctx, keychainItems.discordService, keychainItems.discordAccount, botToken, binPath); err != nil {
 		if !isRecoverableBotTokenStoreError(err) {
 			_ = stderr.WriteText(initMsgKeychainStoreFailFmt, err)
 			return keychainStoreRecoveryOutcome{done: true, err: err}
@@ -1450,7 +1457,7 @@ func useDedicatedKeychain(
 	binPath string,
 ) keychainStoreRecoveryOutcome {
 	path := dedicatedHushKeychainPath(stateDir)
-	if err := storeBotTokenInDedicatedKeychain(ctx, deps, stderr, botToken, path, keychainItems.discordService, binPath); err != nil {
+	if err := storeBotTokenInDedicatedKeychain(ctx, deps, stderr, botToken, path, keychainItems.discordService, keychainItems.discordAccount, binPath); err != nil {
 		return keychainStoreRecoveryOutcome{done: true, err: err}
 	}
 	_ = stderr.WriteText(initMsgDedicatedKeychainSelected, path)
@@ -1462,7 +1469,7 @@ func storeBotTokenInDedicatedKeychain(
 	deps *initDeps,
 	stderr *Stream,
 	botToken *securebytes.SecureBytes,
-	keychainPath, service, binPath string,
+	keychainPath, service, account, binPath string,
 ) error {
 	if deps.keychainFactory == nil {
 		return errDedicatedKeychainFactoryUnavailable
@@ -1476,8 +1483,8 @@ func storeBotTokenInDedicatedKeychain(
 			return err
 		}
 	}
-	emitKeychainPreExplain(stderr, "Discord bot token", service, kcAccountServer)
-	if err := kc.Store(ctx, service, kcAccountServer, botToken, binPath); err != nil {
+	emitKeychainPreExplain(stderr, "Discord bot token", service, account)
+	if err := kc.Store(ctx, service, account, botToken, binPath); err != nil {
 		return err
 	}
 	return nil
@@ -1888,13 +1895,17 @@ func generatePathPrefix(r io.Reader) (string, error) {
 // that vary per init run.
 type serverKeychainItemNames struct {
 	vaultPassphraseService string
+	vaultPassphraseAccount string
 	discordService         string
+	discordAccount         string
 }
 
 func defaultServerKeychainItems() serverKeychainItemNames {
 	return serverKeychainItemNames{
 		vaultPassphraseService: kcServiceVaultPassphrase,
-		discordService:         "hush-discord",
+		vaultPassphraseAccount: kcAccountServer,
+		discordService:         config.DefaultBotTokenKeychainItem,
+		discordAccount:         kcAccountServer,
 	}
 }
 
@@ -1907,6 +1918,7 @@ type serverInputs struct {
 	approvalChannelID    string
 	auditChannelID       string
 	botTokenKeychain     string
+	botTokenAccount      string
 	botTokenKeychainPath string
 }
 
@@ -1920,7 +1932,11 @@ func buildServerDecodedFromDefaults(in serverInputs) tomlDocument {
 	}
 	botTokenKeychain := strings.TrimSpace(in.botTokenKeychain)
 	if botTokenKeychain == "" {
-		botTokenKeychain = "hush-discord"
+		botTokenKeychain = config.DefaultBotTokenKeychainItem
+	}
+	botTokenAccount := strings.TrimSpace(in.botTokenAccount)
+	if botTokenAccount == "" {
+		botTokenAccount = kcAccountServer
 	}
 	// audit_log and client_registry must resolve under state_dir
 	// (config validator enforces audit_log under state_dir).
@@ -1939,6 +1955,7 @@ func buildServerDecodedFromDefaults(in serverInputs) tomlDocument {
 		},
 		Discord: tomlDiscord{
 			BotTokenKeychainItem: botTokenKeychain,
+			BotKeychainAccount:   botTokenAccount,
 			BotKeychainPath:      strings.TrimSpace(in.botTokenKeychainPath),
 			ApplicationID:        in.applicationID,
 		},
@@ -1992,6 +2009,7 @@ type tomlServer struct {
 
 type tomlDiscord struct {
 	BotTokenKeychainItem string `toml:"bot_token_keychain_item"`
+	BotKeychainAccount   string `toml:"bot_token_keychain_account,omitempty"`
 	BotKeychainPath      string `toml:"bot_keychain_path,omitempty"`
 	ApplicationID        string `toml:"application_id"`
 }
