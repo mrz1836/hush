@@ -335,6 +335,7 @@ func writeSmokeClientKeyFile(t *testing.T, path string, priv *ecdsa.PrivateKey) 
 
 func writeSmokeProofConfig(t *testing.T, dir, listenAddr, prefix string) string {
 	t.Helper()
+	require.NoError(t, os.Chmod(dir, 0o700))
 	configPath := filepath.Join(dir, "config.toml")
 	clientReg := filepath.Join(dir, "clients.json")
 	require.NoError(t, os.WriteFile(clientReg, []byte("[]"), 0o600))
