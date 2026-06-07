@@ -21,6 +21,8 @@ import (
 // unspecified.
 type ClockProbe func(ctx context.Context) (synced bool, drift time.Duration, err error)
 
+const clockProbeUnavailableRemedy = "clock-sync probe could not reach the configured time providers; check network/DNS reachability, then re-run"
+
 // ClockSyncCheckConfig configures the [ClockSyncCheck] that the
 // guided flow registers in its preflight [Registry]. Every field has
 // a documented default so callers can supply only the knobs they
@@ -52,10 +54,10 @@ type ClockSyncCheckConfig struct {
 	// is the only override path for confirmed unsynchronised/drifted clocks.
 	AllowSkew bool
 
-	// ProbeFailureWarn downgrades probe execution failures (for example
-	// macOS killing `sntp` even after the operator manually resynced) to
-	// [StatusWarn] without weakening the confirmed not-synced / drift-over
-	// verdicts. This is intended for setup UX only; serve keeps the hard gate.
+	// ProbeFailureWarn downgrades only [server.ErrClockProbeUnavailable]
+	// probe failures to [StatusWarn] without weakening confirmed not-synced
+	// or drift-over verdicts. This is intended for smoke UX only; regular
+	// init and serve keep the hard gate unless --allow-clock-skew is explicit.
 	ProbeFailureWarn bool
 
 	// StateDir enables the shared recent-good clock-sync cache. When
@@ -149,7 +151,10 @@ func (c ClockSyncCheck) Run(ctx context.Context) SetupCheckResult {
 	synced, drift, err := c.cfg.Probe(probeCtx)
 	switch {
 	case err != nil:
-		return c.probeFailureVerdict(fmt.Errorf("probe failed: %w", ErrClockUnsynchronised), "probe: "+err.Error())
+		return c.probeFailureVerdict(
+			fmt.Errorf("probe failed: %w: %w", ErrClockUnsynchronised, err),
+			"probe: "+err.Error(),
+		)
 	case !synced:
 		return c.verdict(
 			fmt.Errorf("host clock not NTP-synchronised: %w", ErrClockUnsynchronised),
@@ -176,13 +181,20 @@ func (c ClockSyncCheck) Run(ctx context.Context) SetupCheckResult {
 // serve-side override path) can emit a `clock_skew_override` audit
 // event from a single err value.
 func (c ClockSyncCheck) probeFailureVerdict(err error, detail string) SetupCheckResult {
-	if c.cfg.ProbeFailureWarn {
-		res := warn(c.Name(), detail)
-		res.Err = err
-		var rh RemedyHinter
-		if errors.As(err, &rh) {
-			res.RemedyHint = rh.RemedyHint()
+	if errors.Is(err, server.ErrClockProbeUnavailable) {
+		statusDetail := detail
+		downgrade := c.cfg.ProbeFailureWarn || c.cfg.AllowSkew
+		if c.cfg.ProbeFailureWarn {
+			statusDetail = "clock check downgraded (network timeout): " + detail
 		}
+		var res SetupCheckResult
+		if downgrade {
+			res = warn(c.Name(), statusDetail)
+		} else {
+			res = fail(c.Name(), err, statusDetail)
+		}
+		res.Err = err
+		res.RemedyHint = clockProbeUnavailableRemedy
 		return res
 	}
 	return c.verdict(err, detail)

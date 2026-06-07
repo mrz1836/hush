@@ -50,8 +50,25 @@ func TestRunSmoke_OrchestratesFakeSecretPath(t *testing.T) {
 
 	serveStarted := make(chan struct{}, 1)
 	requestCalled := false
+	initPreflightCalled := false
 	deps := smokeTestDeps(t, stateDir, kc)
-	deps.serveRunner = func(ctx context.Context, _, _ *Stream, _ serveDeps) error {
+	baseInitDepsFactory := deps.initDepsFactory
+	deps.initDepsFactory = func() (*initDeps, error) {
+		id, err := baseInitDepsFactory()
+		if err != nil {
+			return nil, err
+		}
+		id.runPreflight = func(context.Context) setupReport {
+			initPreflightCalled = true
+			require.False(t, id.serverAllowClockSkew, "smoke init must not use blanket clock-skew override")
+			require.True(t, id.serverProbeFailureWarn, "smoke init should warn only for probe-unavailable clock failures")
+			return setupReport{}
+		}
+		return id, nil
+	}
+	deps.serveRunner = func(ctx context.Context, _, _ *Stream, sd serveDeps) error {
+		require.False(t, sd.allowClockSkew, "smoke must not use blanket clock-skew override")
+		require.True(t, sd.allowClockProbeUnavailable, "smoke should downgrade only probe-unavailable clock failures")
 		serveStarted <- struct{}{}
 		<-ctx.Done()
 		return nil
@@ -84,6 +101,7 @@ func TestRunSmoke_OrchestratesFakeSecretPath(t *testing.T) {
 		reset:             false,
 	})
 	require.NoError(t, err)
+	require.True(t, initPreflightCalled)
 	require.True(t, requestCalled)
 	require.Contains(t, stdout.String(), smokeMsgSuccess[:20])
 	require.FileExists(t, filepath.Join(stateDir, "config.toml"))
@@ -112,6 +130,43 @@ func TestRunSmoke_OrchestratesFakeSecretPath(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, secrets, 1)
 	require.Equal(t, smokeSecretName, secrets[0].Name)
+}
+
+func TestSmokeInitServer_StrictClockDisablesProbeFailureWarn(t *testing.T) {
+	t.Parallel()
+	stateDir := filepath.Join(t.TempDir(), "hush-smoke")
+	kc := keychain.NewFake()
+	t.Cleanup(kc.Destroy)
+	deps := smokeTestDeps(t, stateDir, kc)
+	baseInitDepsFactory := deps.initDepsFactory
+	preflightCalled := false
+	deps.initDepsFactory = func() (*initDeps, error) {
+		id, err := baseInitDepsFactory()
+		if err != nil {
+			return nil, err
+		}
+		id.runPreflight = func(context.Context) setupReport {
+			preflightCalled = true
+			require.False(t, id.serverAllowClockSkew, "strict smoke init must not use blanket clock-skew override")
+			require.False(t, id.serverProbeFailureWarn, "--strict-clock should disable the smoke timeout downgrade")
+			return setupReport{}
+		}
+		return id, nil
+	}
+	passphrase, err := securebytes.New([]byte(testGoodPassphrase))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = passphrase.Destroy() })
+
+	err = smokeInitServer(t.Context(), newStream(io.Discard, false, true), dummyTTY(t), deps, smokeOptions{
+		stateDir:          stateDir,
+		strictClock:       true,
+		listenAddr:        testListenAddrInput,
+		ownerID:           testOwnerIDInput,
+		applicationID:     testApplicationIDIn,
+		approvalChannelID: "1505706794406772897",
+	}, stateDir, passphrase)
+	require.NoError(t, err)
+	require.True(t, preflightCalled)
 }
 
 func TestArchiveSmokeStateDir(t *testing.T) {

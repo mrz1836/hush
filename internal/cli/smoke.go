@@ -122,7 +122,7 @@ func newSmokeCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.auditChannelID, "discord-audit-channel-id", "", "Discord audit channel snowflake; defaults to approval channel when empty")
 	cmd.Flags().Uint32Var(&opts.machineIndex, "machine-index", opts.machineIndex, "Smoke client machine index")
 	cmd.Flags().BoolVar(&opts.reset, "reset", false, "Archive an existing smoke state dir before starting")
-	cmd.Flags().BoolVar(&opts.strictClock, "strict-clock", false, "Do not apply the smoke-only clock-skew override while serving")
+	cmd.Flags().BoolVar(&opts.strictClock, "strict-clock", false, "Do not apply the smoke-only clock timeout downgrade")
 	return cmd
 }
 
@@ -233,11 +233,11 @@ func runSmoke(ctx context.Context, stdout, stderr *Stream, in *os.File, deps smo
 
 	go func() {
 		serveErrCh <- deps.serveRunner(serveCtx, stdout, stderr, serveDeps{
-			configPath:       cfgPath,
-			verbose:          true,
-			allowClockSkew:   !opts.strictClock,
-			passphraseSource: fixedPassphraseSource(passphrase),
-			approverFactory:  newProductionBotApprover,
+			configPath:                 cfgPath,
+			verbose:                    true,
+			allowClockProbeUnavailable: !opts.strictClock,
+			passphraseSource:           fixedPassphraseSource(passphrase),
+			approverFactory:            newProductionBotApprover,
 		})
 	}()
 	_ = stderr.WriteText(smokeMsgServeStarting, serverURL)
@@ -323,7 +323,7 @@ func smokeInitServer(ctx context.Context, stderr *Stream, in *os.File, deps smok
 		approvalChannelID: opts.approvalChannelID,
 		auditChannelID:    opts.auditChannelID,
 	}
-	initDeps.serverAllowClockSkew = true
+	initDeps.serverProbeFailureWarn = !opts.strictClock
 	return runInitServer(ctx, newStream(io.Discard, false, true), stderr, in, initDeps)
 }
 

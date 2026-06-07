@@ -300,11 +300,12 @@ type initDeps struct {
 	// Same ownership/borrow contract as serverPassphrase. nil means "no
 	// token supplied" (legitimate when the caller sets an explicit state
 	// dir and the existing keychain item is reused).
-	serverBotToken       *securebytes.SecureBytes
-	serverInputs         serverInputs
-	serverAllowClockSkew bool
-	serverOnExisting     string
-	clientNonInteractive bool
+	serverBotToken         *securebytes.SecureBytes
+	serverInputs           serverInputs
+	serverAllowClockSkew   bool
+	serverProbeFailureWarn bool
+	serverOnExisting       string
+	clientNonInteractive   bool
 	// clientPassphrase is the operator-supplied vault passphrase used when
 	// clientNonInteractive=true. Same ownership/borrow contract as
 	// serverPassphrase.
@@ -428,7 +429,7 @@ func defaultRunPreflightFor(deps *initDeps) func(ctx context.Context) setup.Repo
 			MaxDrift:         config.DefaultMaxClockDrift,
 			Timeout:          server.DefaultClockSyncTimeout,
 			AllowSkew:        deps.serverAllowClockSkew,
-			ProbeFailureWarn: true,
+			ProbeFailureWarn: deps.serverProbeFailureWarn,
 			StateDir:         stateDir,
 		}))
 		return reg.Run(ctx)

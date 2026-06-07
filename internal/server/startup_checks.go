@@ -59,8 +59,10 @@ func (s *Server) runStartupChecks(ctx context.Context) error {
 //
 // When [Deps.AllowClockSkew] is set, a would-be failure is downgraded to
 // a logged warning and a single [AuditClockSkewOverride] event; the
-// chassis continues startup. /hz still reports clock_in_sync=false so
-// downstream tooling can see the truth.
+// chassis continues startup. [Deps.AllowClockProbeUnavailable] is the
+// narrower smoke-only path: it downgrades all-provider timeout/cache-miss
+// failures but never confirmed unsynchronised or drifted clocks. /hz still
+// reports clock_in_sync=false so downstream tooling can see the truth.
 func (s *Server) checkClockSync(ctx context.Context) error {
 	if !s.cfg.Security.RequireNTPSync {
 		s.clockInSync.Store(true)
@@ -72,9 +74,13 @@ func (s *Server) checkClockSync(ctx context.Context) error {
 	synced, drift, err := s.clockProbe(probeCtx)
 	switch {
 	case err != nil:
+		reason := "probe failed"
+		if errors.Is(err, ErrClockProbeUnavailable) {
+			reason = "probe unavailable"
+		}
 		return s.handleClockFailure(ctx,
-			"probe failed",
-			fmt.Errorf("server: clock_sync: probe failed: %w", ErrClockUnsynchronised))
+			reason,
+			fmt.Errorf("server: clock_sync: probe failed: %w: %w", ErrClockUnsynchronised, err))
 	case !synced:
 		return s.handleClockFailure(ctx,
 			"not_synchronised",
@@ -96,6 +102,14 @@ func (s *Server) checkClockSync(ctx context.Context) error {
 // override branch lets the rest of the startup-check sequence run.
 func (s *Server) handleClockFailure(ctx context.Context, reason string, err error) error {
 	if !s.allowClockSkew {
+		if s.allowClockProbeUnavailable && errors.Is(err, ErrClockProbeUnavailable) {
+			s.logger.WarnContext(
+				ctx, "clock check downgraded (network timeout)",
+				"reason", reason,
+				"err", err.Error(),
+			)
+			return nil
+		}
 		return err
 	}
 	if writeErr := s.audit.Write(ctx, AuditEvent{

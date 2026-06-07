@@ -3,6 +3,7 @@ package setup_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -79,6 +80,7 @@ func TestClockSyncCheck_VerdictMatrix(t *testing.T) {
 	t.Parallel()
 
 	probeErr := errors.New("synthetic probe failure")
+	unavailableErr := fmt.Errorf("synthetic unavailable: %w", server.ErrClockProbeUnavailable)
 	cases := []struct {
 		name             string
 		probe            setup.ClockProbe
@@ -87,6 +89,7 @@ func TestClockSyncCheck_VerdictMatrix(t *testing.T) {
 		wantStatus       setup.Status
 		wantIs           error
 		wantHint         bool
+		wantHintContains string
 	}{
 		{
 			name:       "in_sync_passes",
@@ -101,10 +104,27 @@ func TestClockSyncCheck_VerdictMatrix(t *testing.T) {
 			wantHint:   true,
 		},
 		{
-			name:             "probe_failure_warn_downgrades_probe_error_only",
-			probe:            stubProbe(true, 0, probeErr),
+			name:             "probe_unavailable_fails_with_network_hint",
+			probe:            stubProbe(true, 0, unavailableErr),
+			wantStatus:       setup.StatusFail,
+			wantIs:           setup.ErrClockUnsynchronised,
+			wantHint:         true,
+			wantHintContains: "network/DNS",
+		},
+		{
+			name:             "probe_failure_warn_downgrades_unavailable_only",
+			probe:            stubProbe(true, 0, unavailableErr),
 			probeFailureWarn: true,
 			wantStatus:       setup.StatusWarn,
+			wantIs:           setup.ErrClockUnsynchronised,
+			wantHint:         true,
+			wantHintContains: "network/DNS",
+		},
+		{
+			name:             "probe_failure_warn_does_not_downgrade_generic_probe_error",
+			probe:            stubProbe(true, 0, probeErr),
+			probeFailureWarn: true,
+			wantStatus:       setup.StatusFail,
 			wantIs:           setup.ErrClockUnsynchronised,
 			wantHint:         true,
 		},
@@ -129,6 +149,15 @@ func TestClockSyncCheck_VerdictMatrix(t *testing.T) {
 			wantStatus: setup.StatusWarn,
 			wantIs:     setup.ErrClockUnsynchronised,
 			wantHint:   true,
+		},
+		{
+			name:             "allow_skew_downgrades_probe_unavailable",
+			probe:            stubProbe(true, 0, unavailableErr),
+			allowSkew:        true,
+			wantStatus:       setup.StatusWarn,
+			wantIs:           setup.ErrClockUnsynchronised,
+			wantHint:         true,
+			wantHintContains: "network/DNS",
 		},
 		{
 			name:       "allow_skew_downgrades_not_synced",
@@ -166,6 +195,9 @@ func TestClockSyncCheck_VerdictMatrix(t *testing.T) {
 			}
 			if tc.wantHint {
 				require.NotEmpty(t, res.RemedyHint, "remedy hint should propagate from sentinel")
+			}
+			if tc.wantHintContains != "" {
+				require.Contains(t, res.RemedyHint, tc.wantHintContains)
 			}
 		})
 	}

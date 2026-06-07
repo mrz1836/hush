@@ -108,15 +108,16 @@ func mapSessionType(t server.SessionType) token.SessionType {
 
 // serveDeps groups the testable seams threaded into runServe.
 type serveDeps struct {
-	configPath          string
-	verbose             bool
-	allowClockSkew      bool
-	reloadOnVaultChange bool
-	reloadWatchInterval time.Duration
-	reloadWatchDebounce time.Duration
-	passphraseSource    passphraseSource
-	approverFactory     approverFactory
-	listener            net.Listener
+	configPath                 string
+	verbose                    bool
+	allowClockSkew             bool
+	allowClockProbeUnavailable bool
+	reloadOnVaultChange        bool
+	reloadWatchInterval        time.Duration
+	reloadWatchDebounce        time.Duration
+	passphraseSource           passphraseSource
+	approverFactory            approverFactory
+	listener                   net.Listener
 
 	// Chassis-internal test seams. Production paths leave these
 	// nil; the integration test overrides each to bypass the
@@ -282,17 +283,18 @@ func runServe(ctx context.Context, stdout, stderr *Stream, deps serveDeps) error
 		TokenIssuer: func(ctx context.Context, params token.IssueParams) (*token.Token, error) {
 			return token.Issue(ctx, jwtKey, params)
 		},
-		Approver:        approver,
-		Logger:          logger,
-		AuditWriter:     server.NewChassisAuditAdapter(auditWriter),
-		JWTVerifyKey:    &jwtKey.PublicKey,
-		DiscordHealth:   discordHealthFn,
-		Listener:        deps.listener,
-		VaultKey:        vaultEncKey,
-		ClockSyncProbe:  deps.clockSyncProbe,
-		InterfaceLister: deps.interfaceLister,
-		AllowClockSkew:  deps.allowClockSkew,
-		ServerVersion:   Version,
+		Approver:                   approver,
+		Logger:                     logger,
+		AuditWriter:                server.NewChassisAuditAdapter(auditWriter),
+		JWTVerifyKey:               &jwtKey.PublicKey,
+		DiscordHealth:              discordHealthFn,
+		Listener:                   deps.listener,
+		VaultKey:                   vaultEncKey,
+		ClockSyncProbe:             deps.clockSyncProbe,
+		InterfaceLister:            deps.interfaceLister,
+		AllowClockSkew:             deps.allowClockSkew,
+		AllowClockProbeUnavailable: deps.allowClockProbeUnavailable,
+		ServerVersion:              Version,
 	}
 	srv, err := server.New(srvDeps)
 	if err != nil {
@@ -330,10 +332,14 @@ func runServe(ctx context.Context, stdout, stderr *Stream, deps serveDeps) error
 
 	// 12. Run the chassis.
 	runErr := srv.Run(signalCtx)
-	if errors.Is(runErr, server.ErrClockUnsynchronised) {
+	if errors.Is(runErr, server.ErrClockProbeUnavailable) {
+		_ = stderr.WriteText("hush: serve: clock-sync startup check could not reach time providers.\n")
+		_ = stderr.WriteText("  next: check network/DNS reachability, then retry.\n")
+		_ = stderr.WriteText("  why:  production serve requires a fresh clock check because approvals and JWTs are time-bound.\n")
+	} else if errors.Is(runErr, server.ErrClockUnsynchronised) {
 		_ = stderr.WriteText("hush: serve: clock-sync startup check failed.\n")
 		_ = stderr.WriteText("  fix:  run `sudo sntp -sS time.apple.com`, then retry.\n")
-		_ = stderr.WriteText("  test: for a local learning vault, retry with `--allow-clock-skew`.\n")
+		_ = stderr.WriteText("  local: for a local learning vault, retry with `--allow-clock-skew`.\n")
 		_ = stderr.WriteText("  why:  production serve refuses stale host clocks because approvals and JWTs are time-bound.\n")
 	}
 	if watchCancel != nil {
