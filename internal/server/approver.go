@@ -171,4 +171,9 @@ const (
 	// override is the operator's explicit decision to come up despite
 	// known clock skew; hush never auto-sudos to fix the clock.
 	AuditClockSkewOverride AuditEventType = "clock_skew_override"
+
+	// AuditClockSyncCacheFallback is emitted when all live clock-sync
+	// providers are unavailable and startup falls back to a recent cached
+	// drift measurement.
+	AuditClockSyncCacheFallback AuditEventType = "clock_sync_cache_fallback"
 )

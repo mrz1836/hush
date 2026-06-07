@@ -421,6 +421,7 @@ func defaultUnlockLoginKeychain(ctx context.Context) error {
 // of [setup.CheckOrder] in this same factory.
 func defaultRunPreflightFor(deps *initDeps) func(ctx context.Context) setup.Report {
 	return func(ctx context.Context) setup.Report {
+		stateDir, _ := resolveStateDir(deps.stateDirRoot)
 		reg := setup.NewRegistry()
 		reg.MustRegister(setup.NewClockSyncCheck(setup.ClockSyncCheckConfig{
 			Required:         config.DefaultRequireNTPSync,
@@ -428,6 +429,7 @@ func defaultRunPreflightFor(deps *initDeps) func(ctx context.Context) setup.Repo
 			Timeout:          server.DefaultClockSyncTimeout,
 			AllowSkew:        deps.serverAllowClockSkew,
 			ProbeFailureWarn: true,
+			StateDir:         stateDir,
 		}))
 		return reg.Run(ctx)
 	}

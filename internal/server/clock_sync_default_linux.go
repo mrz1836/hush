@@ -2,51 +2,56 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
 	"time"
 )
 
-// execNTPSynchronised runs `timedatectl show --property=NTPSynchronized
-// --value` and returns the trimmed combined output. timedatectl ships with
-// systemd — the init system on every hush-supported Linux host — and the
-// read-only `show` query needs no privileges.
+// execClockOffset runs `sntp -t <timeout> <provider>` and returns the trimmed
+// combined output. `sntp` does not require administrator privileges for a
+// read-only probe.
 //
 //nolint:gochecknoglobals // OS bridge; test-hookable for clock_sync coverage
-var execNTPSynchronised = func(ctx context.Context) (string, error) {
-	cmd := exec.CommandContext(ctx, "timedatectl", "show", "--property=NTPSynchronized", "--value")
+var execClockOffset = func(ctx context.Context, provider string, timeout time.Duration) (string, error) {
+	cmd := exec.CommandContext(ctx, "sntp", "-t", fmt.Sprintf("%.0f", timeout.Seconds()), provider)
 	out, err := cmd.CombinedOutput()
-	return string(out), err
+	if err != nil {
+		return string(out), err
+	}
+	return string(out), nil
 }
 
 // DefaultClockSyncProbe is the platform-default probe used by the chassis on
-// linux. It reads the kernel's NTP-sync flag via timedatectl.
-//
-// A synced host reports drift 0: once the kernel marks the clock disciplined
-// the residual offset sits below any budget hush enforces, and timedatectl
-// exposes no per-probe offset that is portable across chrony, ntpd, and
-// systemd-timesyncd. The boolean NTPSynchronized flag is the authoritative
-// sync verdict the drift gate exists to approximate.
+// linux. It performs a read-only NTP offset probe against an ordered provider
+// list. Drift is parsed from sntp's leading signed seconds value, e.g.
+// `+0.029191 +/- ...`.
 func DefaultClockSyncProbe(ctx context.Context) (bool, time.Duration, error) {
-	probeCtx, cancel := context.WithTimeout(ctx, DefaultClockSyncTimeout)
-	defer cancel()
-
-	out, err := execNTPSynchronised(probeCtx)
-	trimmed := strings.TrimSpace(out)
-	if err != nil {
-		if trimmed == "" {
-			return false, 0, fmt.Errorf("server: clock_sync: timedatectl: %w", err)
+	errs := make([]error, 0, len(DefaultClockSyncProviders))
+	for _, provider := range DefaultClockSyncProviders {
+		probeCtx, cancel := context.WithTimeout(ctx, DefaultClockSyncProviderTimeout)
+		out, err := execClockOffset(probeCtx, provider, DefaultClockSyncProviderTimeout)
+		cancel()
+		trimmed := strings.TrimSpace(out)
+		if err != nil {
+			if trimmed == "" {
+				errs = append(errs, fmt.Errorf("%s: %w", provider, err))
+			} else if drift, parseErr := parseSNTPDrift(trimmed); parseErr == nil {
+				return true, drift, nil
+			} else {
+				errs = append(errs, fmt.Errorf("%s: %w: %s", provider, err, trimmed))
+			}
+			continue
 		}
-		return false, 0, fmt.Errorf("server: clock_sync: timedatectl: %w: %s", err, trimmed)
+		drift, parseErr := parseSNTPDrift(trimmed)
+		if parseErr != nil {
+			return false, 0, parseErr
+		}
+		return true, drift, nil
 	}
-
-	switch trimmed {
-	case "yes":
-		return true, 0, nil
-	case "no":
-		return false, 0, nil
-	default:
-		return false, 0, fmt.Errorf("%w: timedatectl %q", ErrClockProbeUnexpectedOutput, trimmed)
+	if len(errs) == 0 {
+		errs = append(errs, errors.New("no clock-sync providers configured"))
 	}
+	return false, 0, fmt.Errorf("server: clock_sync: sntp: %w: %w", ErrClockProbeUnavailable, errors.Join(errs...))
 }

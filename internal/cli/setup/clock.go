@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/mrz1836/hush/internal/server"
@@ -56,6 +57,18 @@ type ClockSyncCheckConfig struct {
 	// [StatusWarn] without weakening the confirmed not-synced / drift-over
 	// verdicts. This is intended for setup UX only; serve keeps the hard gate.
 	ProbeFailureWarn bool
+
+	// StateDir enables the shared recent-good clock-sync cache. When
+	// empty, the default probe runs without cache reads or writes.
+	StateDir string
+
+	// Clock supplies the measurement time for cache writes and age checks.
+	// Defaults to time.Now.
+	Clock func() time.Time
+
+	// CacheFallback observes cache use so init can surface an operator
+	// warning equivalent to the serve-side audit event.
+	CacheFallback func(context.Context, server.ClockSyncCacheFallback)
 }
 
 // ClockSyncCheck is the preflight [Check] that wraps a [ClockProbe]
@@ -66,15 +79,32 @@ type ClockSyncCheckConfig struct {
 //
 // Use [NewClockSyncCheck] to construct one with sensible defaults.
 type ClockSyncCheck struct {
-	cfg ClockSyncCheckConfig
+	cfg           ClockSyncCheckConfig
+	cacheFallback func() (server.ClockSyncCacheFallback, bool)
 }
 
 // NewClockSyncCheck returns a [ClockSyncCheck] backed by cfg, filling
 // in defaults for any zero-valued field. The returned check is safe
 // to register under [CheckClockSync] in a [Registry].
 func NewClockSyncCheck(cfg ClockSyncCheckConfig) ClockSyncCheck {
+	var (
+		mu       sync.Mutex
+		fallback server.ClockSyncCacheFallback
+		used     bool
+	)
 	if cfg.Probe == nil {
 		cfg.Probe = server.DefaultClockSyncProbe
+		if cfg.StateDir != "" {
+			cfg.Probe = server.CachedClockSyncProbe(cfg.Probe, cfg.StateDir, cfg.Clock, func(ctx context.Context, fb server.ClockSyncCacheFallback) {
+				mu.Lock()
+				fallback = fb
+				used = true
+				mu.Unlock()
+				if cfg.CacheFallback != nil {
+					cfg.CacheFallback(ctx, fb)
+				}
+			})
+		}
 	}
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = server.DefaultClockSyncTimeout
@@ -82,7 +112,14 @@ func NewClockSyncCheck(cfg ClockSyncCheckConfig) ClockSyncCheck {
 	if cfg.MaxDrift <= 0 {
 		cfg.MaxDrift = server.DefaultClockSyncTimeout
 	}
-	return ClockSyncCheck{cfg: cfg}
+	return ClockSyncCheck{
+		cfg: cfg,
+		cacheFallback: func() (server.ClockSyncCacheFallback, bool) {
+			mu.Lock()
+			defer mu.Unlock()
+			return fallback, used
+		},
+	}
 }
 
 // Name returns the locked [CheckClockSync] slot identifier so the
@@ -124,6 +161,11 @@ func (c ClockSyncCheck) Run(ctx context.Context) SetupCheckResult {
 			fmt.Errorf("drift %v exceeds %v: %w", drift, c.cfg.MaxDrift, ErrClockUnsynchronised),
 			fmt.Sprintf("drift %v exceeds %v", drift, c.cfg.MaxDrift),
 		)
+	}
+	if c.cacheFallback != nil {
+		if fb, ok := c.cacheFallback(); ok {
+			return warn(name, fmt.Sprintf("clock-sync cache fallback: cached drift %v measured %v ago", fb.Drift, fb.Age))
+		}
 	}
 	return Ok(name, "NTP-synchronised")
 }

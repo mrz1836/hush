@@ -311,7 +311,19 @@ func New(deps Deps) (*Server, error) {
 		s.clock = time.Now
 	}
 	if s.clockProbe == nil {
-		s.clockProbe = DefaultClockSyncProbe
+		s.clockProbe = CachedClockSyncProbe(DefaultClockSyncProbe, deps.Cfg.Server.StateDir, s.clock, func(ctx context.Context, fb ClockSyncCacheFallback) {
+			if writeErr := s.audit.Write(ctx, AuditEvent{
+				Type: AuditClockSyncCacheFallback,
+				At:   s.clock(),
+				Detail: map[string]string{
+					"age":         fb.Age.String(),
+					"drift":       fb.Drift.String(),
+					"measured_at": fb.MeasuredAt.Format(time.RFC3339Nano),
+				},
+			}); writeErr != nil {
+				s.logger.WarnContext(ctx, "audit write clock_sync_cache_fallback failed", "err", writeErr.Error())
+			}
+		})
 	}
 	if s.interfaceLister == nil {
 		s.interfaceLister = func() ([]net.Addr, error) { return defaultInterfaceLister() }
