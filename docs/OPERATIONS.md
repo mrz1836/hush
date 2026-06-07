@@ -294,11 +294,12 @@ There are two different failure classes:
   default, because smoke is a fake-secret validation path. Pass
   `--strict-clock` to smoke to make probe unavailability fail there too.
 
-If you have knowingly accepted clock skew (for example, a deliberately
-air-gapped test host), pass `--allow-clock-skew` to `hush init server` or
-`hush serve`. The override downgrades the failure to a warning and emits
-`clock_skew_override`. Do not use that flag for `hush smoke`; smoke already
-handles transient probe unavailability, and measured drift should be fixed.
+If you have knowingly accepted clock skew or probe unavailability (for example,
+a deliberately air-gapped test host), pass `--allow-clock-skew` to
+`hush init server` or `hush serve`. The override downgrades the failure to a
+warning and emits `clock_skew_override`. Do not use that flag for `hush smoke`;
+smoke already handles transient probe unavailability, and measured drift should
+be fixed.
 
 ---
 
