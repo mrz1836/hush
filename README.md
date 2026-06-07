@@ -247,6 +247,30 @@ hush smoke --state-dir ~/.hush-smoke --reset
 enrolls a client, asks you to approve in Discord, verifies the fake secret,
 and shuts the temporary server down.
 
+Smoke uses isolated macOS Keychain entries, `hush-smoke-discord` /
+`hush-smoke-server`, under its smoke state. It does not read, overwrite, or
+delete the production `hush-discord` / `hush-server` bot-token item. A transient
+clock probe outage is downgraded to a warning in smoke; a measured clock drift
+outside the configured limit still fails.
+
+Clock checks use read-only SNTP probes against `time.apple.com`,
+`time.cloudflare.com`, and `pool.ntp.org`, with a 2-second per-provider
+timeout and first valid offset winning. Successful live probes write a 0600
+`clock-sync.json` recent-good cache under the state dir; if every provider is
+unavailable later, a cache entry younger than 1 hour can be used as fallback
+and is audited as `clock_sync_cache_fallback`. `hush init server` and
+`hush serve` still fail closed on provider outage or measured drift unless the
+operator explicitly passes `--allow-clock-skew`, which emits
+`clock_skew_override`.
+
+To prove client authentication and approval routing against an already-running
+server without creating smoke state or touching Keychain/vault state, use an
+enrolled client key:
+
+```bash
+hush smoke --against-running --client-key-file ~/.hush-client.key
+```
+
 > 🧹 **Cleanup:** `hush smoke clean` archives smoke artifacts by default.
 > Add `--destroy --confirm 'destroy smoke'` to permanently delete them.
 

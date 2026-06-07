@@ -156,11 +156,15 @@ func prepareKeychainCmd(ctx context.Context, cmd *cobra.Command, stderr *Stream,
 			kc = pathKC
 		}
 	}
+	if cfg != nil {
+		items.discordService = cfg.Discord.BotTokenKeychainItem
+		items.discordAccount = cfg.Discord.BotKeychainAccount
+	}
 	return &keychainCmdContext{
 		binaryPath: binaryPath,
 		keychain:   kc,
 		service:    items.discordService,
-		account:    kcAccountServer,
+		account:    items.discordAccount,
 	}, nil
 }
 

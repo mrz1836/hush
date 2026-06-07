@@ -29,6 +29,23 @@ setup, creates an isolated state dir, adds `HUSH_SMOKE_TEST=hello-from-hush`,
 enrolls a client with a key-file fallback, starts a temporary `hush serve`,
 waits for you to approve in Discord, verifies the fake secret through
 `hush request`, prints one success line, and shuts the temporary server down.
+On macOS, smoke uses dedicated Keychain entries, service
+`hush-smoke-discord` and account `hush-smoke-server`, scoped to the smoke
+state. It does not read, update, or delete the production
+`hush-discord` / `hush-server` item.
+
+Smoke also has a live-server proof mode:
+
+```bash
+hush smoke --against-running --client-key-file ~/.hush-client.key
+```
+
+`--against-running` skips smoke init, fake-secret insertion, temporary serve,
+and smoke Keychain writes. It loads the configured server address, sends a
+signed request for a guaranteed-absent fake scope, and treats a rejection from
+the approval path as success. That proves reachability, client signature
+authentication, and approval routing without reading a real secret or mutating
+Keychain/vault state.
 
 Useful flags:
 
@@ -37,8 +54,12 @@ Useful flags:
 - `--listen-addr`, `--discord-owner-id`, `--discord-application-id`,
   `--discord-approval-channel-id` — skip the matching prompt.
 - `--discord-audit-channel-id` — defaults to the approval channel.
-- `--strict-clock` — disables the smoke-only clock-skew override while the
-  temporary server runs.
+- `--strict-clock` — disables the smoke-only clock probe timeout downgrade
+  while the temporary server runs.
+- `--against-running` — run the non-destructive live-server proof instead of
+  creating smoke state.
+- `--client-key-file` — existing enrolled client key file; required with
+  `--against-running`.
 
 Clean smoke/test artifacts safely:
 
@@ -252,17 +273,33 @@ storage") so the security trade-offs are kept next to the threat model.
 
 ### Clock-sync failure during setup
 
-If the preflight clock-sync check proves the clock is unsynchronised or
-outside the drift budget, hush prints the platform-aware fix command (e.g.
-`sudo sntp -sS time.apple.com` on macOS) and exits non-zero. Hush will
-**never** run `sudo` on your behalf. If the read-only probe itself is killed
-or unavailable during setup, hush warns and continues; `hush serve` remains
-stricter.
+The clock-sync preflight uses a layered read-only SNTP probe. Hush tries
+`time.apple.com`, then `time.cloudflare.com`, then `pool.ntp.org`, with a
+2-second per-provider timeout inside the normal 5-second clock-check budget.
+The first valid offset wins. On every successful live probe, hush writes
+`<state-dir>/clock-sync.json` with mode `0600`; if all live providers are
+unavailable later, a cache entry younger than 1 hour can be used as a
+recent-good fallback and emits `clock_sync_cache_fallback`.
 
-If you have knowingly accepted clock skew (e.g. a deliberately air-gapped
-test host), pass `--allow-clock-skew` to `hush init server` (and to
-`hush serve`). The override downgrades the failure to a warning and
-emits an audit event `clock_skew_override`.
+There are two different failure classes:
+
+- **Measured drift / confirmed unsynchronised clock.** If the probe measures
+  drift outside the configured budget, or confirms the host is not synced,
+  `hush init server`, `hush serve`, and `hush smoke` fail. Hush prints the
+  platform-aware fix command (for example, `sudo sntp -sS time.apple.com` on
+  macOS) and exits non-zero. Hush will **never** run `sudo` on your behalf.
+- **Probe unavailable.** If every provider times out or fails and there is no
+  fresh cache fallback, `hush init server` and `hush serve` fail closed.
+  `hush smoke` downgrades this network/probe outage to a clear warning by
+  default, because smoke is a fake-secret validation path. Pass
+  `--strict-clock` to smoke to make probe unavailability fail there too.
+
+If you have knowingly accepted clock skew or probe unavailability (for example,
+a deliberately air-gapped test host), pass `--allow-clock-skew` to
+`hush init server` or `hush serve`. The override downgrades the failure to a
+warning and emits `clock_skew_override`. Do not use that flag for `hush smoke`;
+smoke already handles transient probe unavailability, and measured drift should
+be fixed.
 
 ---
 

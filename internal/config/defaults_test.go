@@ -33,6 +33,8 @@ func TestDefaults_MatchSchema(t *testing.T) {
 	assert.Equal(t, "~/.hush/audit.jsonl", DefaultAuditLog, "DefaultAuditLog")
 	assert.Equal(t, "~/.hush/clients.json", DefaultClientRegistry, "DefaultClientRegistry")
 	assert.Equal(t, 7743, DefaultListenPort, "DefaultListenPort")
+	assert.Equal(t, "hush-discord", DefaultBotTokenKeychainItem, "DefaultBotTokenKeychainItem")
+	assert.Equal(t, "hush-server", DefaultBotKeychainAccount, "DefaultBotKeychainAccount")
 
 	assert.True(t, DefaultRequireTailscale, "DefaultRequireTailscale")
 	assert.Equal(t, []string{"100.64.0.0/10"}, DefaultAllowedCIDRs, "DefaultAllowedCIDRs")

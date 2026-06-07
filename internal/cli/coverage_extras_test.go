@@ -277,7 +277,7 @@ func TestLoadBotToken_KeychainAbsent(t *testing.T) {
 	// HUSH_DISCORD_BOT_TOKEN, but this is a unit test and must never
 	// construct a live Discord session or trigger firewall prompts.
 	t.Setenv("HUSH_DISCORD_BOT_TOKEN", "")
-	_, err := loadBotToken(t.Context(), "hush-nonexistent-test-item", "")
+	_, err := loadBotToken(t.Context(), "hush-nonexistent-test-item", kcAccountServer, "")
 	if err == nil {
 		t.Skip("keychain unexpectedly contained the test item")
 	}

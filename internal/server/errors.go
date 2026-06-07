@@ -65,9 +65,11 @@ var (
 )
 
 // Clock-sync probe sentinel errors. Wrap with fmt.Errorf("%w: ...", sentinel)
-// so callers can match the unexpected-output category via errors.Is.
+// so callers can match the category via errors.Is.
 var (
 	ErrClockProbeUnexpectedOutput = errors.New("server: clock_sync: unexpected probe output")
+	ErrClockProbeUnavailable      = errors.New("server: clock_sync: probe unavailable")
+	ErrClockProbeNoProviders      = errors.New("server: clock_sync: no providers configured")
 )
 
 // Secret-handler sentinel errors. The /s handler maps

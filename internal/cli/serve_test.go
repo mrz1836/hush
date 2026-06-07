@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -185,7 +186,7 @@ func TestLoadBotToken_ItemNameValidation(t *testing.T) {
 		"",
 	}
 	for _, item := range bad {
-		_, err := loadBotToken(t.Context(), item, "")
+		_, err := loadBotToken(t.Context(), item, kcAccountServer, "")
 		if err == nil {
 			t.Errorf("loadBotToken(%q) succeeded, want error", item)
 		}
@@ -195,7 +196,7 @@ func TestLoadBotToken_ItemNameValidation(t *testing.T) {
 func TestLoadBotToken_EnvFallbackBeforeKeychain(t *testing.T) {
 	t.Setenv("HUSH_DISCORD_BOT_TOKEN", "smoke-token")
 
-	got, err := loadBotToken(t.Context(), "hush-nonexistent-test-item", "")
+	got, err := loadBotToken(t.Context(), "hush-nonexistent-test-item", kcAccountServer, "")
 	if err != nil {
 		t.Fatalf("loadBotToken: %v", err)
 	}
@@ -207,6 +208,29 @@ func TestLoadBotToken_EnvFallbackBeforeKeychain(t *testing.T) {
 		}
 	}); err != nil {
 		t.Fatalf("token use: %v", err)
+	}
+}
+
+func TestBotTokenLookupCmd_IncludesAccount(t *testing.T) {
+	t.Parallel()
+	cmd, err := botTokenLookupCmd(t.Context(), "hush-smoke-discord", "hush-smoke-server", "/tmp/hush.keychain-db")
+	if err != nil && runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		return
+	}
+	if err != nil {
+		t.Fatalf("botTokenLookupCmd: %v", err)
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		want := []string{"security", "find-generic-password", "-s", "hush-smoke-discord", "-a", "hush-smoke-server", "-w", "/tmp/hush.keychain-db"}
+		if got := cmd.Args; !equalStringSlices(got, want) {
+			t.Fatalf("args = %#v, want %#v", got, want)
+		}
+	case "linux":
+		want := []string{"secret-tool", "lookup", "service", "hush-smoke-discord", "account", "hush-smoke-server"}
+		if got := cmd.Args; !equalStringSlices(got, want) {
+			t.Fatalf("args = %#v, want %#v", got, want)
+		}
 	}
 }
 

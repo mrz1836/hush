@@ -73,6 +73,7 @@ func TestServer_FullMinimalConfig(t *testing.T) {
 
 	// Keychain item name populated (not a token value).
 	assert.Equal(t, "hush-discord", s.Discord.BotTokenKeychainItem)
+	assert.Equal(t, "hush-server", s.Discord.BotKeychainAccount)
 }
 
 func TestServer_FullMaximalConfig(t *testing.T) {
@@ -97,6 +98,7 @@ func TestServer_FullMaximalConfig(t *testing.T) {
 	assert.Equal(t, 30*time.Second, s.Security.MaxClockDrift)
 
 	assert.Equal(t, "hush-prod-discord", s.Discord.BotTokenKeychainItem)
+	assert.Equal(t, "hush-prod-server", s.Discord.BotKeychainAccount)
 	assert.Equal(t, "234567890123456789", s.Server.DiscordAuditChannelID)
 
 	// health_bind explicitly set — different from listen_addr

@@ -35,6 +35,11 @@ const (
 	smokeSecretValue = "hello-from-hush"
 
 	defaultSmokeStateDir = "~/.hush-smoke"
+
+	smokeBotTokenKeychainItem    = "hush-smoke-discord"
+	smokeBotTokenKeychainAccount = "hush-smoke-server"
+
+	smokeProofScopePrefix = "HUSH_SMOKE_PROOF_"
 )
 
 var explicitSmokeCleanTargetPattern = regexp.MustCompile(`^\.hush-[A-Za-z0-9._-]*(smoke|test|validation)[A-Za-z0-9._-]*$`)
@@ -65,6 +70,7 @@ type smokeDeps struct {
 	isTTY             func(*os.File) bool
 	nowFn             func() time.Time
 	httpClient        *http.Client
+	randReader        io.Reader
 }
 
 type smokeOptions struct {
@@ -77,6 +83,9 @@ type smokeOptions struct {
 	machineIndex      uint32
 	reset             bool
 	strictClock       bool
+	againstRunning    bool
+	clientKeyFile     string
+	configPath        string
 }
 
 type smokeCleanOptions struct {
@@ -100,6 +109,7 @@ func productionSmokeDeps() smokeDeps {
 		isTTY:         defaultIsTTY,
 		nowFn:         time.Now,
 		httpClient:    &http.Client{Timeout: 2 * time.Second},
+		randReader:    rand.Reader,
 	}
 }
 
@@ -110,6 +120,7 @@ func newSmokeCmd() *cobra.Command {
 		Short: "Run the guided fake-secret end-to-end smoke test",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := outputFromCmd(cmd)
+			opts.configPath = readGlobalFlags(cmd).configPath
 			return runSmoke(cmd.Context(), out.stdout, out.stderr, os.Stdin, productionSmokeDeps(), opts)
 		},
 	}
@@ -122,12 +133,17 @@ func newSmokeCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.auditChannelID, "discord-audit-channel-id", "", "Discord audit channel snowflake; defaults to approval channel when empty")
 	cmd.Flags().Uint32Var(&opts.machineIndex, "machine-index", opts.machineIndex, "Smoke client machine index")
 	cmd.Flags().BoolVar(&opts.reset, "reset", false, "Archive an existing smoke state dir before starting")
-	cmd.Flags().BoolVar(&opts.strictClock, "strict-clock", false, "Do not apply the smoke-only clock-skew override while serving")
+	cmd.Flags().BoolVar(&opts.strictClock, "strict-clock", false, "Do not apply the smoke-only clock timeout downgrade")
+	cmd.Flags().BoolVar(&opts.againstRunning, "against-running", false, "Run a non-destructive proof against an already-running server")
+	cmd.Flags().StringVar(&opts.clientKeyFile, "client-key-file", "", "Existing enrolled client key file (required with --against-running)")
 	return cmd
 }
 
 //nolint:gocognit,gocyclo // orchestrates a long end-to-end smoke flow; splitting harms readability
 func runSmoke(ctx context.Context, stdout, stderr *Stream, in *os.File, deps smokeDeps, opts smokeOptions) error {
+	if opts.againstRunning {
+		return runSmokeAgainstRunning(ctx, stdout, stderr, deps, opts)
+	}
 	if !deps.isTTY(in) {
 		_ = stderr.WriteText(initMsgNoTTY)
 		return errNoTTY
@@ -197,7 +213,7 @@ func runSmoke(ctx context.Context, stdout, stderr *Stream, in *os.File, deps smo
 	}
 
 	cfgPath := filepath.Join(stateDir, "config.toml")
-	if initErr := smokeInitServer(ctx, stderr, in, deps, opts, stateDir, passphrase); initErr != nil {
+	if initErr := smokeInitServer(ctx, stderr, in, deps, opts, stateDir, passphrase, botToken); initErr != nil {
 		return initErr
 	}
 	_ = stderr.WriteText(smokeMsgInitServer, stateDir)
@@ -233,11 +249,11 @@ func runSmoke(ctx context.Context, stdout, stderr *Stream, in *os.File, deps smo
 
 	go func() {
 		serveErrCh <- deps.serveRunner(serveCtx, stdout, stderr, serveDeps{
-			configPath:       cfgPath,
-			verbose:          true,
-			allowClockSkew:   !opts.strictClock,
-			passphraseSource: fixedPassphraseSource(passphrase),
-			approverFactory:  newProductionBotApprover,
+			configPath:                 cfgPath,
+			verbose:                    true,
+			allowClockProbeUnavailable: !opts.strictClock,
+			passphraseSource:           fixedPassphraseSource(passphrase),
+			approverFactory:            newProductionBotApprover,
 		})
 	}()
 	_ = stderr.WriteText(smokeMsgServeStarting, serverURL)
@@ -298,7 +314,7 @@ func runSmoke(ctx context.Context, stdout, stderr *Stream, in *os.File, deps smo
 	return nil
 }
 
-func smokeInitServer(ctx context.Context, stderr *Stream, in *os.File, deps smokeDeps, opts smokeOptions, stateDir string, passphrase *securebytes.SecureBytes) error {
+func smokeInitServer(ctx context.Context, stderr *Stream, in *os.File, deps smokeDeps, opts smokeOptions, stateDir string, passphrase, botToken *securebytes.SecureBytes) error {
 	initDeps, err := deps.initDepsFactory()
 	if err != nil {
 		return err
@@ -312,8 +328,14 @@ func smokeInitServer(ctx context.Context, stderr *Stream, in *os.File, deps smok
 		return err
 	}
 	defer func() { _ = passClone.Destroy() }()
+	botTokenClone, err := cloneSecureBytes(botToken)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = botTokenClone.Destroy() }()
 	initDeps.serverNonInteractive = true
 	initDeps.serverPassphrase = passClone
+	initDeps.serverBotToken = botTokenClone
 	initDeps.stateDirRoot = stateDir
 	initDeps.serverInputs = serverInputs{
 		stateDir:          stateDir,
@@ -322,8 +344,10 @@ func smokeInitServer(ctx context.Context, stderr *Stream, in *os.File, deps smok
 		applicationID:     opts.applicationID,
 		approvalChannelID: opts.approvalChannelID,
 		auditChannelID:    opts.auditChannelID,
+		botTokenKeychain:  smokeBotTokenKeychainItem,
+		botTokenAccount:   smokeBotTokenKeychainAccount,
 	}
-	initDeps.serverAllowClockSkew = true
+	initDeps.serverProbeFailureWarn = !opts.strictClock
 	return runInitServer(ctx, newStream(io.Discard, false, true), stderr, in, initDeps)
 }
 

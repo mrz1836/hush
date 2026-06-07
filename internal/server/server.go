@@ -205,6 +205,12 @@ type Deps struct {
 	// on the serve side.
 	AllowClockSkew bool
 
+	// AllowClockProbeUnavailable downgrades only a probe-unavailable
+	// startup failure (all clock providers timed out and cache fallback
+	// was unavailable) to a warning. It does not downgrade confirmed
+	// not-synchronised or drift-over-threshold clocks.
+	AllowClockProbeUnavailable bool
+
 	// ServerVersion is the semantic version reported by /me. Production
 	// wiring passes the ldflags-injected `cli.Version`. Defaults to
 	// "dev" when empty.
@@ -227,27 +233,28 @@ type mountedRoute struct {
 // through the locked exported API ([New], [Server.Run], [Server.Mount],
 // [Server.ReloadVault]).
 type Server struct {
-	cfg               *config.Server
-	vaultPtr          *atomic.Pointer[vault.Store]
-	tokenStore        token.Store
-	tokenIssuer       TokenIssuer
-	jwtVerifyKey      *ecdsa.PublicKey
-	approverImpl      Approver
-	logger            *slog.Logger
-	audit             AuditWriter
-	discordHealthFn   func() bool
-	clock             func() time.Time
-	clockProbe        func(ctx context.Context) (bool, time.Duration, error)
-	interfaceLister   func() ([]net.Addr, error)
-	listener          net.Listener
-	vaultKey          *securebytes.SecureBytes
-	loadVault         func(ctx context.Context, path string, key *securebytes.SecureBytes) (vault.Store, error)
-	clientKeyResolver ClientKeyResolver
-	nonceCache        sign.NonceCache
-	reloadDrainWindow time.Duration
-	shutdownTimeout   time.Duration
-	allowClockSkew    bool
-	serverVersion     string
+	cfg                        *config.Server
+	vaultPtr                   *atomic.Pointer[vault.Store]
+	tokenStore                 token.Store
+	tokenIssuer                TokenIssuer
+	jwtVerifyKey               *ecdsa.PublicKey
+	approverImpl               Approver
+	logger                     *slog.Logger
+	audit                      AuditWriter
+	discordHealthFn            func() bool
+	clock                      func() time.Time
+	clockProbe                 func(ctx context.Context) (bool, time.Duration, error)
+	interfaceLister            func() ([]net.Addr, error)
+	listener                   net.Listener
+	vaultKey                   *securebytes.SecureBytes
+	loadVault                  func(ctx context.Context, path string, key *securebytes.SecureBytes) (vault.Store, error)
+	clientKeyResolver          ClientKeyResolver
+	nonceCache                 sign.NonceCache
+	reloadDrainWindow          time.Duration
+	shutdownTimeout            time.Duration
+	allowClockSkew             bool
+	allowClockProbeUnavailable bool
+	serverVersion              string
 
 	runStartedAt time.Time
 	clockInSync  atomic.Bool
@@ -273,35 +280,36 @@ type Server struct {
 // [ErrMissingLogger], [ErrMissingAuditWriter]) for each missing required
 // dependency. Optional fields default to host-platform helpers.
 //
-//nolint:cyclop,gocyclo // sequential dependency wiring; complexity is structural
+//nolint:cyclop,gocyclo,gocognit // sequential dependency wiring; complexity is structural
 func New(deps Deps) (*Server, error) {
 	if err := validateDeps(deps); err != nil {
 		return nil, err
 	}
 
 	s := &Server{
-		cfg:               deps.Cfg,
-		vaultPtr:          deps.VaultPtr,
-		tokenStore:        deps.TokenStore,
-		tokenIssuer:       deps.TokenIssuer,
-		jwtVerifyKey:      deps.JWTVerifyKey,
-		approverImpl:      deps.Approver,
-		logger:            deps.Logger,
-		audit:             deps.AuditWriter,
-		discordHealthFn:   deps.DiscordHealth,
-		clock:             deps.Clock,
-		clockProbe:        deps.ClockSyncProbe,
-		interfaceLister:   deps.InterfaceLister,
-		listener:          deps.Listener,
-		vaultKey:          deps.VaultKey,
-		loadVault:         deps.LoadVaultFn,
-		clientKeyResolver: deps.ClientKeyResolver,
-		nonceCache:        deps.NonceCache,
-		reloadDrainWindow: deps.ReloadDrainWindow,
-		shutdownTimeout:   deps.ShutdownTimeout,
-		allowClockSkew:    deps.AllowClockSkew,
-		serverVersion:     deps.ServerVersion,
-		shutdownDoneCh:    make(chan struct{}),
+		cfg:                        deps.Cfg,
+		vaultPtr:                   deps.VaultPtr,
+		tokenStore:                 deps.TokenStore,
+		tokenIssuer:                deps.TokenIssuer,
+		jwtVerifyKey:               deps.JWTVerifyKey,
+		approverImpl:               deps.Approver,
+		logger:                     deps.Logger,
+		audit:                      deps.AuditWriter,
+		discordHealthFn:            deps.DiscordHealth,
+		clock:                      deps.Clock,
+		clockProbe:                 deps.ClockSyncProbe,
+		interfaceLister:            deps.InterfaceLister,
+		listener:                   deps.Listener,
+		vaultKey:                   deps.VaultKey,
+		loadVault:                  deps.LoadVaultFn,
+		clientKeyResolver:          deps.ClientKeyResolver,
+		nonceCache:                 deps.NonceCache,
+		reloadDrainWindow:          deps.ReloadDrainWindow,
+		shutdownTimeout:            deps.ShutdownTimeout,
+		allowClockSkew:             deps.AllowClockSkew,
+		allowClockProbeUnavailable: deps.AllowClockProbeUnavailable,
+		serverVersion:              deps.ServerVersion,
+		shutdownDoneCh:             make(chan struct{}),
 	}
 	if s.serverVersion == "" {
 		s.serverVersion = "dev"
@@ -311,7 +319,19 @@ func New(deps Deps) (*Server, error) {
 		s.clock = time.Now
 	}
 	if s.clockProbe == nil {
-		s.clockProbe = DefaultClockSyncProbe
+		s.clockProbe = CachedClockSyncProbe(DefaultClockSyncProbe, deps.Cfg.Server.StateDir, s.clock, func(ctx context.Context, fb ClockSyncCacheFallback) {
+			if writeErr := s.audit.Write(ctx, AuditEvent{
+				Type: AuditClockSyncCacheFallback,
+				At:   s.clock(),
+				Detail: map[string]string{
+					"age":         fb.Age.String(),
+					"drift":       fb.Drift.String(),
+					"measured_at": fb.MeasuredAt.Format(time.RFC3339Nano),
+				},
+			}); writeErr != nil {
+				s.logger.WarnContext(ctx, "audit write clock_sync_cache_fallback failed", "err", writeErr.Error())
+			}
+		})
 	}
 	if s.interfaceLister == nil {
 		s.interfaceLister = func() ([]net.Addr, error) { return defaultInterfaceLister() }

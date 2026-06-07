@@ -108,15 +108,16 @@ func mapSessionType(t server.SessionType) token.SessionType {
 
 // serveDeps groups the testable seams threaded into runServe.
 type serveDeps struct {
-	configPath          string
-	verbose             bool
-	allowClockSkew      bool
-	reloadOnVaultChange bool
-	reloadWatchInterval time.Duration
-	reloadWatchDebounce time.Duration
-	passphraseSource    passphraseSource
-	approverFactory     approverFactory
-	listener            net.Listener
+	configPath                 string
+	verbose                    bool
+	allowClockSkew             bool
+	allowClockProbeUnavailable bool
+	reloadOnVaultChange        bool
+	reloadWatchInterval        time.Duration
+	reloadWatchDebounce        time.Duration
+	passphraseSource           passphraseSource
+	approverFactory            approverFactory
+	listener                   net.Listener
 
 	// Chassis-internal test seams. Production paths leave these
 	// nil; the integration test overrides each to bypass the
@@ -282,17 +283,18 @@ func runServe(ctx context.Context, stdout, stderr *Stream, deps serveDeps) error
 		TokenIssuer: func(ctx context.Context, params token.IssueParams) (*token.Token, error) {
 			return token.Issue(ctx, jwtKey, params)
 		},
-		Approver:        approver,
-		Logger:          logger,
-		AuditWriter:     server.NewChassisAuditAdapter(auditWriter),
-		JWTVerifyKey:    &jwtKey.PublicKey,
-		DiscordHealth:   discordHealthFn,
-		Listener:        deps.listener,
-		VaultKey:        vaultEncKey,
-		ClockSyncProbe:  deps.clockSyncProbe,
-		InterfaceLister: deps.interfaceLister,
-		AllowClockSkew:  deps.allowClockSkew,
-		ServerVersion:   Version,
+		Approver:                   approver,
+		Logger:                     logger,
+		AuditWriter:                server.NewChassisAuditAdapter(auditWriter),
+		JWTVerifyKey:               &jwtKey.PublicKey,
+		DiscordHealth:              discordHealthFn,
+		Listener:                   deps.listener,
+		VaultKey:                   vaultEncKey,
+		ClockSyncProbe:             deps.clockSyncProbe,
+		InterfaceLister:            deps.interfaceLister,
+		AllowClockSkew:             deps.allowClockSkew,
+		AllowClockProbeUnavailable: deps.allowClockProbeUnavailable,
+		ServerVersion:              Version,
 	}
 	srv, err := server.New(srvDeps)
 	if err != nil {
@@ -330,10 +332,14 @@ func runServe(ctx context.Context, stdout, stderr *Stream, deps serveDeps) error
 
 	// 12. Run the chassis.
 	runErr := srv.Run(signalCtx)
-	if errors.Is(runErr, server.ErrClockUnsynchronised) {
+	if errors.Is(runErr, server.ErrClockProbeUnavailable) {
+		_ = stderr.WriteText("hush: serve: clock-sync startup check could not reach time providers.\n")
+		_ = stderr.WriteText("  next: check network/DNS reachability, then retry.\n")
+		_ = stderr.WriteText("  why:  production serve requires a fresh clock check because approvals and JWTs are time-bound.\n")
+	} else if errors.Is(runErr, server.ErrClockUnsynchronised) {
 		_ = stderr.WriteText("hush: serve: clock-sync startup check failed.\n")
 		_ = stderr.WriteText("  fix:  run `sudo sntp -sS time.apple.com`, then retry.\n")
-		_ = stderr.WriteText("  test: for a local learning vault, retry with `--allow-clock-skew`.\n")
+		_ = stderr.WriteText("  local: for a local learning vault, retry with `--allow-clock-skew`.\n")
 		_ = stderr.WriteText("  why:  production serve refuses stale host clocks because approvals and JWTs are time-bound.\n")
 	}
 	if watchCancel != nil {
@@ -578,14 +584,22 @@ var botTokenItemRe = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,128}$`)
 // touching Keychain — this is the explicit operator opt-in for hosts
 // where Keychain ACLs are unrepairable. Keychain remains the default
 // when the env var is unset.
-func loadBotToken(ctx context.Context, item, keychainPath string) (*securebytes.SecureBytes, error) {
+//
+//nolint:gocognit,gocyclo // Platform token lookup has a small number of explicit branches.
+func loadBotToken(ctx context.Context, item, account, keychainPath string) (*securebytes.SecureBytes, error) {
 	if envToken, ok := os.LookupEnv("HUSH_DISCORD_BOT_TOKEN"); ok && envToken != "" {
 		return securebytes.New([]byte(envToken))
 	}
 	if !botTokenItemRe.MatchString(item) {
 		return nil, fmt.Errorf("%w: invalid item name", errBotTokenMissing)
 	}
-	cmd, err := botTokenLookupCmd(ctx, item, keychainPath)
+	if strings.TrimSpace(account) == "" {
+		account = kcAccountServer
+	}
+	if !botTokenItemRe.MatchString(account) {
+		return nil, fmt.Errorf("%w: invalid account name", errBotTokenMissing)
+	}
+	cmd, err := botTokenLookupCmd(ctx, item, account, keychainPath)
 	if err != nil {
 		return nil, err
 	}
@@ -607,16 +621,16 @@ func loadBotToken(ctx context.Context, item, keychainPath string) (*securebytes.
 	return securebytes.New(out)
 }
 
-func botTokenLookupCmd(ctx context.Context, item, keychainPath string) (*exec.Cmd, error) {
+func botTokenLookupCmd(ctx context.Context, item, account, keychainPath string) (*exec.Cmd, error) {
 	switch runtime.GOOS {
 	case "darwin":
-		args := []string{"find-generic-password", "-s", item, "-w"}
+		args := []string{"find-generic-password", "-s", item, "-a", account, "-w"}
 		if strings.TrimSpace(keychainPath) != "" {
 			args = append(args, keychainPath)
 		}
 		return exec.CommandContext(ctx, "security", args...), nil //nolint:gosec // fixed argv; item validated by regex
 	case "linux":
-		return exec.CommandContext(ctx, "secret-tool", "lookup", "service", "hush", "attribute", item), nil //nolint:gosec // fixed argv; item validated by regex
+		return exec.CommandContext(ctx, "secret-tool", "lookup", "service", item, "account", account), nil //nolint:gosec // fixed argv; item/account validated by regex
 	default:
 		return nil, fmt.Errorf("%w: unsupported platform %s", errBotTokenSubprocess, runtime.GOOS)
 	}
@@ -628,7 +642,7 @@ func botTokenLookupCmd(ctx context.Context, item, keychainPath string) (*exec.Cm
 // returns the chassis-facing Approver + the Connected() probe used
 // by /hz.
 func newProductionBotApprover(ctx context.Context, cfg *config.Server, logger *slog.Logger) (server.Approver, func() bool, error) {
-	tokenSB, err := loadBotToken(ctx, cfg.Discord.BotTokenKeychainItem, cfg.Discord.BotKeychainPath)
+	tokenSB, err := loadBotToken(ctx, cfg.Discord.BotTokenKeychainItem, cfg.Discord.BotKeychainAccount, cfg.Discord.BotKeychainPath)
 	if err != nil {
 		return nil, nil, err
 	}

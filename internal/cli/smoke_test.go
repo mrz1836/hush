@@ -2,6 +2,10 @@ package cli
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -50,8 +54,25 @@ func TestRunSmoke_OrchestratesFakeSecretPath(t *testing.T) {
 
 	serveStarted := make(chan struct{}, 1)
 	requestCalled := false
+	initPreflightCalled := false
 	deps := smokeTestDeps(t, stateDir, kc)
-	deps.serveRunner = func(ctx context.Context, _, _ *Stream, _ serveDeps) error {
+	baseInitDepsFactory := deps.initDepsFactory
+	deps.initDepsFactory = func() (*initDeps, error) {
+		id, err := baseInitDepsFactory()
+		if err != nil {
+			return nil, err
+		}
+		id.runPreflight = func(context.Context) setupReport {
+			initPreflightCalled = true
+			require.False(t, id.serverAllowClockSkew, "smoke init must not use blanket clock-skew override")
+			require.True(t, id.serverProbeFailureWarn, "smoke init should warn only for probe-unavailable clock failures")
+			return setupReport{}
+		}
+		return id, nil
+	}
+	deps.serveRunner = func(ctx context.Context, _, _ *Stream, sd serveDeps) error {
+		require.False(t, sd.allowClockSkew, "smoke must not use blanket clock-skew override")
+		require.True(t, sd.allowClockProbeUnavailable, "smoke should downgrade only probe-unavailable clock failures")
 		serveStarted <- struct{}{}
 		<-ctx.Done()
 		return nil
@@ -84,11 +105,25 @@ func TestRunSmoke_OrchestratesFakeSecretPath(t *testing.T) {
 		reset:             false,
 	})
 	require.NoError(t, err)
+	require.True(t, initPreflightCalled)
 	require.True(t, requestCalled)
 	require.Contains(t, stdout.String(), smokeMsgSuccess[:20])
 	require.FileExists(t, filepath.Join(stateDir, "config.toml"))
 	require.FileExists(t, filepath.Join(stateDir, "secrets.vault"))
 	require.FileExists(t, filepath.Join(stateDir, "client-machine-1.key"))
+	smokeToken, err := kc.Retrieve(context.Background(), smokeBotTokenKeychainItem, smokeBotTokenKeychainAccount)
+	require.NoError(t, err)
+	defer smokeToken.Destroy()
+	require.NoError(t, smokeToken.Use(func(b []byte) {
+		require.Equal(t, testBotTokenInput, string(b))
+	}))
+	require.Equal(t, testInitBinaryPath, kc.RecordedACL(smokeBotTokenKeychainItem, smokeBotTokenKeychainAccount))
+	_, err = kc.Retrieve(context.Background(), config.DefaultBotTokenKeychainItem, kcAccountServer)
+	require.True(t, errors.Is(err, keychain.ErrKeychainItemNotFound), "smoke must not touch production bot-token item")
+	cfgLoaded, err := config.LoadServer(context.Background(), filepath.Join(stateDir, "config.toml"))
+	require.NoError(t, err)
+	require.Equal(t, smokeBotTokenKeychainItem, cfgLoaded.Discord.BotTokenKeychainItem)
+	require.Equal(t, smokeBotTokenKeychainAccount, cfgLoaded.Discord.BotKeychainAccount)
 	select {
 	case <-serveStarted:
 	default:
@@ -112,6 +147,118 @@ func TestRunSmoke_OrchestratesFakeSecretPath(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, secrets, 1)
 	require.Equal(t, smokeSecretName, secrets[0].Name)
+}
+
+func TestSmokeInitServer_StrictClockDisablesProbeFailureWarn(t *testing.T) {
+	t.Parallel()
+	stateDir := filepath.Join(t.TempDir(), "hush-smoke")
+	kc := keychain.NewFake()
+	t.Cleanup(kc.Destroy)
+	deps := smokeTestDeps(t, stateDir, kc)
+	baseInitDepsFactory := deps.initDepsFactory
+	preflightCalled := false
+	deps.initDepsFactory = func() (*initDeps, error) {
+		id, err := baseInitDepsFactory()
+		if err != nil {
+			return nil, err
+		}
+		id.runPreflight = func(context.Context) setupReport {
+			preflightCalled = true
+			require.False(t, id.serverAllowClockSkew, "strict smoke init must not use blanket clock-skew override")
+			require.False(t, id.serverProbeFailureWarn, "--strict-clock should disable the smoke timeout downgrade")
+			return setupReport{}
+		}
+		return id, nil
+	}
+	passphrase, err := securebytes.New([]byte(testGoodPassphrase))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = passphrase.Destroy() })
+	botToken, err := securebytes.New([]byte(testBotTokenInput))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = botToken.Destroy() })
+
+	err = smokeInitServer(t.Context(), newStream(io.Discard, false, true), dummyTTY(t), deps, smokeOptions{
+		stateDir:          stateDir,
+		strictClock:       true,
+		listenAddr:        testListenAddrInput,
+		ownerID:           testOwnerIDInput,
+		applicationID:     testApplicationIDIn,
+		approvalChannelID: "1505706794406772897",
+	}, stateDir, passphrase, botToken)
+	require.NoError(t, err)
+	require.True(t, preflightCalled)
+}
+
+func TestRunSmokeAgainstRunning_PostsFakeClaimOnly(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	configPath := writeSmokeProofConfig(t, stateDir, testListenAddrInput, "proofx")
+	clientKeyPath := filepath.Join(stateDir, "client-machine-1.key")
+	writeSmokeClientKeyFile(t, clientKeyPath, makeClientKey(t))
+
+	var claimReq claimWireRequest
+	var secretFetches int
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/h/proofx/claim":
+			require.NoError(t, json.NewDecoder(r.Body).Decode(&claimReq))
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"error":"denied","request_id":"proof-request"}`))
+		case strings.HasPrefix(r.URL.Path, "/h/proofx/s/"):
+			secretFetches++
+			http.Error(w, "unexpected secret fetch", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(stub.Close)
+
+	deps := smokeTestDeps(t, stateDir, keychain.NewFake())
+	deps.keychainFactory = func() (keychain.Keychain, error) { return failOnUseKeychain{}, nil }
+	initCalled := false
+	serveCalled := false
+	requestCalled := false
+	deps.initDepsFactory = func() (*initDeps, error) {
+		initCalled = true
+		return nil, errors.New("init must not run")
+	}
+	deps.serveRunner = func(context.Context, *Stream, *Stream, serveDeps) error {
+		serveCalled = true
+		return errors.New("serve must not run")
+	}
+	deps.requestRunner = func(context.Context, *Stream, *Stream, requestDeps, requestFlags) error {
+		requestCalled = true
+		return errors.New("request runner must not run")
+	}
+
+	stdout, stderr := &strings.Builder{}, &strings.Builder{}
+	err := runSmoke(t.Context(), newStream(stdout, false, true), newStream(stderr, false, true), nil, deps, smokeOptions{
+		againstRunning: true,
+		configPath:     configPath,
+		listenAddr:     mustAddrPortFromURL(t, stub.URL).String(),
+		clientKeyFile:  clientKeyPath,
+		machineIndex:   1,
+	})
+	require.NoError(t, err)
+	require.False(t, initCalled)
+	require.False(t, serveCalled)
+	require.False(t, requestCalled)
+	require.Zero(t, secretFetches)
+	require.Regexp(t, `^HUSH_SMOKE_PROOF_[0-9A-F]{16}$`, claimReq.Scope[0])
+	require.Equal(t, []string{claimReq.Scope[0]}, claimReq.Scope)
+	require.Equal(t, smokeAgainstRunningReason, claimReq.Reason)
+	require.Equal(t, "30s", claimReq.TTL)
+	require.Contains(t, stdout.String(), "against-running proof passed")
+	require.Contains(t, stdout.String(), "denied")
+}
+
+func TestRunSmokeAgainstRunning_RequiresClientKeyFile(t *testing.T) {
+	t.Parallel()
+	deps := productionSmokeDeps()
+	err := runSmoke(t.Context(), newStream(io.Discard, false, true), newStream(io.Discard, false, true), nil, deps, smokeOptions{
+		againstRunning: true,
+	})
+	require.ErrorIs(t, err, errMissingFlag)
 }
 
 func TestArchiveSmokeStateDir(t *testing.T) {
@@ -147,12 +294,83 @@ func smokeTestDeps(t *testing.T, stateDir string, kc keychain.Keychain) smokeDep
 		sd.stateDirRoot = stateDir
 		return sd
 	}
-	deps.keychainFactory = func() (keychain.Keychain, error) { return kc, nil }
+	deps.keychainFactory = func() (keychain.Keychain, error) { return nonDestroyingKeychain{Keychain: kc}, nil }
 	deps.promptSecret = scriptedSecretReader(t, []string{testGoodPassphrase, testGoodPassphrase, testBotTokenInput})
 	deps.promptLine = scriptedLineReader(t, []string{testListenAddrInput, testOwnerIDInput, testApplicationIDIn, "1505706794406772897"})
 	deps.isTTY = func(*os.File) bool { return true }
 	deps.nowFn = time.Now
 	return deps
+}
+
+type nonDestroyingKeychain struct {
+	keychain.Keychain
+}
+
+type failOnUseKeychain struct{}
+
+func (failOnUseKeychain) Store(context.Context, string, string, *securebytes.SecureBytes, string) error {
+	return errors.New("keychain store must not run")
+}
+
+func (failOnUseKeychain) Retrieve(context.Context, string, string) (*securebytes.SecureBytes, error) {
+	return nil, errors.New("keychain retrieve must not run")
+}
+
+func (failOnUseKeychain) Delete(context.Context, string, string) error {
+	return errors.New("keychain delete must not run")
+}
+
+func writeSmokeClientKeyFile(t *testing.T, path string, priv *ecdsa.PrivateKey) {
+	t.Helper()
+	scalar := make([]byte, 32)
+	//nolint:staticcheck // secp256k1 unsupported by crypto/ecdh; .D access intentional for key-file fixture
+	priv.D.FillBytes(scalar)
+	t.Cleanup(func() {
+		for i := range scalar {
+			scalar[i] = 0
+		}
+	})
+	require.NoError(t, os.WriteFile(path, []byte(hex.EncodeToString(scalar)), 0o600))
+}
+
+func writeSmokeProofConfig(t *testing.T, dir, listenAddr, prefix string) string {
+	t.Helper()
+	require.NoError(t, os.Chmod(dir, 0o700))
+	configPath := filepath.Join(dir, "config.toml")
+	clientReg := filepath.Join(dir, "clients.json")
+	require.NoError(t, os.WriteFile(clientReg, []byte("[]"), 0o600))
+	body := "" +
+		"[server]\n" +
+		"listen_addr = \"" + listenAddr + "\"\n" +
+		"path_prefix = \"" + prefix + "\"\n" +
+		"state_dir = \"" + dir + "\"\n" +
+		"audit_log = \"" + filepath.Join(dir, "audit.jsonl") + "\"\n" +
+		"discord_owner_id = \"100000000000000000\"\n" +
+		"client_registry = \"" + clientReg + "\"\n" +
+		"\n[discord]\n" +
+		"bot_token_keychain_item = \"hush-discord\"\n" +
+		"application_id = \"100000000000000000\"\n" +
+		"\n[crypto]\n" +
+		"argon_time = 4\n" +
+		"argon_memory_mb = 256\n" +
+		"argon_threads = 4\n" +
+		"jwt_default_ttl = \"15m\"\n" +
+		"max_interactive_ttl = \"30m\"\n" +
+		"max_supervisor_ttl = \"6h\"\n" +
+		"default_max_uses = 5\n" +
+		"nonce_ttl = \"5m\"\n" +
+		"clock_skew = \"1m\"\n" +
+		"claim_approval_timeout = \"30s\"\n" +
+		"\n[network]\n" +
+		"require_tailscale = true\n" +
+		"allowed_cidrs = [\"100.64.0.0/10\", \"127.0.0.0/8\"]\n" +
+		"\n[security]\n" +
+		"require_file_mode_checks = true\n" +
+		"require_keychain_acl = false\n" +
+		"require_ntp_sync = true\n" +
+		"max_clock_drift = \"1m\"\n"
+	require.NoError(t, os.WriteFile(configPath, []byte(body), 0o600))
+	return configPath
 }
 
 func mustAddrPortFromURL(t *testing.T, raw string) netip.AddrPort {

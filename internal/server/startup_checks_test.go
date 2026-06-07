@@ -69,6 +69,22 @@ func TestStartupChecks_RefusesProbeError(t *testing.T) {
 	}
 }
 
+func TestStartupChecks_RefusesProbeUnavailableWithoutOverride(t *testing.T) {
+	t.Parallel()
+
+	srv, _, _, _ := newTestServer(t, func(d *Deps) {
+		d.ClockSyncProbe = scriptedClockProbe(true, 0, ErrClockProbeUnavailable)
+	})
+
+	err := srv.checkClockSync(context.Background())
+	if !errors.Is(err, ErrClockUnsynchronised) {
+		t.Fatalf("err=%v want ErrClockUnsynchronised", err)
+	}
+	if !errors.Is(err, ErrClockProbeUnavailable) {
+		t.Fatalf("err=%v want ErrClockProbeUnavailable", err)
+	}
+}
+
 // TestStartupChecks_SkipsClockSyncWhenDisabled — RequireNTPSync=false.
 func TestStartupChecks_SkipsClockSyncWhenDisabled(t *testing.T) {
 	t.Parallel()
@@ -441,6 +457,56 @@ func TestStartupChecks_AllowClockSkewDowngradesProbeError(t *testing.T) {
 	}
 	if ev[0].Detail["reason"] != "probe failed" {
 		t.Fatalf("override audit reason=%q want %q", ev[0].Detail["reason"], "probe failed")
+	}
+}
+
+func TestStartupChecks_AllowClockSkewDowngradesProbeUnavailable(t *testing.T) {
+	t.Parallel()
+
+	srv, audit, _, _ := newTestServer(t, func(d *Deps) {
+		d.ClockSyncProbe = scriptedClockProbe(true, 0, ErrClockProbeUnavailable)
+		d.AllowClockSkew = true
+	})
+
+	if err := srv.checkClockSync(context.Background()); err != nil {
+		t.Fatalf("checkClockSync with override returned err=%v, want nil", err)
+	}
+	ev := audit.snapshot()
+	if len(ev) != 1 || ev[0].Type != AuditClockSkewOverride {
+		t.Fatalf("expected one clock_skew_override event, got %+v", ev)
+	}
+	if ev[0].Detail["reason"] != "probe unavailable" {
+		t.Fatalf("override audit reason=%q want %q", ev[0].Detail["reason"], "probe unavailable")
+	}
+}
+
+func TestStartupChecks_AllowProbeUnavailableDowngradesOnlyUnavailable(t *testing.T) {
+	t.Parallel()
+
+	srv, _, _, _ := newTestServer(t, func(d *Deps) {
+		d.ClockSyncProbe = scriptedClockProbe(true, 0, ErrClockProbeUnavailable)
+		d.AllowClockProbeUnavailable = true
+	})
+
+	if err := srv.checkClockSync(context.Background()); err != nil {
+		t.Fatalf("checkClockSync with probe-unavailable override returned err=%v, want nil", err)
+	}
+	if srv.clockInSync.Load() {
+		t.Fatalf("clockInSync should remain false under probe-unavailable override")
+	}
+}
+
+func TestStartupChecks_AllowProbeUnavailableDoesNotDowngradeDrift(t *testing.T) {
+	t.Parallel()
+
+	srv, _, _, _ := newTestServer(t, func(d *Deps) {
+		d.ClockSyncProbe = scriptedClockProbe(true, 90*time.Second, nil)
+		d.AllowClockProbeUnavailable = true
+	})
+
+	err := srv.checkClockSync(context.Background())
+	if !errors.Is(err, ErrClockUnsynchronised) {
+		t.Fatalf("err=%v want ErrClockUnsynchronised", err)
 	}
 }
 

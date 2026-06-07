@@ -309,7 +309,7 @@ func TestServeStartsViaEnvTokenWhenKeychainUnavailable(t *testing.T) {
 	const envToken = "serve-env-token-fixture"
 	t.Setenv("HUSH_DISCORD_BOT_TOKEN", envToken)
 
-	tok, err := loadBotToken(t.Context(), "hush-serve-env-token-nonexistent", "")
+	tok, err := loadBotToken(t.Context(), "hush-serve-env-token-nonexistent", kcAccountServer, "")
 	if err != nil {
 		t.Fatalf("loadBotToken under env-var fallback: %v", err)
 	}

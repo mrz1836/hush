@@ -129,6 +129,9 @@ Required fields:
   - rules:
     - keychain entry name only, not the token itself
     - implementation loads the token from Keychain at runtime
+    - `hush smoke` writes its fake-server token under
+      `hush-smoke-discord` with account `hush-smoke-server`, so smoke runs do
+      not collide with a production `hush-discord` / `hush-server` item
 
 Optional fields:
 
@@ -235,10 +238,26 @@ Required fields:
 - `require_ntp_sync`
   - type: bool
   - default: `true`
+  - behavior:
+    - startup and setup use a read-only SNTP probe against `time.apple.com`,
+      `time.cloudflare.com`, then `pool.ntp.org`
+    - each provider is bounded to 2 seconds; the first valid offset is used
+    - successful live probes write `<state-dir>/clock-sync.json` with mode
+      `0600`
+    - if every provider is unavailable, a cache entry newer than 1 hour may be
+      used as a recent-good fallback and is audited as
+      `clock_sync_cache_fallback`
 
 - `max_clock_drift`
   - type: duration string
   - default: `60s`
+  - behavior:
+    - measured drift beyond this value fails `hush init server`,
+      `hush serve`, and `hush smoke`
+    - `--allow-clock-skew` can explicitly downgrade init/serve failures and is
+      audited as `clock_skew_override`
+    - smoke downgrades only probe-unavailable network failures by default;
+      `--strict-clock` disables that smoke-only downgrade
 
 ---
 

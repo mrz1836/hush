@@ -124,7 +124,7 @@ func recoverExistingArtifacts(
 		StateDir:   stateDir,
 		KeychainItem: setup.KeychainTarget{
 			Service: keychainItems.discordService,
-			Account: kcAccountServer,
+			Account: keychainItems.discordAccount,
 		},
 	}
 
@@ -155,7 +155,7 @@ func recoverExistingArtifacts(
 		// env-token) and handles destructive deletes inline so the
 		// caller's Store call lands on a clean slot.
 		if isKeychainTokenACLDenial(a) {
-			mode, err := resolveKeychainACL(ctx, in, stderr, deps, keychainItems.discordService, kcAccountServer)
+			mode, err := resolveKeychainACL(ctx, in, stderr, deps, keychainItems.discordService, keychainItems.discordAccount)
 			if err != nil {
 				return decisions, err
 			}
@@ -247,13 +247,13 @@ func applyLegacyKeychainGuards(
 		if decisions.modeFor(setup.ArtifactKeychainToken) != onExistingFail {
 			return nil
 		}
-		return guardKeychainAbsent(ctx, deps.keychain, keychainItems.discordService, kcAccountServer, stderr)
+		return guardKeychainAbsent(ctx, deps.keychain, keychainItems.discordService, keychainItems.discordAccount, stderr)
 	}
-	if err := guardKeychainAbsent(ctx, deps.keychain, keychainItems.vaultPassphraseService, kcAccountServer, stderr); err != nil {
+	if err := guardKeychainAbsent(ctx, deps.keychain, keychainItems.vaultPassphraseService, keychainItems.vaultPassphraseAccount, stderr); err != nil {
 		return err
 	}
 	if decisions.modeFor(setup.ArtifactKeychainToken) != onExistingFail {
 		return nil
 	}
-	return guardKeychainAbsent(ctx, deps.keychain, keychainItems.discordService, kcAccountServer, stderr)
+	return guardKeychainAbsent(ctx, deps.keychain, keychainItems.discordService, keychainItems.discordAccount, stderr)
 }

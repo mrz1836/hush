@@ -136,6 +136,14 @@ is readable, Keychain remains the default. If an existing item is unreadable,
 use `hush keychain doctor` to confirm the state and `hush keychain repair` to
 refresh the ACL for the current binary.
 
+`hush smoke` is isolated from the production bot-token item. Its temporary
+server uses service `hush-smoke-discord` and account `hush-smoke-server`, under
+the smoke state directory, and does not read, overwrite, or delete
+`hush-discord` / `hush-server`. `hush smoke --against-running` goes further:
+it skips init, fake-secret insertion, temporary serving, and smoke Keychain
+writes, then sends a signed request for a guaranteed-absent fake scope to prove
+server reachability and approval routing without fetching any real secret.
+
 #### Unlock failure (exit 51)
 
 If `security unlock-keychain ~/Library/Keychains/login.keychain-db` returns
@@ -397,7 +405,7 @@ Documented for transparency. These are accepted trade-offs.
 | Discord dependency | Medium | If Discord is unreachable, no new sessions. Existing sessions continue. Plan full-day TTLs. |
 | Single passphrase as root of trust | Medium | Forgotten passphrase = unrecoverable vault (by design). Shamir splitting is a future extension. Until then, store the passphrase in a physical backup (paper in safe). |
 | `--format eval` stdout leakage | Medium | Plaintext printed to stdout — captured by terminal scrollback, tmux, `script`. Use `--exec` whenever possible. `--format eval` is opt-in. |
-| NTP clock skew | Low | 30s timestamp window requires synced clocks. Server and supervisor refuse to start if unsynced. |
+| NTP clock skew | Low | 30s timestamp window requires synced clocks. Init/serve use read-only SNTP probes against `time.apple.com`, `time.cloudflare.com`, and `pool.ntp.org` with 2s per provider, write a 0600 recent-good cache for 1h fallback when every provider is unavailable, and fail closed on provider outage or measured drift unless the operator explicitly uses `--allow-clock-skew` (`clock_skew_override`). Smoke downgrades only probe-unavailable network failures by default; measured drift still fails. Cache fallback emits `clock_sync_cache_fallback`. |
 | Grace-window plaintext cache in supervisor memory | Medium | When `cache_secrets_for_restart=true`, supervisor holds last decrypted secrets in mlocked memory for `grace.window` (default 60m, capped 4h) beyond JWT validity. Doubles on-host plaintext surface (child + supervisor). Approval becomes a gate on first arrival, not ongoing presence. **Opt-in per supervisor**; `--no-cache` disables it. |
 | Log-pattern detection is version-coupled | Low | Patterns can drift across child versions. Primary signals are validators (fetch-time) and exit-78 (child contract). Log patterns are alert-only. |
 | Supervisor validators make outbound calls from agent host | Low | Validators hit `api.anthropic.com`, `api.openai.com`, etc. — the same endpoints the child will hit anyway. **Vault server makes no outbound calls.** Validators can be disabled per supervisor. |
