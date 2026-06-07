@@ -186,6 +186,7 @@ type claimRequest struct {
 	MachineName          string   `json:"machine_name"`
 	SupervisorName       string   `json:"supervisor_name,omitempty"`
 	ClientKeyFingerprint string   `json:"client_key_fingerprint"`
+	ForceApproval        bool     `json:"force_approval,omitempty"`
 
 	// Optional agent-context fields. Visible to the Discord approver
 	// and recorded in the audit log. Empty values are omitted from
@@ -238,6 +239,7 @@ type signedPayload struct {
 	AgentModel      string   `json:"agent_model,omitempty"`
 	CommandPreview  string   `json:"command_preview,omitempty"`
 	EphemeralPubKey string   `json:"ephemeral_pubkey"`
+	ForceApproval   bool     `json:"force_approval,omitempty"`
 	MachineName     string   `json:"machine_name"`
 	Nonce           string   `json:"nonce"`
 	Reason          string   `json:"reason"`
@@ -356,7 +358,7 @@ func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
 	// Eliminates the per-restart user-visible "wait 5 minutes for Discord
 	// rate-limit window" cycle for long-lived supervisors — the supervisor
 	// process restarts cheap, the human's approval cadence stays intact.
-	if s.tryResumeSupervisorSession(w, r, ctx, req, sessionType, peer, cappedTTL) {
+	if !req.ForceApproval && s.tryResumeSupervisorSession(w, r, ctx, req, sessionType, peer, cappedTTL) {
 		return
 	}
 
@@ -641,6 +643,7 @@ func (s *Server) verifyClaimSignature(ctx context.Context, req *claimRequest) er
 		AgentModel:      req.AgentModel,
 		CommandPreview:  req.CommandPreview,
 		EphemeralPubKey: req.EphemeralPubKey,
+		ForceApproval:   req.ForceApproval,
 		MachineName:     req.MachineName,
 		Nonce:           req.Nonce,
 		Reason:          req.Reason,

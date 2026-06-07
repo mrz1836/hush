@@ -247,6 +247,7 @@ type claimBodyOpts struct {
 	RequestID       string
 	MachineName     string
 	SupervisorName  string
+	ForceApproval   bool
 	Fingerprint     string
 	// SignWithKey lets tests sign with a different (incorrect) private key
 	// to drive the bad_signature path.
@@ -306,6 +307,7 @@ func signedClaimBody(t *testing.T, h *claimTestHarness, o claimBodyOpts) []byte 
 	}
 	payload := signedPayload{
 		EphemeralPubKey: o.EphemeralPubKey,
+		ForceApproval:   o.ForceApproval,
 		MachineName:     o.MachineName,
 		Nonce:           o.Nonce,
 		Reason:          o.Reason,
@@ -349,6 +351,9 @@ func signedClaimBody(t *testing.T, h *claimTestHarness, o claimBodyOpts) []byte 
 	}
 	if o.SupervisorName != "" {
 		body["supervisor_name"] = o.SupervisorName
+	}
+	if o.ForceApproval {
+		body["force_approval"] = true
 	}
 	out, err := json.Marshal(body)
 	if err != nil {
@@ -2089,6 +2094,50 @@ func TestClaim_SupervisorSessionResumption(t *testing.T) {
 	claims2 := jwtClaims(t, resp2.JWT)
 	if got := claims2["ephemeral_pubkey"]; got != o2.EphemeralPubKey {
 		t.Fatalf("resumed JWT ephemeral_pubkey=%v want %v", got, o2.EphemeralPubKey)
+	}
+}
+
+// TestClaim_SupervisorSessionResumption_ForceApprovalStillPromptsApprover —
+// an explicit operator renewal must not inherit the existing approval window.
+// ForceApproval keeps restart-friendly supervisor resumption for ordinary
+// claims, while giving renew --force a real approver prompt and fresh TTL.
+func TestClaim_SupervisorSessionResumption_ForceApprovalStillPromptsApprover(t *testing.T) {
+	t.Parallel()
+	h := newClaimHarness(
+		t,
+		withApproverScript(
+			[]Decision{
+				{Approved: true, GrantedTTL: 4 * time.Hour, ApproverID: "human"},
+				{Approved: true, GrantedTTL: 4 * time.Hour, ApproverID: "human"},
+			},
+			[]error{nil, nil},
+		),
+	)
+
+	o1 := defaultClaimBodyOpts(h)
+	o1.SessionType = "supervisor"
+	o1.SupervisorName = "claude-worker"
+	o1.TTL = 4 * time.Hour
+	o1.Scope = []string{"ANTHROPIC_API_KEY", "GEMINI_API_KEY"}
+	rr1, _ := h.do(t, signedClaimBody(t, h, o1))
+	if rr1.Code != http.StatusOK {
+		t.Fatalf("first claim status=%d want 200; body=%s", rr1.Code, rr1.Body.String())
+	}
+
+	o2 := defaultClaimBodyOpts(h)
+	o2.SessionType = "supervisor"
+	o2.SupervisorName = "claude-worker"
+	o2.TTL = 4 * time.Hour
+	o2.Scope = []string{"ANTHROPIC_API_KEY", "GEMINI_API_KEY"}
+	o2.Nonce = freshNonce()
+	o2.ForceApproval = true
+	rr2, _ := h.do(t, signedClaimBody(t, h, o2))
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("force-approval claim status=%d want 200; body=%s", rr2.Code, rr2.Body.String())
+	}
+
+	if got := len(h.approver.calls); got != 2 {
+		t.Fatalf("approver calls=%d want 2 (force approval must bypass supervisor resumption)", got)
 	}
 }
 

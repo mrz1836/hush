@@ -143,6 +143,7 @@ type clientRenewFlags struct {
 	socketPath     string
 	supervisorName string
 	restart        bool
+	force          bool
 }
 
 // newClientRenewCmd constructs the `hush client renew` leaf. No --json
@@ -171,6 +172,8 @@ session.
 		"Supervisor name (derives the socket path)")
 	cmd.Flags().BoolVar(&flags.restart, "restart", false,
 		"Restart the supervised child after approval succeeds")
+	cmd.Flags().BoolVar(&flags.force, "force", false,
+		"Require a fresh approval instead of resuming an existing supervisor session")
 	return cmd
 }
 
@@ -285,7 +288,8 @@ func runClientRefresh(cmd *cobra.Command, flags clientRefreshFlags) error {
 	if flags.supervisorName != "" {
 		renewTarget = flags.supervisorName
 	}
-	if _, werr := fmt.Fprintf(stdout,
+	if _, werr := fmt.Fprintf(
+		stdout,
 		"note: refresh refills secrets under the existing session; to request a fresh Discord approval run: hush client renew --supervisor %s\n",
 		renewTarget,
 	); werr != nil {
@@ -307,7 +311,7 @@ func runClientRenew(cmd *cobra.Command, flags clientRenewFlags) error {
 	defer cancel()
 
 	sup := client.NewSupervisorStatus(path)
-	res, sdkErr := sup.Renew(ctx, client.RenewOptions{Restart: flags.restart})
+	res, sdkErr := sup.Renew(ctx, client.RenewOptions{Restart: flags.restart, ForceApproval: flags.force})
 	if sdkErr != nil {
 		wrapped := wrapRenewSDKErr(sdkErr)
 		printClientErr(stderr, "renew", wrapped)
@@ -327,7 +331,8 @@ func runClientRenew(cmd *cobra.Command, flags clientRenewFlags) error {
 	if res.Restarted {
 		restartSuffix = "; child restarted"
 	}
-	if _, werr := fmt.Fprintf(stdout,
+	if _, werr := fmt.Fprintf(
+		stdout,
 		"hush: client renew: session renewed (approval granted); next expiry %s%s\n",
 		formatRenewExpiry(res.SessionExpiresAt),
 		restartSuffix,
@@ -387,7 +392,7 @@ func wrapRenewSDKErr(err error) error {
 	}
 }
 
-func trimSDKReason(err error, sentinel error) string {
+func trimSDKReason(err, sentinel error) string {
 	reason := strings.TrimPrefix(err.Error(), sentinel.Error()+": ")
 	if strings.TrimSpace(reason) == "" || reason == err.Error() {
 		return err.Error()

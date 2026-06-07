@@ -84,7 +84,8 @@ type ReloadRequest struct {
 // path's seamless JWT/session swap unless the operator explicitly asks
 // for a child restart after approval.
 type RenewRequest struct {
-	Restart bool `json:"restart"`
+	Restart       bool `json:"restart"`
+	ForceApproval bool `json:"force_approval,omitempty"`
 }
 
 // RenewResult is the non-secret outcome of an operator-driven renewal.

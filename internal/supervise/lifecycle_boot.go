@@ -54,6 +54,7 @@ type claimWireRequest struct {
 	MachineName          string   `json:"machine_name"`
 	SupervisorName       string   `json:"supervisor_name,omitempty"`
 	ClientKeyFingerprint string   `json:"client_key_fingerprint"`
+	ForceApproval        bool     `json:"force_approval,omitempty"`
 }
 
 // claimSignedPayload mirrors internal/server/claim_handler.go::signedPayload.
@@ -67,6 +68,7 @@ type claimSignedPayload struct {
 	AgentModel      string   `json:"agent_model,omitempty"`
 	CommandPreview  string   `json:"command_preview,omitempty"`
 	EphemeralPubKey string   `json:"ephemeral_pubkey"`
+	ForceApproval   bool     `json:"force_approval,omitempty"`
 	MachineName     string   `json:"machine_name"`
 	Nonce           string   `json:"nonce"`
 	Reason          string   `json:"reason"`
@@ -264,7 +266,12 @@ func (l *Lifecycle) submitClaim(ctx context.Context) error {
 // success body OR (zero, status, errBody, nil) when status != 200 but the
 // body was parseable; returns (zero, 0, zero, err) on transport / parse error.
 func (l *Lifecycle) doClaimRequest(ctx context.Context) (claimWireResponse, int, claimWireError, error) {
+	return l.doClaimRequestWithOptions(ctx, false)
+}
+
+func (l *Lifecycle) doClaimRequestWithOptions(ctx context.Context, forceApproval bool) (claimWireResponse, int, claimWireError, error) {
 	payload := l.buildClaimPayload()
+	payload.ForceApproval = forceApproval
 	wire, signErr := signAndWrapClaim(ctx, l.deps.ClaimSigningKey, l.deps.ClientKeyFingerprint, payload)
 	if signErr != nil {
 		return claimWireResponse{}, 0, claimWireError{}, signErr
@@ -389,6 +396,7 @@ func signAndWrapClaim(ctx context.Context, clientKey *ecdsa.PrivateKey, fp strin
 		TTL:                  payload.TTL,
 		SessionType:          payload.SessionType,
 		EphemeralPubKey:      payload.EphemeralPubKey,
+		ForceApproval:        payload.ForceApproval,
 		Nonce:                payload.Nonce,
 		Timestamp:            payload.Timestamp,
 		Signature:            base64.StdEncoding.EncodeToString(sig),
