@@ -38,6 +38,8 @@ const (
 
 	smokeBotTokenKeychainItem    = "hush-smoke-discord"
 	smokeBotTokenKeychainAccount = "hush-smoke-server"
+
+	smokeProofScopePrefix = "HUSH_SMOKE_PROOF_"
 )
 
 var explicitSmokeCleanTargetPattern = regexp.MustCompile(`^\.hush-[A-Za-z0-9._-]*(smoke|test|validation)[A-Za-z0-9._-]*$`)
@@ -68,6 +70,7 @@ type smokeDeps struct {
 	isTTY             func(*os.File) bool
 	nowFn             func() time.Time
 	httpClient        *http.Client
+	randReader        io.Reader
 }
 
 type smokeOptions struct {
@@ -80,6 +83,9 @@ type smokeOptions struct {
 	machineIndex      uint32
 	reset             bool
 	strictClock       bool
+	againstRunning    bool
+	clientKeyFile     string
+	configPath        string
 }
 
 type smokeCleanOptions struct {
@@ -103,6 +109,7 @@ func productionSmokeDeps() smokeDeps {
 		isTTY:         defaultIsTTY,
 		nowFn:         time.Now,
 		httpClient:    &http.Client{Timeout: 2 * time.Second},
+		randReader:    rand.Reader,
 	}
 }
 
@@ -113,6 +120,7 @@ func newSmokeCmd() *cobra.Command {
 		Short: "Run the guided fake-secret end-to-end smoke test",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := outputFromCmd(cmd)
+			opts.configPath = readGlobalFlags(cmd).configPath
 			return runSmoke(cmd.Context(), out.stdout, out.stderr, os.Stdin, productionSmokeDeps(), opts)
 		},
 	}
@@ -126,11 +134,16 @@ func newSmokeCmd() *cobra.Command {
 	cmd.Flags().Uint32Var(&opts.machineIndex, "machine-index", opts.machineIndex, "Smoke client machine index")
 	cmd.Flags().BoolVar(&opts.reset, "reset", false, "Archive an existing smoke state dir before starting")
 	cmd.Flags().BoolVar(&opts.strictClock, "strict-clock", false, "Do not apply the smoke-only clock timeout downgrade")
+	cmd.Flags().BoolVar(&opts.againstRunning, "against-running", false, "Run a non-destructive proof against an already-running server")
+	cmd.Flags().StringVar(&opts.clientKeyFile, "client-key-file", "", "Existing enrolled client key file (required with --against-running)")
 	return cmd
 }
 
 //nolint:gocognit,gocyclo // orchestrates a long end-to-end smoke flow; splitting harms readability
 func runSmoke(ctx context.Context, stdout, stderr *Stream, in *os.File, deps smokeDeps, opts smokeOptions) error {
+	if opts.againstRunning {
+		return runSmokeAgainstRunning(ctx, stdout, stderr, deps, opts)
+	}
 	if !deps.isTTY(in) {
 		_ = stderr.WriteText(initMsgNoTTY)
 		return errNoTTY
