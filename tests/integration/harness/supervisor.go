@@ -276,13 +276,18 @@ func (s *TestSupervisor) Run() {
 }
 
 // Stop cancels the Lifecycle and drains the audit writer. Idempotent.
+// Safe to call even when Run was never invoked: runDone is only closed by
+// the Run goroutine, so draining it is gated on startedAt to avoid
+// blocking forever on a supervisor that was built but never started.
 func (s *TestSupervisor) Stop() {
 	if s == nil {
 		return
 	}
 	if s.runCancel != nil {
 		s.runCancel()
-		<-s.runDone
+		if s.startedAt != (time.Time{}) {
+			<-s.runDone
+		}
 		s.runCancel = nil
 	}
 	if s.auditCancel != nil {

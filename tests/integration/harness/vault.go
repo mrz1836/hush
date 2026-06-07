@@ -105,27 +105,30 @@ type clientRegistryEntry struct {
 // production registration but currently unused; it remains in the API so
 // future scenarios that need machine-indexed registrations can extend
 // without breaking callers.
-func (v *TestVault) RegisterClient(_ *testing.T, machineIdx uint32, pub *ecdsa.PublicKey) {
+func (v *TestVault) RegisterClient(t *testing.T, machineIdx uint32, pub *ecdsa.PublicKey) {
+	t.Helper()
 	_ = machineIdx
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	raw, err := os.ReadFile(v.clientRegistry)
 	if err != nil {
-		panic("harness.RegisterClient: read clients.json: " + err.Error())
+		t.Fatalf("harness.RegisterClient: read clients.json: %v", err)
 	}
 	entries := make([]clientRegistryEntry, 0, 1)
 	if len(raw) > 0 {
-		_ = json.Unmarshal(raw, &entries)
+		if err = json.Unmarshal(raw, &entries); err != nil {
+			t.Fatalf("harness.RegisterClient: unmarshal clients.json: %v", err)
+		}
 	}
 	fp := keys.PublicKeyFingerprint(pub)
 	pubHex := compressedPubKeyHex(pub)
 	entries = append(entries, clientRegistryEntry{Fingerprint: fp, PublicKey: pubHex})
 	out, err := json.Marshal(entries)
 	if err != nil {
-		panic("harness.RegisterClient: marshal clients.json: " + err.Error())
+		t.Fatalf("harness.RegisterClient: marshal clients.json: %v", err)
 	}
 	if err := os.WriteFile(v.clientRegistry, out, 0o600); err != nil {
-		panic("harness.RegisterClient: write clients.json: " + err.Error())
+		t.Fatalf("harness.RegisterClient: write clients.json: %v", err)
 	}
 }
 
