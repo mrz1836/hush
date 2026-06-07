@@ -55,6 +55,7 @@ type claimSignedPayloadJSON struct {
 	AgentModel      string   `json:"agent_model,omitempty"`
 	CommandPreview  string   `json:"command_preview,omitempty"`
 	EphemeralPubKey string   `json:"ephemeral_pubkey"`
+	ForceApproval   bool     `json:"force_approval,omitempty"`
 	MachineName     string   `json:"machine_name"`
 	Nonce           string   `json:"nonce"`
 	Reason          string   `json:"reason"`

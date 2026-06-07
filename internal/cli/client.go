@@ -288,7 +288,8 @@ func runClientRefresh(cmd *cobra.Command, flags clientRefreshFlags) error {
 	if flags.supervisorName != "" {
 		renewTarget = flags.supervisorName
 	}
-	if _, werr := fmt.Fprintf(stdout,
+	if _, werr := fmt.Fprintf(
+		stdout,
 		"note: refresh refills secrets under the existing session; to request a fresh Discord approval run: hush client renew --supervisor %s\n",
 		renewTarget,
 	); werr != nil {
@@ -330,7 +331,8 @@ func runClientRenew(cmd *cobra.Command, flags clientRenewFlags) error {
 	if res.Restarted {
 		restartSuffix = "; child restarted"
 	}
-	if _, werr := fmt.Fprintf(stdout,
+	if _, werr := fmt.Fprintf(
+		stdout,
 		"hush: client renew: session renewed (approval granted); next expiry %s%s\n",
 		formatRenewExpiry(res.SessionExpiresAt),
 		restartSuffix,
@@ -390,7 +392,7 @@ func wrapRenewSDKErr(err error) error {
 	}
 }
 
-func trimSDKReason(err error, sentinel error) string {
+func trimSDKReason(err, sentinel error) string {
 	reason := strings.TrimPrefix(err.Error(), sentinel.Error()+": ")
 	if strings.TrimSpace(reason) == "" || reason == err.Error() {
 		return err.Error()
