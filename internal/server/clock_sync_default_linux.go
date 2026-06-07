@@ -25,6 +25,13 @@ var execClockOffset = func(ctx context.Context, provider string, timeout time.Du
 	return string(out), nil
 }
 
+type clockProviderProbeResult struct {
+	drift     time.Duration
+	ok        bool
+	retryable bool
+	err       error
+}
+
 // DefaultClockSyncProbe is the platform-default probe used by the chassis on
 // linux. It performs a read-only NTP offset probe against an ordered provider
 // list. Drift is parsed from sntp's leading signed seconds value, e.g.
@@ -32,28 +39,48 @@ var execClockOffset = func(ctx context.Context, provider string, timeout time.Du
 func DefaultClockSyncProbe(ctx context.Context) (bool, time.Duration, error) {
 	errs := make([]error, 0, len(DefaultClockSyncProviders))
 	for _, provider := range DefaultClockSyncProviders {
-		probeCtx, cancel := context.WithTimeout(ctx, DefaultClockSyncProviderTimeout)
-		out, err := execClockOffset(probeCtx, provider, DefaultClockSyncProviderTimeout)
-		cancel()
-		trimmed := strings.TrimSpace(out)
-		if err != nil {
-			if trimmed == "" {
-				errs = append(errs, fmt.Errorf("%s: %w", provider, err))
-			} else if drift, parseErr := parseSNTPDrift(trimmed); parseErr == nil {
-				return true, drift, nil
-			} else {
-				errs = append(errs, fmt.Errorf("%s: %w: %s", provider, err, trimmed))
-			}
-			continue
+		result := probeClockSyncProvider(ctx, provider)
+		if result.ok {
+			return true, result.drift, nil
 		}
-		drift, parseErr := parseSNTPDrift(trimmed)
-		if parseErr != nil {
-			return false, 0, parseErr
+		if !result.retryable {
+			return false, 0, result.err
 		}
-		return true, drift, nil
+		errs = append(errs, result.err)
 	}
+	return false, 0, unavailableClockProbeError(errs)
+}
+
+func probeClockSyncProvider(ctx context.Context, provider string) clockProviderProbeResult {
+	probeCtx, cancel := context.WithTimeout(ctx, DefaultClockSyncProviderTimeout)
+	defer cancel()
+
+	out, err := execClockOffset(probeCtx, provider, DefaultClockSyncProviderTimeout)
+	trimmed := strings.TrimSpace(out)
+	if err != nil {
+		return clockProviderExecError(provider, trimmed, err)
+	}
+
+	drift, parseErr := parseSNTPDrift(trimmed)
+	if parseErr != nil {
+		return clockProviderProbeResult{err: parseErr}
+	}
+	return clockProviderProbeResult{drift: drift, ok: true}
+}
+
+func clockProviderExecError(provider string, trimmed string, err error) clockProviderProbeResult {
+	if trimmed == "" {
+		return clockProviderProbeResult{retryable: true, err: fmt.Errorf("%s: %w", provider, err)}
+	}
+	if drift, parseErr := parseSNTPDrift(trimmed); parseErr == nil {
+		return clockProviderProbeResult{drift: drift, ok: true}
+	}
+	return clockProviderProbeResult{retryable: true, err: fmt.Errorf("%s: %w: %s", provider, err, trimmed)}
+}
+
+func unavailableClockProbeError(errs []error) error {
 	if len(errs) == 0 {
 		errs = append(errs, ErrClockProbeNoProviders)
 	}
-	return false, 0, fmt.Errorf("server: clock_sync: sntp: %w: %w", ErrClockProbeUnavailable, errors.Join(errs...))
+	return fmt.Errorf("server: clock_sync: sntp: %w: %w", ErrClockProbeUnavailable, errors.Join(errs...))
 }
