@@ -21,9 +21,13 @@ type ClockSyncCacheFallback struct {
 	Age        time.Duration
 }
 
+var errClockSyncCacheMissingMeasurement = errors.New("clock sync cache missing measurement time")
+
 // CachedClockSyncProbe wraps a live probe with a recent-good cache. The live
 // probe remains authoritative; the cache is read only when every provider is
 // unavailable.
+//
+//nolint:gocognit,gocyclo // The wrapper keeps the live-probe, cache, and fallback cases in one short flow.
 func CachedClockSyncProbe(
 	probe func(ctx context.Context) (synced bool, drift time.Duration, err error),
 	stateDir string,
@@ -99,7 +103,7 @@ func readClockSyncCache(stateDir string) (clockSyncCacheEntry, error) {
 		return entry, fmt.Errorf("clock sync cache decode: %w", err)
 	}
 	if entry.MeasuredAt.IsZero() {
-		return entry, errors.New("clock sync cache missing measurement time")
+		return entry, errClockSyncCacheMissingMeasurement
 	}
 	return entry, nil
 }

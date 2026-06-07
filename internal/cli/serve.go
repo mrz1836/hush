@@ -584,6 +584,8 @@ var botTokenItemRe = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,128}$`)
 // touching Keychain — this is the explicit operator opt-in for hosts
 // where Keychain ACLs are unrepairable. Keychain remains the default
 // when the env var is unset.
+//
+//nolint:gocognit,gocyclo // Platform token lookup has a small number of explicit branches.
 func loadBotToken(ctx context.Context, item, account, keychainPath string) (*securebytes.SecureBytes, error) {
 	if envToken, ok := os.LookupEnv("HUSH_DISCORD_BOT_TOKEN"); ok && envToken != "" {
 		return securebytes.New([]byte(envToken))

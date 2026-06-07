@@ -1144,6 +1144,8 @@ func runInitServerPreflight(ctx context.Context, deps *initDeps, stderr *Stream)
 // runInitServer is the orchestration entry-point for `hush init server`.
 // All output goes to stderr (operator messages); stdout is intentionally
 // unused so machine-piped consumers see an empty data stream on success.
+//
+//nolint:gocognit,gocyclo // The guided init orchestration is intentionally linear.
 func runInitServer(ctx context.Context, _, stderr *Stream, in *os.File, deps *initDeps) error {
 	if err := runInitServerPreflight(ctx, deps, stderr); err != nil {
 		return err

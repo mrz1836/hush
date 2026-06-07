@@ -24,6 +24,11 @@ const (
 	smokeMsgAgainstSuccess    = "hush: smoke: against-running proof passed — server reached approval path and rejected fake scope with %s"
 )
 
+var (
+	errSmokeProofBeforeApproval = errors.New("hush: smoke: against-running proof rejected before approval path")
+	errSmokeProofApproved       = errors.New("hush: smoke: against-running proof unexpectedly approved fake scope")
+)
+
 func runSmokeAgainstRunning(ctx context.Context, stdout, stderr *Stream, deps smokeDeps, opts smokeOptions) error {
 	if strings.TrimSpace(opts.clientKeyFile) == "" {
 		_ = stderr.WriteText("hush: smoke: --client-key-file is required with --against-running")
@@ -154,7 +159,7 @@ func smokePostClaimOnly(ctx context.Context, stderr *Stream, deps requestDeps, f
 	case "discord_unavailable":
 		return "discord_unavailable", nil
 	default:
-		return "", fmt.Errorf("hush: smoke: against-running proof rejected before approval path: %s", code)
+		return "", fmt.Errorf("%w: %s", errSmokeProofBeforeApproval, code)
 	}
 }
 
@@ -184,7 +189,7 @@ func postSmokeProofClaim(ctx context.Context, deps requestDeps, server string, b
 	defer func() { _ = resp.Body.Close() }()
 	bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if resp.StatusCode == http.StatusOK {
-		return "", errors.New("hush: smoke: against-running proof unexpectedly approved fake scope")
+		return "", errSmokeProofApproved
 	}
 	var errBody claimWireError
 	if err := json.Unmarshal(bodyBytes, &errBody); err != nil {

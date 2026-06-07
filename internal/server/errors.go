@@ -69,6 +69,7 @@ var (
 var (
 	ErrClockProbeUnexpectedOutput = errors.New("server: clock_sync: unexpected probe output")
 	ErrClockProbeUnavailable      = errors.New("server: clock_sync: probe unavailable")
+	ErrClockProbeNoProviders      = errors.New("server: clock_sync: no providers configured")
 )
 
 // Secret-handler sentinel errors. The /s handler maps

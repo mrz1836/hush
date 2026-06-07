@@ -280,7 +280,7 @@ type Server struct {
 // [ErrMissingLogger], [ErrMissingAuditWriter]) for each missing required
 // dependency. Optional fields default to host-platform helpers.
 //
-//nolint:cyclop,gocyclo // sequential dependency wiring; complexity is structural
+//nolint:cyclop,gocyclo,gocognit // sequential dependency wiring; complexity is structural
 func New(deps Deps) (*Server, error) {
 	if err := validateDeps(deps); err != nil {
 		return nil, err

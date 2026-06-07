@@ -15,6 +15,8 @@ import (
 //
 //nolint:gochecknoglobals // OS bridge; test-hookable for clock_sync coverage
 var execClockOffset = func(ctx context.Context, provider string, timeout time.Duration) (string, error) {
+	// #nosec G204 -- provider comes from the fixed default provider list or a
+	// test override; the argv vector is fixed and never shell-interpreted.
 	cmd := exec.CommandContext(ctx, "sntp", "-t", fmt.Sprintf("%.0f", timeout.Seconds()), provider)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -27,6 +29,8 @@ var execClockOffset = func(ctx context.Context, provider string, timeout time.Du
 // darwin. It performs a read-only NTP offset probe against an ordered provider
 // list, which works without administrator privileges. Drift is parsed from
 // sntp's leading signed seconds value, e.g. `+0.029191 +/- ...`.
+//
+//nolint:gocognit // Provider fallback is deliberately linear and explicit.
 func DefaultClockSyncProbe(ctx context.Context) (bool, time.Duration, error) {
 	errs := make([]error, 0, len(DefaultClockSyncProviders))
 	for _, provider := range DefaultClockSyncProviders {
@@ -51,7 +55,7 @@ func DefaultClockSyncProbe(ctx context.Context) (bool, time.Duration, error) {
 		return true, drift, nil
 	}
 	if len(errs) == 0 {
-		errs = append(errs, errors.New("no clock-sync providers configured"))
+		errs = append(errs, ErrClockProbeNoProviders)
 	}
 	return false, 0, fmt.Errorf("server: clock_sync: sntp: %w: %w", ErrClockProbeUnavailable, errors.Join(errs...))
 }
