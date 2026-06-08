@@ -101,21 +101,38 @@ func TestStartupChecks_HappyPath(t *testing.T) {
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		time.Sleep(100 * time.Millisecond)
-		cancel()
-	}()
-	if err := srv.Run(ctx); err != nil {
+	t.Cleanup(cancel)
+	runDone := make(chan error, 1)
+	go func() { runDone <- srv.Run(ctx) }()
+
+	// Cancel only after the chassis reports it has finished startup checks
+	// and bound its listener (the status=ok start audit). A fixed timer here
+	// would race the real Tailscale startup checks: under load they can run
+	// past the timeout, cancelling ctx mid-startup so Run returns
+	// context.Canceled instead of a clean nil.
+	startHits := func() int {
+		hits := 0
+		for _, e := range audit.snapshot() {
+			if e.Type == AuditServerStart && e.Detail["status"] == "ok" {
+				hits++
+			}
+		}
+		return hits
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for startHits() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("server did not emit AuditServerStart status=ok in time")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	cancel()
+	if err := <-runDone; err != nil {
 		t.Fatalf("Run err=%v", err)
 	}
 
-	hits := 0
-	for _, e := range audit.snapshot() {
-		if e.Type == AuditServerStart && e.Detail["status"] == "ok" {
-			hits++
-		}
-	}
-	if hits != 1 {
+	if hits := startHits(); hits != 1 {
 		t.Fatalf("AuditServerStart status=ok count=%d, want 1", hits)
 	}
 }
