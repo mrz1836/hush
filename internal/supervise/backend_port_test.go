@@ -15,7 +15,6 @@ import (
 // to the child, the child binds it. A port the kernel cannot hand back
 // would silently route proxy traffic to a dead backend.
 func TestAllocateBackendPort_BindableLoopback(t *testing.T) {
-	t.Parallel()
 	port, err := supervise.AllocateBackendPort(context.Background())
 	if err != nil {
 		t.Fatalf("AllocateBackendPort: %v", err)
@@ -49,7 +48,6 @@ func TestAllocateBackendPort_BindableLoopback(t *testing.T) {
 // allocations should not collide because the first listener is still
 // open while the second runs.
 func TestAllocateBackendPort_Distinct(t *testing.T) {
-	t.Parallel()
 	// Hold the first listener open across the second allocation so the
 	// kernel cannot hand back the same port. We mirror what
 	// AllocateBackendPort does internally — bind 127.0.0.1:0 — then call
