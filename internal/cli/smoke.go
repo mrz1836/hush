@@ -7,13 +7,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -28,6 +32,7 @@ var (
 	errSmokeServerNotStop   = errors.New("hush: smoke: temporary server did not stop cleanly")
 	errSmokeServerEarlyExit = errors.New("hush: smoke: temporary server exited before health check")
 	errSmokeServerTimeout   = errors.New("hush: smoke: timed out waiting for temporary server health")
+	errSmokeProductionAddr  = errors.New("hush: smoke: listen address is the production hush address")
 )
 
 const (
@@ -54,6 +59,7 @@ const (
 	smokeMsgSuccess           = "hush: smoke: success — %s=%s"
 	smokeMsgArchivedStateDir  = "hush: smoke: archived existing state dir to %s"
 	smokeMsgResetKeychain     = "hush: smoke: reset isolated smoke Keychain item"
+	smokeMsgListenAutoPicked  = "hush: smoke: requested listen address %s is busy; using %s"
 	smokeMsgCleanKeychain     = "hush: smoke clean: deleted isolated smoke Keychain item"
 	smokeMsgCleanArchivedFmt  = "hush: smoke clean: archived %s to %s"
 	smokeMsgCleanDestroyedFmt = "hush: smoke clean: destroyed %s"
@@ -196,6 +202,17 @@ func runSmoke(ctx context.Context, stdout, stderr *Stream, in *os.File, deps smo
 			return err
 		}
 	}
+	if err := refuseProductionSmokeAddr(ctx, deps, opts); err != nil {
+		return err
+	}
+	listenAddr, autoPicked, err := chooseSmokeListenAddr(opts.listenAddr)
+	if err != nil {
+		return err
+	}
+	if autoPicked {
+		_ = stderr.WriteText(smokeMsgListenAutoPicked, opts.listenAddr, listenAddr)
+		opts.listenAddr = listenAddr
+	}
 	if opts.ownerID == "" {
 		opts.ownerID, err = promptRequired(deps.promptLine, in, stderr.w, promptOwnerID, "discord_owner_id")
 		if err != nil {
@@ -318,6 +335,92 @@ func runSmoke(ctx context.Context, stdout, stderr *Stream, in *os.File, deps smo
 		return errSmokeServerNotStop
 	}
 	return nil
+}
+
+func refuseProductionSmokeAddr(ctx context.Context, deps smokeDeps, opts smokeOptions) error {
+	configPath := strings.TrimSpace(opts.configPath)
+	if configPath == "" {
+		configPath = defaultConfigPath()
+	}
+	expanded, err := expandTilde(configPath)
+	if err != nil {
+		return nil
+	}
+	cfg, err := deps.configLoader(ctx, expanded)
+	if err != nil {
+		return nil
+	}
+	if !smokeListenAddrMatchesProduction(cfg.Server.ListenAddr, opts.listenAddr) {
+		return nil
+	}
+	return fmt.Errorf("%w: %s is the live hush address; pick a free port or omit --listen-addr to auto-pick",
+		errSmokeProductionAddr, opts.listenAddr)
+}
+
+func chooseSmokeListenAddr(requested string) (string, bool, error) {
+	listener, err := net.Listen("tcp", requested) //nolint:gosec // local preflight bind for operator-supplied smoke address
+	if err == nil {
+		_ = listener.Close()
+		return requested, false, nil
+	}
+	if !isAddrInUse(err) {
+		return requested, false, nil
+	}
+	chosen, pickErr := pickFreeSmokeListenAddr(requested)
+	if pickErr != nil {
+		return "", false, pickErr
+	}
+	return chosen, true, nil
+}
+
+func pickFreeSmokeListenAddr(requested string) (string, error) {
+	host, _, err := net.SplitHostPort(requested)
+	if err != nil {
+		if ap, parseErr := netip.ParseAddrPort(requested); parseErr == nil {
+			host = ap.Addr().String()
+		} else {
+			return "", err
+		}
+	}
+	// This local smoke preflight necessarily closes the reserved port before
+	// the server binds it; if another process wins the race, serve returns a
+	// normal bind error.
+	listener, err := net.Listen("tcp", net.JoinHostPort(host, "0")) //nolint:gosec // local free-port discovery
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = listener.Close() }()
+	return listener.Addr().String(), nil
+}
+
+func isAddrInUse(err error) bool {
+	return errors.Is(err, syscall.EADDRINUSE) || strings.Contains(strings.ToLower(err.Error()), "address already in use")
+}
+
+func smokeListenAddrMatchesProduction(production netip.AddrPort, requested string) bool {
+	requested = strings.TrimSpace(requested)
+	if requested == "" {
+		return false
+	}
+	if ap, err := netip.ParseAddrPort(requested); err == nil {
+		return ap == production
+	}
+	host, portRaw, err := net.SplitHostPort(requested)
+	if err != nil {
+		return false
+	}
+	port, err := strconv.ParseUint(portRaw, 10, 16)
+	if err != nil || production.Port() != uint16(port) {
+		return false
+	}
+	if host == "" {
+		return true
+	}
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	return addr.IsUnspecified() || addr == production.Addr()
 }
 
 func smokeInitServer(ctx context.Context, stderr *Stream, in *os.File, deps smokeDeps, opts smokeOptions, stateDir string, passphrase, botToken *securebytes.SecureBytes) error {

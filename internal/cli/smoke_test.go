@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -217,6 +218,61 @@ func TestRunSmoke_ResetDeletesSmokeKeychainAcrossConsecutiveRuns(t *testing.T) {
 	require.NoError(t, prodToken.Use(func(b []byte) {
 		require.Equal(t, "production-token", string(b))
 	}))
+}
+
+func TestRunSmoke_RefusesProductionListenAddr(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	prodDir := filepath.Join(home, ".hush")
+	prodAddr := "100.96.10.4:47744"
+	require.NoError(t, os.MkdirAll(prodDir, 0o700))
+	writeSmokeProofConfig(t, prodDir, prodAddr, "prodxx")
+
+	stateDir := filepath.Join(t.TempDir(), "hush-smoke")
+	kc := keychain.NewFake()
+	t.Cleanup(kc.Destroy)
+	deps := smokeTestDeps(t, stateDir, kc)
+	deps.initDepsFactory = func() (*initDeps, error) {
+		return nil, errors.New("init must not run")
+	}
+
+	err := runSmoke(t.Context(), newStream(io.Discard, false, true), newStream(io.Discard, false, true), dummyTTY(t), deps, smokeOptions{
+		stateDir:          stateDir,
+		listenAddr:        ":47744",
+		ownerID:           testOwnerIDInput,
+		applicationID:     testApplicationIDIn,
+		approvalChannelID: "1505706794406772897",
+		machineIndex:      1,
+	})
+	require.ErrorIs(t, err, errSmokeProductionAddr)
+	require.Contains(t, err.Error(), "omit --listen-addr to auto-pick")
+}
+
+func TestRefuseProductionSmokeAddr_AllowsAbsentProductionConfig(t *testing.T) {
+	t.Parallel()
+	deps := productionSmokeDeps()
+	err := refuseProductionSmokeAddr(t.Context(), deps, smokeOptions{
+		listenAddr: ":47744",
+		configPath: filepath.Join(t.TempDir(), "missing-config.toml"),
+	})
+	require.NoError(t, err)
+}
+
+func TestChooseSmokeListenAddr_AutoPicksFreePortWhenRequestedAddrBusy(t *testing.T) {
+	t.Parallel()
+	busy, err := net.Listen("tcp", "127.0.0.1:0") //nolint:gosec // local test listener
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = busy.Close() })
+	requested := busy.Addr().String()
+
+	chosen, autoPicked, err := chooseSmokeListenAddr(requested)
+	require.NoError(t, err)
+	require.True(t, autoPicked)
+	require.NotEqual(t, requested, chosen)
+	ap, err := netip.ParseAddrPort(chosen)
+	require.NoError(t, err)
+	require.Equal(t, netip.MustParseAddr("127.0.0.1"), ap.Addr())
+	require.NotZero(t, ap.Port())
 }
 
 func TestSmokeInitServer_StrictClockDisablesProbeFailureWarn(t *testing.T) {
