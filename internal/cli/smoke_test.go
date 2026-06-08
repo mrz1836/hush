@@ -149,6 +149,76 @@ func TestRunSmoke_OrchestratesFakeSecretPath(t *testing.T) {
 	require.Equal(t, smokeSecretName, secrets[0].Name)
 }
 
+func TestRunSmoke_ResetDeletesSmokeKeychainAcrossConsecutiveRuns(t *testing.T) {
+	t.Parallel()
+	stateDir := filepath.Join(t.TempDir(), "hush-smoke")
+	kc := keychain.NewFake()
+	t.Cleanup(kc.Destroy)
+	mustStoreKeychainValue(t, kc, smokeBotTokenKeychainItem, smokeBotTokenKeychainAccount, "stale-smoke-token")
+	mustStoreKeychainValue(t, kc, config.DefaultBotTokenKeychainItem, kcAccountServer, "production-token")
+
+	health := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/h/testprefix/hz" {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(health.Close)
+
+	deps := smokeTestDeps(t, stateDir, kc)
+	deps.promptSecret = scriptedSecretReader(t, []string{
+		testGoodPassphrase, testGoodPassphrase, testBotTokenInput,
+		testGoodPassphrase, testGoodPassphrase, testBotTokenInput,
+	})
+	deps.configLoader = func(ctx context.Context, path string) (*config.Server, error) {
+		cfg, err := config.LoadServer(ctx, path)
+		if err != nil {
+			return nil, err
+		}
+		cfg.Server.ListenAddr = mustAddrPortFromURL(t, health.URL)
+		cfg.Server.PathPrefix = "testprefix"
+		return cfg, nil
+	}
+	deps.serveRunner = func(ctx context.Context, _, _ *Stream, _ serveDeps) error {
+		<-ctx.Done()
+		return nil
+	}
+	requestCalls := 0
+	deps.requestRunner = func(_ context.Context, stdout, _ *Stream, _ requestDeps, _ requestFlags) error {
+		requestCalls++
+		return stdout.WriteText("export %s='%s'", smokeSecretName, smokeSecretValue)
+	}
+
+	opts := smokeOptions{
+		stateDir:          stateDir,
+		listenAddr:        testListenAddrInput,
+		ownerID:           testOwnerIDInput,
+		applicationID:     testApplicationIDIn,
+		approvalChannelID: "1505706794406772897",
+		machineIndex:      1,
+		reset:             true,
+	}
+	err := runSmoke(t.Context(), newStream(io.Discard, false, true), newStream(io.Discard, false, true), dummyTTY(t), deps, opts)
+	require.NoError(t, err)
+	err = runSmoke(t.Context(), newStream(io.Discard, false, true), newStream(io.Discard, false, true), dummyTTY(t), deps, opts)
+	require.NoError(t, err)
+	require.Equal(t, 2, requestCalls)
+
+	smokeToken, err := kc.Retrieve(context.Background(), smokeBotTokenKeychainItem, smokeBotTokenKeychainAccount)
+	require.NoError(t, err)
+	defer smokeToken.Destroy()
+	require.NoError(t, smokeToken.Use(func(b []byte) {
+		require.Equal(t, testBotTokenInput, string(b))
+	}))
+	prodToken, err := kc.Retrieve(context.Background(), config.DefaultBotTokenKeychainItem, kcAccountServer)
+	require.NoError(t, err)
+	defer prodToken.Destroy()
+	require.NoError(t, prodToken.Use(func(b []byte) {
+		require.Equal(t, "production-token", string(b))
+	}))
+}
+
 func TestSmokeInitServer_StrictClockDisablesProbeFailureWarn(t *testing.T) {
 	t.Parallel()
 	stateDir := filepath.Join(t.TempDir(), "hush-smoke")
@@ -320,6 +390,22 @@ func (failOnUseKeychain) Delete(context.Context, string, string) error {
 	return errors.New("keychain delete must not run")
 }
 
+func mustStoreKeychainValue(t *testing.T, kc *keychain.FakeKeychain, service, account, value string) {
+	t.Helper()
+	sb, err := securebytes.New([]byte(value))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sb.Destroy() })
+	require.NoError(t, kc.Store(context.Background(), service, account, sb, "/test/acl"))
+}
+
+func smokeCleanTestDeps(kc keychain.Keychain) smokeDeps {
+	deps := productionSmokeDeps()
+	deps.keychainFactory = func() (keychain.Keychain, error) {
+		return nonDestroyingKeychain{Keychain: kc}, nil
+	}
+	return deps
+}
+
 func writeSmokeClientKeyFile(t *testing.T, path string, priv *ecdsa.PrivateKey) {
 	t.Helper()
 	scalar := make([]byte, 32)
@@ -387,10 +473,12 @@ func TestSmokeClean_ArchivesDefaultSmokeDirOnly(t *testing.T) {
 	t.Setenv("HOME", home)
 	require.NoError(t, os.Mkdir(filepath.Join(home, ".hush-smoke"), 0o700))
 	require.NoError(t, os.Mkdir(filepath.Join(home, ".hush-release-validation"), 0o700))
-	deps := productionSmokeDeps()
+	kc := keychain.NewFake()
+	t.Cleanup(kc.Destroy)
+	deps := smokeCleanTestDeps(kc)
 	deps.nowFn = func() time.Time { return time.Date(2026, 5, 18, 14, 0, 0, 0, time.UTC) }
 	stderr := &strings.Builder{}
-	err := runSmokeClean(newStream(io.Discard, false, true), newStream(stderr, false, true), deps, smokeCleanOptions{})
+	err := runSmokeClean(t.Context(), newStream(io.Discard, false, true), newStream(stderr, false, true), deps, smokeCleanOptions{})
 	require.NoError(t, err)
 	require.NoDirExists(t, filepath.Join(home, ".hush-smoke"))
 	require.DirExists(t, filepath.Join(home, ".hush-smoke.bak-20260518-140000"))
@@ -402,9 +490,11 @@ func TestSmokeClean_ArchivesExplicitGenericTestDir(t *testing.T) {
 	t.Parallel()
 	dir := filepath.Join(t.TempDir(), ".hush-release-validation")
 	require.NoError(t, os.Mkdir(dir, 0o700))
-	deps := productionSmokeDeps()
+	kc := keychain.NewFake()
+	t.Cleanup(kc.Destroy)
+	deps := smokeCleanTestDeps(kc)
 	deps.nowFn = func() time.Time { return time.Date(2026, 5, 18, 14, 0, 0, 0, time.UTC) }
-	err := runSmokeClean(newStream(io.Discard, false, true), newStream(io.Discard, false, true), deps, smokeCleanOptions{
+	err := runSmokeClean(t.Context(), newStream(io.Discard, false, true), newStream(io.Discard, false, true), deps, smokeCleanOptions{
 		stateDirs: []string{dir},
 	})
 	require.NoError(t, err)
@@ -416,15 +506,17 @@ func TestSmokeClean_DestroyRequiresConfirmation(t *testing.T) {
 	t.Parallel()
 	dir := filepath.Join(t.TempDir(), ".hush-smoke")
 	require.NoError(t, os.Mkdir(dir, 0o700))
-	deps := productionSmokeDeps()
-	err := runSmokeClean(newStream(io.Discard, false, true), newStream(io.Discard, false, true), deps, smokeCleanOptions{
+	kc := keychain.NewFake()
+	t.Cleanup(kc.Destroy)
+	deps := smokeCleanTestDeps(kc)
+	err := runSmokeClean(t.Context(), newStream(io.Discard, false, true), newStream(io.Discard, false, true), deps, smokeCleanOptions{
 		stateDirs: []string{dir},
 		destroy:   true,
 	})
 	require.Error(t, err)
 	require.DirExists(t, dir)
 
-	err = runSmokeClean(newStream(io.Discard, false, true), newStream(io.Discard, false, true), deps, smokeCleanOptions{
+	err = runSmokeClean(t.Context(), newStream(io.Discard, false, true), newStream(io.Discard, false, true), deps, smokeCleanOptions{
 		stateDirs: []string{dir},
 		destroy:   true,
 		confirm:   "destroy smoke",
@@ -435,9 +527,51 @@ func TestSmokeClean_DestroyRequiresConfirmation(t *testing.T) {
 
 func TestSmokeClean_RefusesRealHushState(t *testing.T) {
 	t.Parallel()
-	err := runSmokeClean(newStream(io.Discard, false, true), newStream(io.Discard, false, true), productionSmokeDeps(), smokeCleanOptions{
+	kc := keychain.NewFake()
+	t.Cleanup(kc.Destroy)
+	err := runSmokeClean(t.Context(), newStream(io.Discard, false, true), newStream(io.Discard, false, true), smokeCleanTestDeps(kc), smokeCleanOptions{
 		stateDirs: []string{"~/.hush"},
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "refuses non-smoke")
+}
+
+func TestSmokeClean_DeletesSmokeKeychainAndLeavesProductionItem(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), ".hush-smoke")
+	require.NoError(t, os.Mkdir(dir, 0o700))
+	kc := keychain.NewFake()
+	t.Cleanup(kc.Destroy)
+	mustStoreKeychainValue(t, kc, smokeBotTokenKeychainItem, smokeBotTokenKeychainAccount, "smoke-token")
+	mustStoreKeychainValue(t, kc, config.DefaultBotTokenKeychainItem, kcAccountServer, "production-token")
+	deps := smokeCleanTestDeps(kc)
+
+	err := runSmokeClean(t.Context(), newStream(io.Discard, false, true), newStream(io.Discard, false, true), deps, smokeCleanOptions{
+		stateDirs: []string{dir},
+	})
+	require.NoError(t, err)
+	_, err = kc.Retrieve(context.Background(), smokeBotTokenKeychainItem, smokeBotTokenKeychainAccount)
+	require.ErrorIs(t, err, keychain.ErrKeychainItemNotFound)
+	prodToken, err := kc.Retrieve(context.Background(), config.DefaultBotTokenKeychainItem, kcAccountServer)
+	require.NoError(t, err)
+	defer prodToken.Destroy()
+	require.NoError(t, prodToken.Use(func(b []byte) {
+		require.Equal(t, "production-token", string(b))
+	}))
+}
+
+func TestSmokeClean_KeychainAbsentIsNoop(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), ".hush-smoke")
+	require.NoError(t, os.Mkdir(dir, 0o700))
+	kc := keychain.NewFake()
+	t.Cleanup(kc.Destroy)
+
+	err := runSmokeClean(t.Context(), newStream(io.Discard, false, true), newStream(io.Discard, false, true), smokeCleanTestDeps(kc), smokeCleanOptions{
+		stateDirs: []string{dir},
+		destroy:   true,
+		confirm:   "destroy smoke",
+	})
+	require.NoError(t, err)
+	require.NoDirExists(t, dir)
 }

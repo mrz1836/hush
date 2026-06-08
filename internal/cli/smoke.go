@@ -53,6 +53,8 @@ const (
 	smokeMsgApprove           = "hush: smoke: approve the %s request in Discord now"
 	smokeMsgSuccess           = "hush: smoke: success — %s=%s"
 	smokeMsgArchivedStateDir  = "hush: smoke: archived existing state dir to %s"
+	smokeMsgResetKeychain     = "hush: smoke: reset isolated smoke Keychain item"
+	smokeMsgCleanKeychain     = "hush: smoke clean: deleted isolated smoke Keychain item"
 	smokeMsgCleanArchivedFmt  = "hush: smoke clean: archived %s to %s"
 	smokeMsgCleanDestroyedFmt = "hush: smoke clean: destroyed %s"
 	smokeMsgCleanAbsentFmt    = "hush: smoke clean: absent %s"
@@ -162,6 +164,10 @@ func runSmoke(ctx context.Context, stdout, stderr *Stream, in *os.File, deps smo
 		if archived != "" {
 			_ = stderr.WriteText(smokeMsgArchivedStateDir, archived)
 		}
+		if deleteErr := deleteSmokeKeychainItem(ctx, deps); deleteErr != nil {
+			return deleteErr
+		}
+		_ = stderr.WriteText(smokeMsgResetKeychain)
 	}
 
 	passphrase, err := promptAndConfirmSecret(in, stderr.w, deps.promptSecret, promptVaultPassphrase, promptConfirmVault)
@@ -498,7 +504,7 @@ func newSmokeCleanCmd() *cobra.Command {
 		Short: "Archive or destroy isolated smoke-test state",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := outputFromCmd(cmd)
-			return runSmokeClean(out.stdout, out.stderr, productionSmokeDeps(), opts)
+			return runSmokeClean(cmd.Context(), out.stdout, out.stderr, productionSmokeDeps(), opts)
 		},
 	}
 	cmd.Flags().StringArrayVar(&opts.stateDirs, "state-dir", nil, "Smoke/test state dir to clean; repeatable (defaults to ~/.hush-smoke only)")
@@ -508,7 +514,7 @@ func newSmokeCleanCmd() *cobra.Command {
 }
 
 //nolint:gocognit,gocyclo // per-target cleanup loop branches on archive/destroy/missing
-func runSmokeClean(_, stderr *Stream, deps smokeDeps, opts smokeCleanOptions) error {
+func runSmokeClean(ctx context.Context, _ *Stream, stderr *Stream, deps smokeDeps, opts smokeCleanOptions) error {
 	targets := opts.stateDirs
 	if len(targets) == 0 {
 		targets = []string{defaultSmokeStateDir}
@@ -516,6 +522,7 @@ func runSmokeClean(_, stderr *Stream, deps smokeDeps, opts smokeCleanOptions) er
 	if opts.destroy && opts.confirm != "destroy smoke" {
 		return fmt.Errorf("%w: --destroy requires --confirm 'destroy smoke'", errMissingFlag)
 	}
+	expandedTargets := make([]string, 0, len(targets))
 	for _, raw := range targets {
 		path, expandErr := expandTilde(raw)
 		if expandErr != nil {
@@ -524,6 +531,13 @@ func runSmokeClean(_, stderr *Stream, deps smokeDeps, opts smokeCleanOptions) er
 		if validateErr := validateSmokeCleanTarget(path); validateErr != nil {
 			return validateErr
 		}
+		expandedTargets = append(expandedTargets, path)
+	}
+	if deleteErr := deleteSmokeKeychainItem(ctx, deps); deleteErr != nil {
+		return deleteErr
+	}
+	_ = stderr.WriteText(smokeMsgCleanKeychain)
+	for _, path := range expandedTargets {
 		if _, statErr := os.Stat(path); statErr != nil {
 			if os.IsNotExist(statErr) {
 				_ = stderr.WriteText(smokeMsgCleanAbsentFmt, path)
@@ -547,6 +561,17 @@ func runSmokeClean(_, stderr *Stream, deps smokeDeps, opts smokeCleanOptions) er
 		}
 	}
 	return nil
+}
+
+func deleteSmokeKeychainItem(ctx context.Context, deps smokeDeps) error {
+	kc, err := deps.keychainFactory()
+	if err != nil {
+		return err
+	}
+	if destroyer, ok := kc.(interface{ Destroy() }); ok {
+		defer destroyer.Destroy()
+	}
+	return deleteKeychainItem(ctx, kc, smokeBotTokenKeychainItem, smokeBotTokenKeychainAccount)
 }
 
 func validateSmokeCleanTarget(path string) error {
