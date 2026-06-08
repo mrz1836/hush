@@ -139,6 +139,14 @@ func TestNew_DefaultsApplied(t *testing.T) {
 	}
 }
 
+func TestDefaultWriteTimeoutExceedsClaimApprovalTimeout(t *testing.T) {
+	t.Parallel()
+
+	if DefaultWriteTimeout <= config.DefaultClaimApprovalTimeout {
+		t.Fatalf("DefaultWriteTimeout = %s, must exceed ClaimApprovalTimeout = %s", DefaultWriteTimeout, config.DefaultClaimApprovalTimeout)
+	}
+}
+
 // TestRun_AlreadyRun asserts that calling Run twice on the same Server
 // returns ErrAlreadyRun.
 func TestRun_AlreadyRun(t *testing.T) {
