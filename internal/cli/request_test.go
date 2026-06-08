@@ -774,6 +774,119 @@ func TestRequest_ClaimSignaturePayloadCanonical(t *testing.T) {
 	}
 }
 
+type serverClaimSignedPayloadForTest struct {
+	AgentIdentity   string   `json:"agent_identity,omitempty"`
+	AgentModel      string   `json:"agent_model,omitempty"`
+	CommandPreview  string   `json:"command_preview,omitempty"`
+	EphemeralPubKey string   `json:"ephemeral_pubkey"`
+	ForceApproval   bool     `json:"force_approval,omitempty"`
+	MachineName     string   `json:"machine_name"`
+	Nonce           string   `json:"nonce"`
+	Reason          string   `json:"reason"`
+	RecentSummary   string   `json:"recent_summary,omitempty"`
+	RequestID       string   `json:"request_id"`
+	Scope           []string `json:"scope"`
+	SessionType     string   `json:"session_type"`
+	SupervisorName  string   `json:"supervisor_name,omitempty"`
+	Timestamp       string   `json:"timestamp"`
+	ToolName        string   `json:"tool_name,omitempty"`
+	TTL             string   `json:"ttl"`
+}
+
+func serverClaimSignedPayloadFromWireForTest(req claimWireRequest) serverClaimSignedPayloadForTest {
+	return serverClaimSignedPayloadForTest{
+		AgentIdentity:   req.AgentIdentity,
+		AgentModel:      req.AgentModel,
+		CommandPreview:  req.CommandPreview,
+		EphemeralPubKey: req.EphemeralPubKey,
+		ForceApproval:   req.ForceApproval,
+		MachineName:     req.MachineName,
+		Nonce:           req.Nonce,
+		Reason:          req.Reason,
+		RecentSummary:   req.RecentSummary,
+		RequestID:       req.RequestID,
+		Scope:           req.Scope,
+		SessionType:     req.SessionType,
+		SupervisorName:  req.SupervisorName,
+		Timestamp:       req.Timestamp,
+		ToolName:        req.ToolName,
+		TTL:             req.TTL,
+	}
+}
+
+func TestRequest_ClaimSignatureVerifiesWithServerCanonicalPayloadIncludingForceApproval(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name          string
+		forceApproval bool
+		wantCanonical string
+	}{
+		{name: "ordinary_interactive", forceApproval: false, wantCanonical: `"force_approval":false`},
+		{name: "forced_approval", forceApproval: true, wantCanonical: `"force_approval":true`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assertClaimVerifiesWithServerCanonical(t, tc.forceApproval, tc.wantCanonical)
+		})
+	}
+}
+
+// assertClaimVerifiesWithServerCanonical signs a claim with the given
+// force-approval flag and confirms the server-shaped canonical payload both
+// carries the expected force_approval marker and verifies under the client key.
+func assertClaimVerifiesWithServerCanonical(t *testing.T, forceApproval bool, wantCanonical string) {
+	t.Helper()
+
+	clientKey := makeClientKey(t)
+	ephKey, err := generateEphemeralKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generateEphemeralKey: %v", err)
+	}
+	payload := claimSignedPayload{
+		AgentIdentity:   "agent-a",
+		AgentModel:      "model-a",
+		CommandPreview:  "printenv SCOPE_A",
+		EphemeralPubKey: compressedEphemeralPubHex(ephKey),
+		ForceApproval:   forceApproval,
+		MachineName:     "test-host",
+		Nonce:           freshNonceTest(),
+		Reason:          "test reason",
+		RecentSummary:   "recent context",
+		RequestID:       "rq_" + freshNonceTest(),
+		Scope:           []string{"SCOPE_A"},
+		SessionType:     "interactive",
+		Timestamp:       time.Date(2026, 6, 8, 13, 30, 0, 0, time.UTC).Format(time.RFC3339Nano),
+		ToolName:        "smoke",
+		TTL:             (5 * time.Minute).String(),
+	}
+
+	wire, err := signAndWrapClaim(t.Context(), clientKey, payload)
+	if err != nil {
+		t.Fatalf("signAndWrapClaim: %v", err)
+	}
+	if wire.ForceApproval != forceApproval {
+		t.Fatalf("wire ForceApproval=%v want %v", wire.ForceApproval, forceApproval)
+	}
+
+	serverPayload := serverClaimSignedPayloadFromWireForTest(wire)
+	canonical, err := sign.CanonicalJSON(serverPayload)
+	if err != nil {
+		t.Fatalf("server CanonicalJSON: %v", err)
+	}
+	if !bytes.Contains(canonical, []byte(wantCanonical)) {
+		t.Fatalf("canonical payload %s missing %s", canonical, wantCanonical)
+	}
+
+	sigBytes, err := base64.StdEncoding.DecodeString(wire.Signature)
+	if err != nil {
+		t.Fatalf("decode signature: %v", err)
+	}
+	if err := sign.Verify(t.Context(), &clientKey.PublicKey, canonical, sigBytes); err != nil {
+		t.Fatalf("server-shaped canonical payload did not verify: %v", err)
+	}
+}
+
 func TestRequest_EphemeralPubKeyHexFormat(t *testing.T) {
 	r := newRequestRunner(t)
 	r.arrangeSuccessFor(map[string][]byte{"SCOPE_A": []byte("v")})

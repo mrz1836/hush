@@ -7,13 +7,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -28,6 +32,7 @@ var (
 	errSmokeServerNotStop   = errors.New("hush: smoke: temporary server did not stop cleanly")
 	errSmokeServerEarlyExit = errors.New("hush: smoke: temporary server exited before health check")
 	errSmokeServerTimeout   = errors.New("hush: smoke: timed out waiting for temporary server health")
+	errSmokeProductionAddr  = errors.New("hush: smoke: listen address is the production hush address")
 )
 
 const (
@@ -53,6 +58,9 @@ const (
 	smokeMsgApprove           = "hush: smoke: approve the %s request in Discord now"
 	smokeMsgSuccess           = "hush: smoke: success — %s=%s"
 	smokeMsgArchivedStateDir  = "hush: smoke: archived existing state dir to %s"
+	smokeMsgResetKeychain     = "hush: smoke: reset isolated smoke Keychain item"
+	smokeMsgListenAutoPicked  = "hush: smoke: requested listen address %s is busy; using %s"
+	smokeMsgCleanKeychain     = "hush: smoke clean: deleted isolated smoke Keychain item"
 	smokeMsgCleanArchivedFmt  = "hush: smoke clean: archived %s to %s"
 	smokeMsgCleanDestroyedFmt = "hush: smoke clean: destroyed %s"
 	smokeMsgCleanAbsentFmt    = "hush: smoke clean: absent %s"
@@ -162,6 +170,10 @@ func runSmoke(ctx context.Context, stdout, stderr *Stream, in *os.File, deps smo
 		if archived != "" {
 			_ = stderr.WriteText(smokeMsgArchivedStateDir, archived)
 		}
+		if deleteErr := deleteSmokeKeychainItem(ctx, deps); deleteErr != nil {
+			return deleteErr
+		}
+		_ = stderr.WriteText(smokeMsgResetKeychain)
 	}
 
 	passphrase, err := promptAndConfirmSecret(in, stderr.w, deps.promptSecret, promptVaultPassphrase, promptConfirmVault)
@@ -189,6 +201,17 @@ func runSmoke(ctx context.Context, stdout, stderr *Stream, in *os.File, deps smo
 		if err != nil {
 			return err
 		}
+	}
+	if err = refuseProductionSmokeAddr(ctx, deps, opts); err != nil {
+		return err
+	}
+	listenAddr, autoPicked, err := chooseSmokeListenAddr(ctx, opts.listenAddr)
+	if err != nil {
+		return err
+	}
+	if autoPicked {
+		_ = stderr.WriteText(smokeMsgListenAutoPicked, opts.listenAddr, listenAddr)
+		opts.listenAddr = listenAddr
 	}
 	if opts.ownerID == "" {
 		opts.ownerID, err = promptRequired(deps.promptLine, in, stderr.w, promptOwnerID, "discord_owner_id")
@@ -312,6 +335,94 @@ func runSmoke(ctx context.Context, stdout, stderr *Stream, in *os.File, deps smo
 		return errSmokeServerNotStop
 	}
 	return nil
+}
+
+func refuseProductionSmokeAddr(ctx context.Context, deps smokeDeps, opts smokeOptions) error {
+	configPath := strings.TrimSpace(opts.configPath)
+	if configPath == "" {
+		configPath = defaultConfigPath()
+	}
+	expanded, err := expandTilde(configPath)
+	if err != nil {
+		return nil //nolint:nilerr // no resolvable production config means nothing to collide with
+	}
+	cfg, err := deps.configLoader(ctx, expanded)
+	if err != nil {
+		return nil //nolint:nilerr // absent/unreadable production config means nothing to collide with
+	}
+	if !smokeListenAddrMatchesProduction(cfg.Server.ListenAddr, opts.listenAddr) {
+		return nil
+	}
+	return fmt.Errorf("%w: %s is the live hush address; pick a free port or omit --listen-addr to auto-pick",
+		errSmokeProductionAddr, opts.listenAddr)
+}
+
+func chooseSmokeListenAddr(ctx context.Context, requested string) (string, bool, error) {
+	var lc net.ListenConfig
+	listener, err := lc.Listen(ctx, "tcp", requested)
+	if err == nil {
+		_ = listener.Close()
+		return requested, false, nil
+	}
+	if !isAddrInUse(err) {
+		return requested, false, nil
+	}
+	chosen, pickErr := pickFreeSmokeListenAddr(ctx, requested)
+	if pickErr != nil {
+		return "", false, pickErr
+	}
+	return chosen, true, nil
+}
+
+func pickFreeSmokeListenAddr(ctx context.Context, requested string) (string, error) {
+	host, _, err := net.SplitHostPort(requested)
+	if err != nil {
+		if ap, parseErr := netip.ParseAddrPort(requested); parseErr == nil {
+			host = ap.Addr().String()
+		} else {
+			return "", err
+		}
+	}
+	// This local smoke preflight necessarily closes the reserved port before
+	// the server binds it; if another process wins the race, serve returns a
+	// normal bind error.
+	var lc net.ListenConfig
+	listener, err := lc.Listen(ctx, "tcp", net.JoinHostPort(host, "0"))
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = listener.Close() }()
+	return listener.Addr().String(), nil
+}
+
+func isAddrInUse(err error) bool {
+	return errors.Is(err, syscall.EADDRINUSE) || strings.Contains(strings.ToLower(err.Error()), "address already in use")
+}
+
+func smokeListenAddrMatchesProduction(production netip.AddrPort, requested string) bool {
+	requested = strings.TrimSpace(requested)
+	if requested == "" {
+		return false
+	}
+	if ap, err := netip.ParseAddrPort(requested); err == nil {
+		return ap == production
+	}
+	host, portRaw, err := net.SplitHostPort(requested)
+	if err != nil {
+		return false
+	}
+	port, err := strconv.ParseUint(portRaw, 10, 16)
+	if err != nil || production.Port() != uint16(port) {
+		return false
+	}
+	if host == "" {
+		return true
+	}
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	return addr.IsUnspecified() || addr == production.Addr()
 }
 
 func smokeInitServer(ctx context.Context, stderr *Stream, in *os.File, deps smokeDeps, opts smokeOptions, stateDir string, passphrase, botToken *securebytes.SecureBytes) error {
@@ -498,7 +609,7 @@ func newSmokeCleanCmd() *cobra.Command {
 		Short: "Archive or destroy isolated smoke-test state",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := outputFromCmd(cmd)
-			return runSmokeClean(out.stdout, out.stderr, productionSmokeDeps(), opts)
+			return runSmokeClean(cmd.Context(), out.stdout, out.stderr, productionSmokeDeps(), opts)
 		},
 	}
 	cmd.Flags().StringArrayVar(&opts.stateDirs, "state-dir", nil, "Smoke/test state dir to clean; repeatable (defaults to ~/.hush-smoke only)")
@@ -508,7 +619,7 @@ func newSmokeCleanCmd() *cobra.Command {
 }
 
 //nolint:gocognit,gocyclo // per-target cleanup loop branches on archive/destroy/missing
-func runSmokeClean(_, stderr *Stream, deps smokeDeps, opts smokeCleanOptions) error {
+func runSmokeClean(ctx context.Context, _, stderr *Stream, deps smokeDeps, opts smokeCleanOptions) error {
 	targets := opts.stateDirs
 	if len(targets) == 0 {
 		targets = []string{defaultSmokeStateDir}
@@ -516,6 +627,7 @@ func runSmokeClean(_, stderr *Stream, deps smokeDeps, opts smokeCleanOptions) er
 	if opts.destroy && opts.confirm != "destroy smoke" {
 		return fmt.Errorf("%w: --destroy requires --confirm 'destroy smoke'", errMissingFlag)
 	}
+	expandedTargets := make([]string, 0, len(targets))
 	for _, raw := range targets {
 		path, expandErr := expandTilde(raw)
 		if expandErr != nil {
@@ -524,6 +636,13 @@ func runSmokeClean(_, stderr *Stream, deps smokeDeps, opts smokeCleanOptions) er
 		if validateErr := validateSmokeCleanTarget(path); validateErr != nil {
 			return validateErr
 		}
+		expandedTargets = append(expandedTargets, path)
+	}
+	if deleteErr := deleteSmokeKeychainItem(ctx, deps); deleteErr != nil {
+		return deleteErr
+	}
+	_ = stderr.WriteText(smokeMsgCleanKeychain)
+	for _, path := range expandedTargets {
 		if _, statErr := os.Stat(path); statErr != nil {
 			if os.IsNotExist(statErr) {
 				_ = stderr.WriteText(smokeMsgCleanAbsentFmt, path)
@@ -547,6 +666,17 @@ func runSmokeClean(_, stderr *Stream, deps smokeDeps, opts smokeCleanOptions) er
 		}
 	}
 	return nil
+}
+
+func deleteSmokeKeychainItem(ctx context.Context, deps smokeDeps) error {
+	kc, err := deps.keychainFactory()
+	if err != nil {
+		return err
+	}
+	if destroyer, ok := kc.(interface{ Destroy() }); ok {
+		defer destroyer.Destroy()
+	}
+	return deleteKeychainItem(ctx, kc, smokeBotTokenKeychainItem, smokeBotTokenKeychainAccount)
 }
 
 func validateSmokeCleanTarget(path string) error {
