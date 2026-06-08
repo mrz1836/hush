@@ -53,8 +53,11 @@ const (
 	DefaultReadTimeout = 30 * time.Second
 
 	// DefaultWriteTimeout caps how long the chassis allows a handler to
-	// produce its response. Hardening default for http.Server.
-	DefaultWriteTimeout = 30 * time.Second
+	// produce its response. It must exceed ClaimApprovalTimeout (60s default),
+	// otherwise a human-approved claim can mint successfully after Discord
+	// approval while the HTTP response has already been killed, surfacing as EOF
+	// to the client.
+	DefaultWriteTimeout = 90 * time.Second
 
 	// DefaultIdleTimeout caps how long an idle keep-alive connection may
 	// remain open. Hardening default for http.Server.
