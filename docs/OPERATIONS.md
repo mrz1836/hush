@@ -32,7 +32,15 @@ waits for you to approve in Discord, verifies the fake secret through
 On macOS, smoke uses dedicated Keychain entries, service
 `hush-smoke-discord` and account `hush-smoke-server`, scoped to the smoke
 state. It does not read, update, or delete the production
-`hush-discord` / `hush-server` item.
+`hush-discord` / `hush-server` item. `--reset` archives the smoke state dir
+and clears the isolated smoke Keychain item before setup, so repeated reset
+runs start cleanly and prompt for the throwaway smoke token again.
+
+If the requested listen address is already in use, smoke automatically picks a
+free port on the same host and uses that port for the temporary server and
+request. If you explicitly pass the configured production `hush serve` address,
+smoke refuses the run with guidance instead of silently colliding with the live
+server.
 
 Smoke also has a live-server proof mode:
 
@@ -50,9 +58,12 @@ Keychain/vault state.
 Useful flags:
 
 - `--state-dir` — isolated smoke state directory; default `~/.hush-smoke`.
-- `--reset` — archive an existing smoke state dir before starting.
+- `--reset` — archive an existing smoke state dir and clear the isolated smoke
+  Keychain item before starting.
 - `--listen-addr`, `--discord-owner-id`, `--discord-application-id`,
-  `--discord-approval-channel-id` — skip the matching prompt.
+  `--discord-approval-channel-id` — skip the matching prompt. If
+  `--listen-addr` is busy, smoke uses a free port instead; the configured
+  production server address is refused.
 - `--discord-audit-channel-id` — defaults to the approval channel.
 - `--strict-clock` — disables the smoke-only clock probe timeout downgrade
   while the temporary server runs.
@@ -67,11 +78,13 @@ Clean smoke/test artifacts safely:
 hush smoke clean
 ```
 
-By default this archives only `~/.hush-smoke`. To clean another isolated
-test or validation vault, pass it explicitly with `--state-dir`; the command
-accepts generic smoke/test/validation state names and refuses to touch real
-`~/.hush` state. To permanently delete smoke state instead of archiving, use
-the explicit confirmation gate:
+By default this archives `~/.hush-smoke` and deletes the isolated smoke
+Keychain item. To clean another isolated test or validation vault, pass it
+explicitly with `--state-dir`; the command accepts generic
+smoke/test/validation state names and refuses to touch real `~/.hush` state.
+The smoke Keychain cleanup is idempotent and never targets production
+`hush-discord` / `hush-server` items. To permanently delete smoke state instead
+of archiving, use the explicit confirmation gate:
 
 ```bash
 hush smoke clean --destroy --confirm 'destroy smoke'

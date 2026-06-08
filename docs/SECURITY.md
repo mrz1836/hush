@@ -139,10 +139,12 @@ refresh the ACL for the current binary.
 `hush smoke` is isolated from the production bot-token item. Its temporary
 server uses service `hush-smoke-discord` and account `hush-smoke-server`, under
 the smoke state directory, and does not read, overwrite, or delete
-`hush-discord` / `hush-server`. `hush smoke --against-running` goes further:
-it skips init, fake-secret insertion, temporary serving, and smoke Keychain
-writes, then sends a signed request for a guaranteed-absent fake scope to prove
-server reachability and approval routing without fetching any real secret.
+`hush-discord` / `hush-server`. `hush smoke --reset` and `hush smoke clean`
+delete only this isolated smoke Keychain item, leaving the production item
+untouched. `hush smoke --against-running` goes further: it skips init,
+fake-secret insertion, temporary serving, and smoke Keychain writes, then sends
+a signed request for a guaranteed-absent fake scope to prove server reachability
+and approval routing without fetching any real secret.
 
 #### Unlock failure (exit 51)
 

@@ -132,6 +132,8 @@ Required fields:
     - `hush smoke` writes its fake-server token under
       `hush-smoke-discord` with account `hush-smoke-server`, so smoke runs do
       not collide with a production `hush-discord` / `hush-server` item
+    - `hush smoke --reset` and `hush smoke clean` delete only that isolated
+      smoke item; production Keychain items are not addressed by smoke cleanup
 
 Optional fields:
 
