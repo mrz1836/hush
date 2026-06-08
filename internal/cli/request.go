@@ -166,6 +166,7 @@ type claimWireRequest struct {
 	MachineName          string   `json:"machine_name"`
 	SupervisorName       string   `json:"supervisor_name,omitempty"`
 	ClientKeyFingerprint string   `json:"client_key_fingerprint"`
+	ForceApproval        bool     `json:"force_approval,omitempty"`
 
 	// Agent-context fields. Optional on the wire (omitempty) but
 	// always present in the signed canonical form (CanonicalJSON
@@ -188,6 +189,7 @@ type claimSignedPayload struct {
 	AgentModel      string   `json:"agent_model,omitempty"`
 	CommandPreview  string   `json:"command_preview,omitempty"`
 	EphemeralPubKey string   `json:"ephemeral_pubkey"`
+	ForceApproval   bool     `json:"force_approval,omitempty"`
 	MachineName     string   `json:"machine_name"`
 	Nonce           string   `json:"nonce"`
 	Reason          string   `json:"reason"`
@@ -689,6 +691,7 @@ func signAndWrapClaim(ctx context.Context, clientKey *ecdsa.PrivateKey, payload 
 		RequestID:            payload.RequestID,
 		MachineName:          payload.MachineName,
 		ClientKeyFingerprint: fp,
+		ForceApproval:        payload.ForceApproval,
 		AgentIdentity:        payload.AgentIdentity,
 		AgentModel:           payload.AgentModel,
 		ToolName:             payload.ToolName,
