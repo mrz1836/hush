@@ -202,10 +202,10 @@ func runSmoke(ctx context.Context, stdout, stderr *Stream, in *os.File, deps smo
 			return err
 		}
 	}
-	if err := refuseProductionSmokeAddr(ctx, deps, opts); err != nil {
+	if err = refuseProductionSmokeAddr(ctx, deps, opts); err != nil {
 		return err
 	}
-	listenAddr, autoPicked, err := chooseSmokeListenAddr(opts.listenAddr)
+	listenAddr, autoPicked, err := chooseSmokeListenAddr(ctx, opts.listenAddr)
 	if err != nil {
 		return err
 	}
@@ -344,11 +344,11 @@ func refuseProductionSmokeAddr(ctx context.Context, deps smokeDeps, opts smokeOp
 	}
 	expanded, err := expandTilde(configPath)
 	if err != nil {
-		return nil
+		return nil //nolint:nilerr // no resolvable production config means nothing to collide with
 	}
 	cfg, err := deps.configLoader(ctx, expanded)
 	if err != nil {
-		return nil
+		return nil //nolint:nilerr // absent/unreadable production config means nothing to collide with
 	}
 	if !smokeListenAddrMatchesProduction(cfg.Server.ListenAddr, opts.listenAddr) {
 		return nil
@@ -357,8 +357,9 @@ func refuseProductionSmokeAddr(ctx context.Context, deps smokeDeps, opts smokeOp
 		errSmokeProductionAddr, opts.listenAddr)
 }
 
-func chooseSmokeListenAddr(requested string) (string, bool, error) {
-	listener, err := net.Listen("tcp", requested) //nolint:gosec // local preflight bind for operator-supplied smoke address
+func chooseSmokeListenAddr(ctx context.Context, requested string) (string, bool, error) {
+	var lc net.ListenConfig
+	listener, err := lc.Listen(ctx, "tcp", requested)
 	if err == nil {
 		_ = listener.Close()
 		return requested, false, nil
@@ -366,14 +367,14 @@ func chooseSmokeListenAddr(requested string) (string, bool, error) {
 	if !isAddrInUse(err) {
 		return requested, false, nil
 	}
-	chosen, pickErr := pickFreeSmokeListenAddr(requested)
+	chosen, pickErr := pickFreeSmokeListenAddr(ctx, requested)
 	if pickErr != nil {
 		return "", false, pickErr
 	}
 	return chosen, true, nil
 }
 
-func pickFreeSmokeListenAddr(requested string) (string, error) {
+func pickFreeSmokeListenAddr(ctx context.Context, requested string) (string, error) {
 	host, _, err := net.SplitHostPort(requested)
 	if err != nil {
 		if ap, parseErr := netip.ParseAddrPort(requested); parseErr == nil {
@@ -385,7 +386,8 @@ func pickFreeSmokeListenAddr(requested string) (string, error) {
 	// This local smoke preflight necessarily closes the reserved port before
 	// the server binds it; if another process wins the race, serve returns a
 	// normal bind error.
-	listener, err := net.Listen("tcp", net.JoinHostPort(host, "0")) //nolint:gosec // local free-port discovery
+	var lc net.ListenConfig
+	listener, err := lc.Listen(ctx, "tcp", net.JoinHostPort(host, "0"))
 	if err != nil {
 		return "", err
 	}
@@ -617,7 +619,7 @@ func newSmokeCleanCmd() *cobra.Command {
 }
 
 //nolint:gocognit,gocyclo // per-target cleanup loop branches on archive/destroy/missing
-func runSmokeClean(ctx context.Context, _ *Stream, stderr *Stream, deps smokeDeps, opts smokeCleanOptions) error {
+func runSmokeClean(ctx context.Context, _, stderr *Stream, deps smokeDeps, opts smokeCleanOptions) error {
 	targets := opts.stateDirs
 	if len(targets) == 0 {
 		targets = []string{defaultSmokeStateDir}

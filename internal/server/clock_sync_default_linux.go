@@ -68,7 +68,7 @@ func probeClockSyncProvider(ctx context.Context, provider string) clockProviderP
 	return clockProviderProbeResult{drift: drift, ok: true}
 }
 
-func clockProviderExecError(provider string, trimmed string, err error) clockProviderProbeResult {
+func clockProviderExecError(provider, trimmed string, err error) clockProviderProbeResult {
 	if trimmed == "" {
 		return clockProviderProbeResult{retryable: true, err: fmt.Errorf("%s: %w", provider, err)}
 	}

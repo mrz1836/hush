@@ -260,12 +260,13 @@ func TestRefuseProductionSmokeAddr_AllowsAbsentProductionConfig(t *testing.T) {
 
 func TestChooseSmokeListenAddr_AutoPicksFreePortWhenRequestedAddrBusy(t *testing.T) {
 	t.Parallel()
-	busy, err := net.Listen("tcp", "127.0.0.1:0") //nolint:gosec // local test listener
+	var lc net.ListenConfig
+	busy, err := lc.Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = busy.Close() })
 	requested := busy.Addr().String()
 
-	chosen, autoPicked, err := chooseSmokeListenAddr(requested)
+	chosen, autoPicked, err := chooseSmokeListenAddr(t.Context(), requested)
 	require.NoError(t, err)
 	require.True(t, autoPicked)
 	require.NotEqual(t, requested, chosen)
