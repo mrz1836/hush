@@ -39,7 +39,9 @@ func TestSmokeCommand_RegisteredOnRoot(t *testing.T) {
 }
 
 func TestRunSmoke_OrchestratesFakeSecretPath(t *testing.T) {
-	t.Parallel()
+	// Not parallel: runSmoke reads and writes the process-global
+	// HUSH_DISCORD_BOT_TOKEN env var (smoke.go), so concurrent runSmoke
+	// tests race on it. Running in the sequential phase keeps them isolated.
 	stateDir := filepath.Join(t.TempDir(), "hush-smoke")
 	kc := keychain.NewFake()
 	t.Cleanup(kc.Destroy)
@@ -151,7 +153,11 @@ func TestRunSmoke_OrchestratesFakeSecretPath(t *testing.T) {
 }
 
 func TestRunSmoke_ResetDeletesSmokeKeychainAcrossConsecutiveRuns(t *testing.T) {
-	t.Parallel()
+	// Not parallel: runSmoke reads HUSH_DISCORD_BOT_TOKEN to decide whether
+	// to prompt for the bot token and also writes it (smoke.go). Under
+	// t.Parallel() a concurrent runSmoke test could leave the env var set,
+	// causing this test to skip its bot-token prompt and desync the scripted
+	// reader into a spurious passphrase mismatch.
 	stateDir := filepath.Join(t.TempDir(), "hush-smoke")
 	kc := keychain.NewFake()
 	t.Cleanup(kc.Destroy)
