@@ -8,7 +8,7 @@ require (
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1
 	github.com/decred/dcrd/hdkeychain/v3 v3.1.3
 	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/pelletier/go-toml/v2 v2.4.2
+	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.11.1
