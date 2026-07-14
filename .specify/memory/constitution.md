@@ -327,3 +327,94 @@ Deviations MUST be explicitly justified in the Complexity Tracking section of
 implementation plans.
 
 **Version:** 2.0.0 | **Ratified:** 2026-04-26 | **Last Amended:** 2026-05-24
+
+---
+
+## Proposed Amendments (pending ratification)
+
+> The block below is a **DRAFT**. It is **NOT** in force. It does not change
+> the ratified principles above, and no production code may rely on it until it
+> is ratified by the project owner and this block is folded into the principles
+> with a version bump. Until then, Principles II and V apply verbatim as
+> written above.
+
+### PROPOSED — Amendment 1: Machine-bound standing supervisor lease
+
+**Status:** `PROPOSED — pending owner ratification`
+**Classification:** MAJOR amendment (Governance §3 — incompatible redefinition
+of Principles II and V). On ratification the constitution version bumps
+`2.0.0 → 3.0.0`.
+**Design + threat model:** [`docs/STANDING-LEASE.md`](../../docs/STANDING-LEASE.md);
+residual risk recorded in [`docs/SECURITY.md`](../../docs/SECURITY.md) §6.
+
+**Rationale.** Some supervised daemons must fire on a fixed schedule around the
+clock — an overnight dead-man tripwire, an evening bell, a monthly heartbeat —
+with no operator present. Under the ratified model the supervisor TTL is capped
+at 24h and the grace cache at 4h, so once the window lapses the next claim (or a
+cold restart) falls through to a **recurring human approval**, and the scheduled
+action silently does not fire until someone taps Approve. A daemon whose entire
+purpose is unattended reliability cannot depend on a periodic phone tap. This
+amendment permits a narrow, opt-in, revocable, machine-bound exception so one
+such daemon delivers one scoped secret with zero recurring approval, without
+weakening the human-approval floor for anything else.
+
+**Carve-out to Principle II (Human-in-the-Loop Approval).** The prohibition on
+auto-approve, trusted-host exceptions, and service-account bypass is retained in
+full for every **fresh** secret request. A supervisor MAY additionally be
+configured with an opt-in **standing lease** that, after a single human
+establishing approval, **reissues that same already-approved supervisor
+session** without a further approval, subject to ALL of the following
+guardrails:
+
+- The lease is **opt-in per supervisor** (`standing_lease = true`, default
+  `false`) and **bound to one machine** via a required `client_machine_index`;
+  the reissue fires only for a claim signed by that machine's registered client
+  key and originating from its allow-listed Tailscale IP.
+- The **establishing / first grant MUST still be a human interactive approval.**
+  The `/claim` Constitution II choke point is unchanged; a standing lease MUST
+  NOT auto-approve any first request. Only reissue of an
+  already-human-approved session is unattended.
+- The lease MUST be **scoped** to the supervisor's declared `scope` and MUST NOT
+  extend to any other secret.
+- Every unattended reissue MUST emit a **distinct, hash-chained, ECDSA-signed
+  audit event**. A standing lease MUST NOT be silent.
+- The lease MUST be **revocable in a single operator action** (revoke the active
+  session and/or drop the flag and reload), after which claims return to the
+  full human-approval floor.
+- Discord unavailability during an establishing grant MUST still return HTTP 503
+  and MUST NOT fall back to approval. The lease only affects reissue, never the
+  first grant.
+
+**Carve-out to Principle V (Supervisor sessions / one approval covers crashes
+within the session TTL).** For an opted-in standing-lease session only, "one
+approval covers restarts within the session TTL" is extended to "one
+establishing approval covers reissue of this machine-bound, single-scope session
+**until the lease is revoked**." A distinguished ceiling (`MaxStandingLeaseTTL`)
+applies **only** to standing-lease sessions; ordinary supervisor sessions keep
+the 24h ceiling and the unchanged human-refresh requirement. Standing-lease
+sessions remain TTL-only (never use-count-limited), and the supervisor MUST
+continue to zero secret material after handoff except under the separately
+opt-in grace-window cache.
+
+**What this amendment does NOT permit.**
+
+- It does NOT introduce any auto-approve for a first/establishing request.
+- It does NOT create a trusted-host mode: presenting the standing config on a
+  machine other than the enrolled one falls back to human approval.
+- It does NOT widen scope, add a new plaintext cache, or relax any of the seven
+  crypto layers or the Tailscale-only perimeter.
+- It does NOT change behavior for any supervisor that does not opt in; a config
+  without `standing_lease` is byte-for-byte a today's-behavior supervisor.
+
+**Sync-impact on ratification** (to be applied by the ratifying change, not
+now):
+
+- Version: `2.0.0 → 3.0.0` (MAJOR).
+- Principle II: append the standing-lease carve-out paragraph + guardrails.
+- Principle V: append the standing-lease TTL extension + `MaxStandingLeaseTTL`
+  note.
+- `Last Amended` date set to the ratification date.
+- Sibling docs already updated in the same body of work: `docs/SECURITY.md`
+  (§4.1, §6 residual-risk row), `docs/STANDING-LEASE.md` (design + threat
+  model). `docs/CONFIG-SCHEMA.md`, `docs/DAEMONS.md`, and
+  `docs/LIFECYCLE-SCENARIOS.md` follow with the schema/lifecycle text.
