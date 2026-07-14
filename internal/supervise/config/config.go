@@ -314,8 +314,11 @@ func materialize(d supervisorDecoded) (*Supervisor, error) {
 	if err != nil {
 		return nil, err
 	}
-	if ttl > MaxRequestedTTL {
-		return nil, fmt.Errorf("%w: requested_ttl=%s, ceiling=%s", ErrRequestedTTLOutOfRange, ttl, MaxRequestedTTL)
+	// requested_ttl ceiling — see requestedTTLCeiling: a standing lease may
+	// exceed 24h; ordinary supervisors keep the 24h ceiling until the
+	// standing-lease opt-in is wired in.
+	if ceiling := requestedTTLCeiling(false); ttl > ceiling {
+		return nil, fmt.Errorf("%w: requested_ttl=%s, ceiling=%s", ErrRequestedTTLOutOfRange, ttl, ceiling)
 	}
 	s.RequestedTTL = ttl
 

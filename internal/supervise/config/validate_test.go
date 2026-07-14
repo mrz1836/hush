@@ -379,6 +379,41 @@ func TestSuperviseConfig_RequestedTTLOver24h_Rejected(t *testing.T) {
 	})
 }
 
+// TestRequestedTTLCeiling asserts the ceiling selector returns the ordinary 24h
+// bound for a non-standing supervisor and the distinguished standing bound for a
+// machine-bound standing lease.
+func TestRequestedTTLCeiling(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, MaxRequestedTTL, requestedTTLCeiling(false), "ordinary supervisor keeps the 24h ceiling")
+	assert.Equal(t, MaxStandingLeaseTTL, requestedTTLCeiling(true), "standing lease may reach the distinguished ceiling")
+}
+
+// TestRequestedTTLCeiling_Boundaries proves the ordinary path rejects >24h while
+// the standing path accepts a long lease up to MaxStandingLeaseTTL and rejects
+// beyond it — the "ordinary capped at 24h, standing may exceed it" invariant.
+func TestRequestedTTLCeiling_Boundaries(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		standing bool
+		ttl      time.Duration
+		overCap  bool
+	}{
+		{"ordinary at 24h accepted", false, 24 * time.Hour, false},
+		{"ordinary just over 24h rejected", false, 24*time.Hour + time.Nanosecond, true},
+		{"standing at 14d accepted", true, 14 * 24 * time.Hour, false},
+		{"standing at ceiling accepted", true, MaxStandingLeaseTTL, false},
+		{"standing just over ceiling rejected", true, MaxStandingLeaseTTL + time.Nanosecond, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ceiling := requestedTTLCeiling(tc.standing)
+			assert.Equal(t, tc.overCap, tc.ttl > ceiling)
+		})
+	}
+}
+
 func TestSuperviseConfig_LogLevelInvalid_Rejected(t *testing.T) {
 	t.Parallel()
 	cases := []string{"trace", "verbose", "INFO"}

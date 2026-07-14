@@ -35,7 +35,8 @@ var (
 	DefaultJWTTTL               = 8 * time.Hour
 	DefaultMaxInteractiveTTL    = 12 * time.Hour
 	DefaultMaxSupervisorTTL     = 20 * time.Hour
-	DefaultSupervisorTTLMax     = 24 * time.Hour // v0.1.0 cap on max_supervisor_ttl
+	DefaultSupervisorTTLMax     = 24 * time.Hour      // v0.1.0 cap on max_supervisor_ttl — the ORDINARY supervisor ceiling
+	DefaultStandingLeaseTTLMax  = 30 * 24 * time.Hour // distinguished ceiling for an opt-in machine-bound standing lease; applied per-claim in capTTL, never raises the ordinary 24h cap above. Kept in lockstep with supervise/config.MaxStandingLeaseTTL (guarded by a test).
 	DefaultMaxUses              = 50
 	DefaultNonceTTL             = 60 * time.Second
 	DefaultClockSkew            = 30 * time.Second

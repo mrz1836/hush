@@ -27,6 +27,7 @@ import (
 
 	"github.com/mrz1836/hush/internal/config"
 	"github.com/mrz1836/hush/internal/keys"
+	superviseconfig "github.com/mrz1836/hush/internal/supervise/config"
 	"github.com/mrz1836/hush/internal/token"
 	"github.com/mrz1836/hush/internal/transport/sign"
 	"github.com/mrz1836/hush/internal/vault"
@@ -1888,25 +1889,60 @@ func TestClaim_ParseSessionType_DefaultBranch(t *testing.T) {
 }
 
 // TestClaim_CapTTL_BothCeilings exercises both interactive and supervisor
-// caps plus the no-cap (zero ceiling) safety branch.
+// caps plus the no-cap (zero ceiling) safety branch. standing=false throughout:
+// the standing ceiling is covered separately by TestClaim_CapTTL_StandingCeiling.
 func TestClaim_CapTTL_BothCeilings(t *testing.T) {
 	t.Parallel()
 	cs := config.CryptoSection{MaxInteractiveTTL: time.Hour, MaxSupervisorTTL: 4 * time.Hour}
-	if got := capTTL(SessionInteractive, 5*time.Hour, cs); got != time.Hour {
+	if got := capTTL(SessionInteractive, 5*time.Hour, cs, false); got != time.Hour {
 		t.Errorf("interactive cap=%s, want 1h", got)
 	}
-	if got := capTTL(SessionSupervisor, 5*time.Hour, cs); got != 4*time.Hour {
+	if got := capTTL(SessionSupervisor, 5*time.Hour, cs, false); got != 4*time.Hour {
 		t.Errorf("supervisor cap=%s, want 4h", got)
 	}
-	if got := capTTL(SessionInteractive, 30*time.Minute, cs); got != 30*time.Minute {
+	if got := capTTL(SessionInteractive, 30*time.Minute, cs, false); got != 30*time.Minute {
 		t.Errorf("under-cap=%s, want 30m", got)
 	}
 	zero := config.CryptoSection{} // no ceiling configured
-	if got := capTTL(SessionInteractive, 99*time.Hour, zero); got != 99*time.Hour {
+	if got := capTTL(SessionInteractive, 99*time.Hour, zero, false); got != 99*time.Hour {
 		t.Errorf("zero ceiling=%s, want passthrough", got)
 	}
-	if got := capTTL(SessionType(0), time.Hour, cs); got != time.Hour {
+	if got := capTTL(SessionType(0), time.Hour, cs, false); got != time.Hour {
 		t.Errorf("default branch=%s, want passthrough at 1h cap", got)
+	}
+}
+
+// TestClaim_CapTTL_StandingCeiling proves a standing session may exceed the
+// ordinary 24h supervisor ceiling (up to the distinguished standing bound),
+// while a non-standing supervisor session with the same inputs stays capped.
+func TestClaim_CapTTL_StandingCeiling(t *testing.T) {
+	t.Parallel()
+	cs := config.CryptoSection{MaxInteractiveTTL: time.Hour, MaxSupervisorTTL: 24 * time.Hour}
+
+	// Standing: a 14-day lease passes through — well past the 24h supervisor cap.
+	if got := capTTL(SessionSupervisor, 14*24*time.Hour, cs, true); got != 14*24*time.Hour {
+		t.Errorf("standing under-cap=%s, want 14d passthrough", got)
+	}
+	// Standing: still clamped to the distinguished standing ceiling.
+	if got := capTTL(SessionSupervisor, 365*24*time.Hour, cs, true); got != config.DefaultStandingLeaseTTLMax {
+		t.Errorf("standing over-cap=%s, want %s", got, config.DefaultStandingLeaseTTLMax)
+	}
+	// Non-standing supervisor with the same request stays at the ordinary 24h.
+	if got := capTTL(SessionSupervisor, 14*24*time.Hour, cs, false); got != 24*time.Hour {
+		t.Errorf("ordinary supervisor cap=%s, want 24h", got)
+	}
+}
+
+// TestCapTTL_StandingCeilingMatchesSuperviseConfig guards against drift between
+// the server-side standing ceiling used by capTTL and the supervise-config
+// requested_ttl ceiling: a mismatch would validate a lease at one bound and cap
+// it at another. The two constants are duplicated (packages are independent) —
+// this keeps them in lockstep.
+func TestCapTTL_StandingCeilingMatchesSuperviseConfig(t *testing.T) {
+	t.Parallel()
+	if config.DefaultStandingLeaseTTLMax != superviseconfig.MaxStandingLeaseTTL {
+		t.Fatalf("standing ceiling drift: server=%s supervise=%s",
+			config.DefaultStandingLeaseTTLMax, superviseconfig.MaxStandingLeaseTTL)
 	}
 }
 

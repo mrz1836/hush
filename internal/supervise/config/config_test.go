@@ -237,6 +237,13 @@ func TestSuperviseConfig_MaxRequestedTTLConstant(t *testing.T) {
 	assert.Equal(t, 24*time.Hour, MaxRequestedTTL)
 }
 
+func TestSuperviseConfig_MaxStandingLeaseTTLConstant(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, 30*24*time.Hour, MaxStandingLeaseTTL)
+	assert.Greater(t, MaxStandingLeaseTTL, MaxRequestedTTL,
+		"the standing-lease ceiling must exceed the ordinary 24h requested_ttl ceiling")
+}
+
 func TestSuperviseConfig_ResealMinSessionFloorConstant(t *testing.T) {
 	t.Parallel()
 	assert.Equal(t, time.Hour, ResealMinSessionFloor)

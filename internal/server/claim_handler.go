@@ -344,7 +344,10 @@ func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
 	// operator's prompt and the issued JWT carry the same value.
 	requestedTTL, _ := time.ParseDuration(req.TTL) // shape stage already accepted this
 	sessionType := parseSessionType(req.SessionType)
-	cappedTTL := capTTL(sessionType, requestedTTL, s.cfg.Crypto)
+	// standing=false: the establishing claim walks the ordinary per-session
+	// ceiling. The unattended standing-reissue path (Stage 6.5) supplies
+	// standing=true once the machine-bound standing-lease grant is wired in.
+	cappedTTL := capTTL(sessionType, requestedTTL, s.cfg.Crypto, false)
 
 	// Stage 6.5: Session resumption. For a supervisor that already holds a
 	// live, non-revoked session for this exact (ClientIP, Scope) tuple,
@@ -819,15 +822,24 @@ func buildAuditDetail(outcome outcomeLabel, scope []string, sessionType SessionT
 	return d
 }
 
-// capTTL clamps the requested TTL to the per-session-type configured maximum.
+// capTTL clamps the requested TTL to the applicable configured maximum.
 // Applied BEFORE the approver dispatch so the operator's prompt shows the
 // actual TTL.
-func capTTL(sessionType SessionType, requested time.Duration, cs config.CryptoSection) time.Duration {
+//
+// standing selects the distinguished machine-bound standing-lease ceiling
+// (config.DefaultStandingLeaseTTLMax) instead of the per-session-type maximum:
+// only the unattended standing-reissue path — riding a grant a human already
+// established — sets it true, so an opted-in daemon may exceed the ordinary 24h
+// supervisor ceiling. Every ordinary claim passes standing=false and keeps the
+// 24h supervisor / interactive ceiling below.
+func capTTL(sessionType SessionType, requested time.Duration, cs config.CryptoSection, standing bool) time.Duration {
 	var ceiling time.Duration
-	switch sessionType {
-	case SessionSupervisor:
+	switch {
+	case standing:
+		ceiling = config.DefaultStandingLeaseTTLMax
+	case sessionType == SessionSupervisor:
 		ceiling = cs.MaxSupervisorTTL
-	case SessionInteractive:
+	case sessionType == SessionInteractive:
 		ceiling = cs.MaxInteractiveTTL
 	default:
 		ceiling = cs.MaxInteractiveTTL
