@@ -186,7 +186,12 @@ Required fields:
   - default: `20h`
   - rules:
     - must be greater than `jwt_default_ttl`
-    - must not exceed 24h
+    - must not exceed 24h for an ordinary supervisor session
+  - note:
+    - a distinguished ceiling (`MaxStandingLeaseTTL`, currently `720h` / 30d)
+      applies **only** to an opt-in machine-bound standing-lease session (the
+      supervisor `standing_lease` field below); ordinary supervisor sessions
+      keep the 24h ceiling
 
 - `default_max_uses`
   - type: int
@@ -279,6 +284,7 @@ reason = "Example long-running daemon"                   # human-facing reason i
 server_url = "http://100.96.10.4:7743/h/a8k2f9"          # vault server URL (Tailscale-bound)
 client_machine_index = 2                                 # BIP32 client key path index
 session_type = "supervisor"
+standing_lease = false                                   # opt-in machine-bound standing lease; requires client_machine_index
 requested_ttl = "20h"
 refresh_window = "09:00-10:00"                           # local-time window for daily refresh DM
 refresh_nudge_before = "30m"
@@ -355,6 +361,9 @@ Required:
   - rules:
     - required
     - maps to BIP32 client key path
+    - the machine-binding anchor for `standing_lease`: the unattended standing
+      reissue fires only for a claim signed by this machine's registered client
+      key
 
 - `session_type`
   - type: string
@@ -366,7 +375,9 @@ Required:
   - type: duration string
   - default: `20h`
   - rules:
-    - capped by server `max_supervisor_ttl`
+    - capped by server `max_supervisor_ttl` (24h) for an ordinary session; a
+      `standing_lease` session is capped by `MaxStandingLeaseTTL` (720h)
+      instead
 
 - `refresh_window`
   - type: string
@@ -417,6 +428,28 @@ Optional:
   - rules:
     - non-empty
     - each item is an exact secret name approved for this daemon
+
+- `standing_lease`
+  - type: bool
+  - default: `false`
+  - purpose:
+    - opt into a machine-bound **standing lease**: after a single human
+      establishing approval, the supervisor session reissues itself against the
+      enrolled machine's client key with no further Discord approval, until it
+      is revoked
+  - rules:
+    - requires `session_type = "supervisor"` and a non-zero
+      `client_machine_index`; otherwise config load fails
+    - a standing-lease session is capped by the distinguished
+      `MaxStandingLeaseTTL` ceiling (see `[crypto] max_supervisor_ttl`), not the
+      ordinary 24h cap
+    - opt-in per supervisor **and** per machine; omitting the field is
+      byte-for-byte today's supervisor behavior, and every other supervisor
+      keeps the 24h human-approval floor
+  - see:
+    - [`docs/STANDING-LEASE.md`](STANDING-LEASE.md) — design + threat model
+    - [`docs/SECURITY.md`](SECURITY.md) §4.1 / §6 — residual risk
+    - [`docs/LIFECYCLE-SCENARIOS.md`](LIFECYCLE-SCENARIOS.md) Scenario 17 — flow
 
 ### `[reseal]`
 
@@ -704,7 +737,10 @@ Startup must fail if any of these are true:
 - supervisor scope is empty
 - unknown validator is declared
 - refresh window is malformed
-- requested TTL exceeds the 24h ceiling
+- requested TTL exceeds the 24h ceiling (or `MaxStandingLeaseTTL` for a
+  `standing_lease` session)
+- `standing_lease = true` without `session_type = "supervisor"` and a non-zero
+  `client_machine_index`
 - reseal timezone is missing or not a valid IANA location
 - reseal daily time is missing or not exact `HH:MM`
 - reseal override weekday is unknown

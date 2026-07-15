@@ -13,6 +13,7 @@ var (
 	DefaultRefreshNudgeBefore       = 30 * time.Minute
 	DefaultBootRetryTimeout         = 10 * time.Minute
 	DefaultCacheSecretsForRestart   = false
+	DefaultStandingLease            = false
 	DefaultGraceWindow              = 60 * time.Minute
 	DefaultLogLevel                 = "info"
 	DefaultRestartOnCleanExit       = true
@@ -61,6 +62,19 @@ var (
 	MaxBootRetryTimeout   = 1 * time.Hour  // operator typo guard: 100h would silently disable boot timeout
 	MaxRefreshNudgeBefore = 6 * time.Hour  // bounded to a fraction of MaxRequestedTTL
 	ResealMinSessionFloor = 1 * time.Hour  // v1 scheduled reseal floor for avoiding too-short sessions
+
+	// MaxStandingLeaseTTL is the distinguished requested_ttl ceiling for a
+	// machine-bound standing lease (standing_lease = true). Ordinary
+	// supervisors keep the 24h MaxRequestedTTL ceiling above; only a session
+	// that has opted into a standing lease may request past 24h, up to this
+	// bound. It is a finite bound, not an infinite token: a compromised standing
+	// session still expires, and every unattended reissue re-anchors to the
+	// machine client key and emits an audit event. 30 days gives comfortable
+	// headroom over the longest scheduled cadence (a monthly heartbeat) and over
+	// the ~14d bounded-TTL fallback in docs/STANDING-LEASE.md §8, while staying
+	// clearly bounded. Kept in lockstep with the server-side ceiling
+	// (internal/config.DefaultStandingLeaseTTLMax) — guarded by a test.
+	MaxStandingLeaseTTL = 30 * 24 * time.Hour
 )
 
 // validatorAllowList is the fixed set of validator type names accepted in the

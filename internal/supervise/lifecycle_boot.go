@@ -55,6 +55,8 @@ type claimWireRequest struct {
 	SupervisorName       string   `json:"supervisor_name,omitempty"`
 	ClientKeyFingerprint string   `json:"client_key_fingerprint"`
 	ForceApproval        bool     `json:"force_approval,omitempty"`
+	StandingLease        bool     `json:"standing_lease,omitempty"`
+	ClientMachineIndex   uint32   `json:"client_machine_index,omitempty"`
 }
 
 // claimSignedPayload mirrors internal/server/claim_handler.go::signedPayload.
@@ -64,22 +66,24 @@ type claimWireRequest struct {
 // field, so adding the fields here makes the supervisor's signature
 // byte-identical to the server's expectation.
 type claimSignedPayload struct {
-	AgentIdentity   string   `json:"agent_identity,omitempty"`
-	AgentModel      string   `json:"agent_model,omitempty"`
-	CommandPreview  string   `json:"command_preview,omitempty"`
-	EphemeralPubKey string   `json:"ephemeral_pubkey"`
-	ForceApproval   bool     `json:"force_approval,omitempty"`
-	MachineName     string   `json:"machine_name"`
-	Nonce           string   `json:"nonce"`
-	Reason          string   `json:"reason"`
-	RecentSummary   string   `json:"recent_summary,omitempty"`
-	RequestID       string   `json:"request_id"`
-	Scope           []string `json:"scope"`
-	SessionType     string   `json:"session_type"`
-	SupervisorName  string   `json:"supervisor_name,omitempty"`
-	Timestamp       string   `json:"timestamp"`
-	ToolName        string   `json:"tool_name,omitempty"`
-	TTL             string   `json:"ttl"`
+	AgentIdentity      string   `json:"agent_identity,omitempty"`
+	AgentModel         string   `json:"agent_model,omitempty"`
+	ClientMachineIndex uint32   `json:"client_machine_index,omitempty"`
+	CommandPreview     string   `json:"command_preview,omitempty"`
+	EphemeralPubKey    string   `json:"ephemeral_pubkey"`
+	ForceApproval      bool     `json:"force_approval,omitempty"`
+	MachineName        string   `json:"machine_name"`
+	Nonce              string   `json:"nonce"`
+	Reason             string   `json:"reason"`
+	RecentSummary      string   `json:"recent_summary,omitempty"`
+	RequestID          string   `json:"request_id"`
+	Scope              []string `json:"scope"`
+	SessionType        string   `json:"session_type"`
+	StandingLease      bool     `json:"standing_lease,omitempty"`
+	SupervisorName     string   `json:"supervisor_name,omitempty"`
+	Timestamp          string   `json:"timestamp"`
+	ToolName           string   `json:"tool_name,omitempty"`
+	TTL                string   `json:"ttl"`
 }
 
 // claimWireResponse decodes the server's success body.
@@ -366,16 +370,18 @@ func (l *Lifecycle) buildClaimPayload() claimSignedPayload {
 		}
 	}
 	return claimSignedPayload{
-		EphemeralPubKey: l.deps.EphemeralPubKeyHex,
-		MachineName:     l.deps.MachineName,
-		Nonce:           l.deps.NonceFn(),
-		Reason:          l.config.Reason,
-		RequestID:       l.deps.RequestIDFn(),
-		Scope:           append([]string(nil), l.config.Scope...),
-		SessionType:     l.config.SessionType,
-		SupervisorName:  l.config.Name,
-		Timestamp:       now.UTC().Format(time.RFC3339Nano),
-		TTL:             ttl.String(),
+		ClientMachineIndex: l.config.ClientMachineIndex,
+		EphemeralPubKey:    l.deps.EphemeralPubKeyHex,
+		MachineName:        l.deps.MachineName,
+		Nonce:              l.deps.NonceFn(),
+		Reason:             l.config.Reason,
+		RequestID:          l.deps.RequestIDFn(),
+		Scope:              append([]string(nil), l.config.Scope...),
+		SessionType:        l.config.SessionType,
+		StandingLease:      l.config.StandingLease,
+		SupervisorName:     l.config.Name,
+		Timestamp:          now.UTC().Format(time.RFC3339Nano),
+		TTL:                ttl.String(),
 	}
 }
 
@@ -404,6 +410,8 @@ func signAndWrapClaim(ctx context.Context, clientKey *ecdsa.PrivateKey, fp strin
 		MachineName:          payload.MachineName,
 		SupervisorName:       payload.SupervisorName,
 		ClientKeyFingerprint: fp,
+		StandingLease:        payload.StandingLease,
+		ClientMachineIndex:   payload.ClientMachineIndex,
 	}, nil
 }
 

@@ -51,22 +51,24 @@ type ClientOpts struct {
 // them but their presence in the struct is required for canonical
 // parity with the production server.
 type claimSignedPayloadJSON struct {
-	AgentIdentity   string   `json:"agent_identity,omitempty"`
-	AgentModel      string   `json:"agent_model,omitempty"`
-	CommandPreview  string   `json:"command_preview,omitempty"`
-	EphemeralPubKey string   `json:"ephemeral_pubkey"`
-	ForceApproval   bool     `json:"force_approval,omitempty"`
-	MachineName     string   `json:"machine_name"`
-	Nonce           string   `json:"nonce"`
-	Reason          string   `json:"reason"`
-	RecentSummary   string   `json:"recent_summary,omitempty"`
-	RequestID       string   `json:"request_id"`
-	Scope           []string `json:"scope"`
-	SessionType     string   `json:"session_type"`
-	SupervisorName  string   `json:"supervisor_name,omitempty"`
-	Timestamp       string   `json:"timestamp"`
-	ToolName        string   `json:"tool_name,omitempty"`
-	TTL             string   `json:"ttl"`
+	AgentIdentity      string   `json:"agent_identity,omitempty"`
+	AgentModel         string   `json:"agent_model,omitempty"`
+	ClientMachineIndex uint32   `json:"client_machine_index,omitempty"`
+	CommandPreview     string   `json:"command_preview,omitempty"`
+	EphemeralPubKey    string   `json:"ephemeral_pubkey"`
+	ForceApproval      bool     `json:"force_approval,omitempty"`
+	MachineName        string   `json:"machine_name"`
+	Nonce              string   `json:"nonce"`
+	Reason             string   `json:"reason"`
+	RecentSummary      string   `json:"recent_summary,omitempty"`
+	RequestID          string   `json:"request_id"`
+	Scope              []string `json:"scope"`
+	SessionType        string   `json:"session_type"`
+	StandingLease      bool     `json:"standing_lease,omitempty"`
+	SupervisorName     string   `json:"supervisor_name,omitempty"`
+	Timestamp          string   `json:"timestamp"`
+	ToolName           string   `json:"tool_name,omitempty"`
+	TTL                string   `json:"ttl"`
 }
 
 // claimWireJSON mirrors internal/server's claimRequest — the POST /claim

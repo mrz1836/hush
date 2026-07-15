@@ -27,6 +27,7 @@ type Supervisor struct {
 	ClientMachineIndex     uint32
 	ClientKeyFile          string
 	SessionType            string
+	StandingLease          bool
 	RequestedTTL           time.Duration
 	RefreshWindow          string
 	RefreshNudgeBefore     time.Duration
@@ -149,6 +150,7 @@ type supervisorDecoded struct {
 	ClientMachineIndex     *uint32  `toml:"client_machine_index"`
 	ClientKeyFile          string   `toml:"client_key_file"`
 	SessionType            string   `toml:"session_type"`
+	StandingLease          *bool    `toml:"standing_lease"`
 	RequestedTTL           string   `toml:"requested_ttl"`
 	RefreshWindow          string   `toml:"refresh_window"`
 	RefreshNudgeBefore     string   `toml:"refresh_nudge_before"`
@@ -310,12 +312,29 @@ func materialize(d supervisorDecoded) (*Supervisor, error) {
 	}
 	s.SessionType = d.SessionType
 
+	// standing_lease is an opt-in, machine-bound relaxation of the supervisor
+	// lease. Default false. When enabled it MUST anchor to a concrete machine
+	// client key — a non-zero client_machine_index — so an unattended reissue
+	// re-binds to that key. Only supervisor sessions may opt in; the
+	// session_type gate above already guarantees that here.
+	if d.StandingLease != nil {
+		s.StandingLease = *d.StandingLease
+	} else {
+		s.StandingLease = DefaultStandingLease
+	}
+	if s.StandingLease && s.ClientMachineIndex == 0 {
+		return nil, fmt.Errorf("%w", ErrStandingLeaseNeedsMachineIndex)
+	}
+
 	ttl, err := parseDuration(d.RequestedTTL, DefaultRequestedTTL, "requested_ttl")
 	if err != nil {
 		return nil, err
 	}
-	if ttl > MaxRequestedTTL {
-		return nil, fmt.Errorf("%w: requested_ttl=%s, ceiling=%s", ErrRequestedTTLOutOfRange, ttl, MaxRequestedTTL)
+	// requested_ttl ceiling — see requestedTTLCeiling: a machine-bound standing
+	// lease may exceed 24h up to MaxStandingLeaseTTL; every ordinary supervisor
+	// keeps the 24h ceiling.
+	if ceiling := requestedTTLCeiling(s.StandingLease); ttl > ceiling {
+		return nil, fmt.Errorf("%w: requested_ttl=%s, ceiling=%s", ErrRequestedTTLOutOfRange, ttl, ceiling)
 	}
 	s.RequestedTTL = ttl
 

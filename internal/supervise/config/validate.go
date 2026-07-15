@@ -157,6 +157,18 @@ func filepathIsAbs(p string) bool {
 	return filepath.IsAbs(p)
 }
 
+// requestedTTLCeiling returns the requested_ttl ceiling that applies to a
+// supervisor config. A machine-bound standing lease (standing_lease = true) may
+// request past 24h, up to MaxStandingLeaseTTL; every ordinary supervisor keeps
+// the 24h MaxRequestedTTL ceiling. The standing ceiling never applies to a
+// session that did not opt in — the caller passes the session's standing flag.
+func requestedTTLCeiling(standingLease bool) time.Duration {
+	if standingLease {
+		return MaxStandingLeaseTTL
+	}
+	return MaxRequestedTTL
+}
+
 // Validate re-runs the full validation pipeline against an in-memory
 // *Supervisor. Returns nil on success or a wrapped sentinel on the first
 // violation; multi-violation reports use errors.Join.
@@ -184,8 +196,15 @@ func (s *Supervisor) Validate() error {
 	if s.SessionType != "supervisor" {
 		errs = append(errs, fmt.Errorf("%w: got %q", ErrSessionTypeInvalid, s.SessionType))
 	}
-	if s.RequestedTTL > MaxRequestedTTL {
-		errs = append(errs, fmt.Errorf("%w: requested_ttl=%s", ErrRequestedTTLOutOfRange, s.RequestedTTL))
+	// standing_lease, when opted in, must anchor to a concrete machine client
+	// key (a non-zero client_machine_index) so an unattended reissue re-binds.
+	if s.StandingLease && s.ClientMachineIndex == 0 {
+		errs = append(errs, fmt.Errorf("%w", ErrStandingLeaseNeedsMachineIndex))
+	}
+	// requested_ttl ceiling. A machine-bound standing lease may exceed 24h up to
+	// MaxStandingLeaseTTL; every ordinary supervisor keeps the 24h ceiling.
+	if ceiling := requestedTTLCeiling(s.StandingLease); s.RequestedTTL > ceiling {
+		errs = append(errs, fmt.Errorf("%w: requested_ttl=%s, ceiling=%s", ErrRequestedTTLOutOfRange, s.RequestedTTL, ceiling))
 	}
 	if err := validateRefreshWindow(s.RefreshWindow); err != nil {
 		errs = append(errs, err)

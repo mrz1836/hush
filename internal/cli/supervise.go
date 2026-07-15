@@ -48,12 +48,13 @@ type superviseFlags struct {
 // sign.CanonicalJSON. Field tag order is irrelevant — the canonical
 // encoder sorts keys alphabetically.
 type claimPreview struct {
-	MachineIndex uint32   `json:"machine_index"`
-	Name         string   `json:"name"`
-	Reason       string   `json:"reason"`
-	RequestedTTL string   `json:"requested_ttl"`
-	Scope        []string `json:"scope"`
-	SessionType  string   `json:"session_type"`
+	MachineIndex  uint32   `json:"machine_index"`
+	Name          string   `json:"name"`
+	Reason        string   `json:"reason"`
+	RequestedTTL  string   `json:"requested_ttl"`
+	Scope         []string `json:"scope"`
+	SessionType   string   `json:"session_type"`
+	StandingLease bool     `json:"standing_lease"`
 }
 
 // realClock implements supervise.Clock against time.Now.
@@ -120,12 +121,13 @@ func runSupervise(cmd *cobra.Command, configPath string, flags superviseFlags) e
 
 	if flags.dryRun {
 		preview := claimPreview{
-			MachineIndex: cfg.ClientMachineIndex,
-			Name:         cfg.Name,
-			Reason:       cfg.Reason,
-			RequestedTTL: cfg.RequestedTTL.String(),
-			Scope:        cfg.Scope,
-			SessionType:  cfg.SessionType,
+			MachineIndex:  cfg.ClientMachineIndex,
+			Name:          cfg.Name,
+			Reason:        cfg.Reason,
+			RequestedTTL:  cfg.RequestedTTL.String(),
+			Scope:         cfg.Scope,
+			SessionType:   cfg.SessionType,
+			StandingLease: cfg.StandingLease,
 		}
 		body, mErr := sign.CanonicalJSON(preview)
 		if mErr != nil {

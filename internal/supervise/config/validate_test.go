@@ -379,6 +379,122 @@ func TestSuperviseConfig_RequestedTTLOver24h_Rejected(t *testing.T) {
 	})
 }
 
+// TestRequestedTTLCeiling asserts the ceiling selector returns the ordinary 24h
+// bound for a non-standing supervisor and the distinguished standing bound for a
+// machine-bound standing lease.
+func TestRequestedTTLCeiling(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, MaxRequestedTTL, requestedTTLCeiling(false), "ordinary supervisor keeps the 24h ceiling")
+	assert.Equal(t, MaxStandingLeaseTTL, requestedTTLCeiling(true), "standing lease may reach the distinguished ceiling")
+}
+
+// TestRequestedTTLCeiling_Boundaries proves the ordinary path rejects >24h while
+// the standing path accepts a long lease up to MaxStandingLeaseTTL and rejects
+// beyond it — the "ordinary capped at 24h, standing may exceed it" invariant.
+func TestRequestedTTLCeiling_Boundaries(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		standing bool
+		ttl      time.Duration
+		overCap  bool
+	}{
+		{"ordinary at 24h accepted", false, 24 * time.Hour, false},
+		{"ordinary just over 24h rejected", false, 24*time.Hour + time.Nanosecond, true},
+		{"standing at 14d accepted", true, 14 * 24 * time.Hour, false},
+		{"standing at ceiling accepted", true, MaxStandingLeaseTTL, false},
+		{"standing just over ceiling rejected", true, MaxStandingLeaseTTL + time.Nanosecond, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ceiling := requestedTTLCeiling(tc.standing)
+			assert.Equal(t, tc.overCap, tc.ttl > ceiling)
+		})
+	}
+}
+
+// ---- standing_lease field + cross-field rules ----------------------------
+
+// TestSuperviseConfig_StandingLease_DefaultsFalse — absent standing_lease
+// resolves to the DefaultStandingLease (false) default.
+func TestSuperviseConfig_StandingLease_DefaultsFalse(t *testing.T) {
+	t.Parallel()
+	s, err := loadBody(t, minimalBody(t))
+	require.NoError(t, err)
+	assert.False(t, s.StandingLease)
+	assert.Equal(t, DefaultStandingLease, s.StandingLease)
+}
+
+// TestSuperviseConfig_StandingLease_EnabledParses — standing_lease = true with a
+// non-zero client_machine_index parses, and the standing ceiling permits a
+// requested_ttl beyond the ordinary 24h supervisor cap.
+func TestSuperviseConfig_StandingLease_EnabledParses(t *testing.T) {
+	t.Parallel()
+	body := withMinimalReplaced(t,
+		`requested_ttl = "20h"`, `requested_ttl = "336h"`,
+		`client_machine_index = 2`, "client_machine_index = 2\nstanding_lease = true",
+	)
+	s, err := loadBody(t, body)
+	require.NoError(t, err)
+	assert.True(t, s.StandingLease)
+	assert.Equal(t, 336*time.Hour, s.RequestedTTL)
+}
+
+// TestSuperviseConfig_StandingLease_RequiresMachineIndex — standing_lease = true
+// with client_machine_index = 0 is rejected: a standing lease must anchor to a
+// concrete machine client key.
+func TestSuperviseConfig_StandingLease_RequiresMachineIndex(t *testing.T) {
+	t.Parallel()
+	body := withMinimalReplaced(t,
+		`client_machine_index = 2`, "client_machine_index = 0\nstanding_lease = true",
+	)
+	_, err := loadBody(t, body)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrStandingLeaseNeedsMachineIndex), "got %v", err)
+}
+
+// TestSuperviseConfig_StandingLease_TTLCeiling — an ordinary supervisor stays
+// capped at 24h, while the standing path rejects only beyond MaxStandingLeaseTTL.
+func TestSuperviseConfig_StandingLease_TTLCeiling(t *testing.T) {
+	t.Parallel()
+
+	// Ordinary supervisor: > 24h rejected.
+	body := withMinimalReplaced(t, `requested_ttl = "20h"`, `requested_ttl = "48h"`)
+	_, err := loadBody(t, body)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrRequestedTTLOutOfRange), "ordinary >24h must reject: %v", err)
+
+	// Standing lease: just over the standing ceiling rejected.
+	over := (MaxStandingLeaseTTL + time.Hour).String()
+	body2 := withMinimalReplaced(t,
+		`requested_ttl = "20h"`, `requested_ttl = "`+over+`"`,
+		`client_machine_index = 2`, "client_machine_index = 2\nstanding_lease = true",
+	)
+	_, err = loadBody(t, body2)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrRequestedTTLOutOfRange), "standing > ceiling must reject: %v", err)
+}
+
+// TestSuperviseConfig_StandingLease_ValidateMirrorsMachineIndexRule — the
+// programmatic Validate path enforces the same machine-index rule as Load.
+func TestSuperviseConfig_StandingLease_ValidateMirrorsMachineIndexRule(t *testing.T) {
+	t.Parallel()
+	body := withMinimalReplaced(t,
+		`client_machine_index = 2`, "client_machine_index = 2\nstanding_lease = true",
+	)
+	s, err := loadBody(t, body)
+	require.NoError(t, err)
+	require.True(t, s.StandingLease)
+	require.NoError(t, s.Validate(), "re-validate of a loaded standing config must pass")
+
+	// Break the machine anchor and re-validate.
+	s.ClientMachineIndex = 0
+	err = s.Validate()
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrStandingLeaseNeedsMachineIndex), "got %v", err)
+}
+
 func TestSuperviseConfig_LogLevelInvalid_Rejected(t *testing.T) {
 	t.Parallel()
 	cases := []string{"trace", "verbose", "INFO"}

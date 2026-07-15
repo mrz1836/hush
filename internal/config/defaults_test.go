@@ -25,6 +25,9 @@ func TestDefaults_MatchSchema(t *testing.T) {
 	assert.Equal(t, 12*time.Hour, DefaultMaxInteractiveTTL, "DefaultMaxInteractiveTTL")
 	assert.Equal(t, 20*time.Hour, DefaultMaxSupervisorTTL, "DefaultMaxSupervisorTTL")
 	assert.Equal(t, 24*time.Hour, DefaultSupervisorTTLMax, "DefaultSupervisorTTLMax")
+	assert.Equal(t, 30*24*time.Hour, DefaultStandingLeaseTTLMax, "DefaultStandingLeaseTTLMax")
+	assert.Greater(t, DefaultStandingLeaseTTLMax, DefaultSupervisorTTLMax,
+		"standing-lease ceiling must exceed the ordinary 24h supervisor ceiling")
 	assert.Equal(t, 50, DefaultMaxUses, "DefaultMaxUses")
 	assert.Equal(t, 60*time.Second, DefaultNonceTTL, "DefaultNonceTTL")
 	assert.Equal(t, 30*time.Second, DefaultClockSkew, "DefaultClockSkew")

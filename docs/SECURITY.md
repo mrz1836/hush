@@ -378,6 +378,48 @@ The supervisor is an operational layer ON TOP of Layers 1–7. Its security
 properties (grace-window plaintext cache, supervisor-side outbound calls)
 are documented as residual risks (§6) and toggled per-supervisor in TOML.
 
+### 4.1 Standing machine-bound supervisor lease (opt-in)
+
+Some daemons must fire on a fixed schedule around the clock — an overnight
+tripwire, an evening bell, a monthly heartbeat — with no operator present to
+tap Approve. For those, the ordinary model's 24h supervisor-TTL ceiling plus
+the ≤4h grace cache is not enough: once the window lapses, the next claim (or a
+cold restart) falls through to a **recurring human approval**, and the
+scheduled action silently does not fire until someone approves.
+
+The **standing lease** is an opt-in, machine-bound relaxation of exactly one
+step: the reissue of a supervisor session that a human already approved. With
+`standing_lease = true` (and a required `client_machine_index`) in the
+supervisor TOML, a single establishing approval mints a session that reissues
+itself against the enrolled machine's client key with **no further Discord
+approval**, until it is revoked. It is deliberately narrow:
+
+- The **establishing / first grant is still human** — the Constitution II
+  choke point in the `/claim` pipeline is untouched. A standing lease
+  auto-nothing on a first request; it only reissues an already-approved
+  session.
+- It is **bound to one machine** (the client key at
+  `m/44'/7743'/3'/{client_machine_index}`) and **one scope**. A claim signed by
+  any other machine's key, or for any other secret, falls back to the human
+  approver.
+- It carries **no new plaintext cache** — unlike the grace cache, it changes
+  *when* a session may reissue unattended, not *what* plaintext the supervisor
+  retains.
+- Every unattended reissue emits a **distinct, hash-chained audit event**, and
+  the lease is **revocable in one operator action**.
+- A distinguished ceiling (`MaxStandingLeaseTTL`) applies **only** to
+  `standing_lease` sessions; every other supervisor keeps the unchanged 24h
+  human-approval floor.
+
+Because a standing grant that reissues without a fresh approval relaxes
+Principles II and V, it is governed by a **ratified** constitutional amendment
+— Amendment 1 (machine-bound standing supervisor lease), ratified 2026-07-14,
+which bumped the Constitution to v3.0.0 and folded the carve-out into
+Principles II & V. The full design, threat model, and lifecycle (provision /
+rotate / revoke / monitor) live in [`docs/STANDING-LEASE.md`](STANDING-LEASE.md);
+the accepted residual risk is recorded in §6; the ratified amendment is in
+`.specify/memory/constitution.md`.
+
 ---
 
 ## 5. Crypto requirements
@@ -409,6 +451,7 @@ Documented for transparency. These are accepted trade-offs.
 | `--format eval` stdout leakage | Medium | Plaintext printed to stdout — captured by terminal scrollback, tmux, `script`. Use `--exec` whenever possible. `--format eval` is opt-in. |
 | NTP clock skew | Low | 30s timestamp window requires synced clocks. Init/serve use read-only SNTP probes against `time.apple.com`, `time.cloudflare.com`, and `pool.ntp.org` with 2s per provider, write a 0600 recent-good cache for 1h fallback when every provider is unavailable, and fail closed on provider outage or measured drift unless the operator explicitly uses `--allow-clock-skew` (`clock_skew_override`). Smoke downgrades only probe-unavailable network failures by default; measured drift still fails. Cache fallback emits `clock_sync_cache_fallback`. |
 | Grace-window plaintext cache in supervisor memory | Medium | When `cache_secrets_for_restart=true`, supervisor holds last decrypted secrets in mlocked memory for `grace.window` (default 60m, capped 4h) beyond JWT validity. Doubles on-host plaintext surface (child + supervisor). Approval becomes a gate on first arrival, not ongoing presence. **Opt-in per supervisor**; `--no-cache` disables it. |
+| Standing machine-bound supervisor lease reissues without recurring approval | Medium | When `standing_lease=true`, one establishing human approval mints a session that reissues itself against the enrolled machine's client key past the 24h ceiling, until revoked — for **one machine and one scope only**. If that machine's keychain-held client signing key is fully compromised, the attacker can reissue the single scoped secret unattended for the life of the lease, within the bounded window any active session already grants. The **first grant stays human** (Constitution II choke point unchanged), it adds **no new plaintext cache**, every reissue is a distinct hash-chained audit event, and it is **revocable in one operator action**. **Opt-in per supervisor + per machine**; governed by the ratified Principles II & V amendment (Constitution v3.0.0, 2026-07-14). See [`docs/STANDING-LEASE.md`](STANDING-LEASE.md). |
 | Log-pattern detection is version-coupled | Low | Patterns can drift across child versions. Primary signals are validators (fetch-time) and exit-78 (child contract). Log patterns are alert-only. |
 | Supervisor validators make outbound calls from agent host | Low | Validators hit `api.anthropic.com`, `api.openai.com`, etc. — the same endpoints the child will hit anyway. **Vault server makes no outbound calls.** Validators can be disabled per supervisor. |
 | Linux Secret Service retrievals leak an unzeroable string copy | Medium (Linux only) | `zalando/go-keyring` exposes only string APIs on Linux, so `linuxKeychain.Retrieve` necessarily routes the bot token / per-machine client signing scalar through a Go string (`v := backend.Get(...)` → `securebytes.New([]byte(v))`). The string copy lives in unmlocked heap until GC; mlock is applied only to the downstream SecureBytes. macOS retrievals are unaffected (the `/usr/bin/security` shell-out yields raw `[]byte`). Eliminating the residual requires swapping libraries or talking godbus directly. |
@@ -433,6 +476,11 @@ reading both, the docs need a fix.
   preserve the vault's no-outbound-internet boundary.)
 - Why is the grace-window cache opt-in? (It trades stricter secret
   isolation for restart resilience.)
+- What does a standing lease relax, and what does it NOT relax? (It relaxes
+  only the unattended reissue of an already-approved supervisor session, for
+  one machine and one scope. It does NOT auto-approve first grants — the
+  Constitution II choke point is unchanged — and it adds no new plaintext
+  cache.)
 
 ---
 
@@ -441,6 +489,7 @@ reading both, the docs need a fix.
 | Topic | See |
 |-------|-----|
 | Components, data flow, lifecycle | [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) |
+| Standing machine-bound supervisor lease (design + threat model) | [`docs/STANDING-LEASE.md`](STANDING-LEASE.md) |
 | API payloads + signature canonicalization | [`docs/API.md`](API.md) |
 | Server config + supervisor TOML | [`docs/CONFIG-SCHEMA.md`](CONFIG-SCHEMA.md) |
 | Lifecycle scenarios | [`docs/LIFECYCLE-SCENARIOS.md`](LIFECYCLE-SCENARIOS.md) |

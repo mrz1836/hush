@@ -84,7 +84,12 @@ func (s *Server) Validate() error { //nolint:cyclop,gocognit,gocyclo // rule-eng
 		}
 	}
 
-	// 7. max_supervisor_ttl bounds
+	// 7. max_supervisor_ttl bounds. This is the ORDINARY supervisor ceiling and
+	// stays hard-capped at 24h (DefaultSupervisorTTLMax). A machine-bound
+	// standing lease is deliberately NOT governed here: its longer window is a
+	// distinguished ceiling (DefaultStandingLeaseTTLMax) applied per-claim in the
+	// server's capTTL, so opting one supervisor into a standing lease never
+	// raises this global cap for every other supervisor on the host.
 	if s.Crypto.MaxSupervisorTTL <= s.Crypto.JWTDefaultTTL || s.Crypto.MaxSupervisorTTL > DefaultSupervisorTTLMax {
 		errs = append(errs, fmt.Errorf(
 			"field max_supervisor_ttl=%s (jwt_default_ttl=%s, cap=%s): %w",
