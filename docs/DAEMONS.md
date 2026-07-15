@@ -280,6 +280,39 @@ to force strict mode regardless of TOML.
 
 Documented residual risk: see [`docs/SECURITY.md`](SECURITY.md) §6.
 
+### Standing lease (`standing_lease`) — orthogonal to the grace cache
+
+`standing_lease` and `cache_secrets_for_restart` solve different halves of the
+always-on problem and can be set independently:
+
+- The **grace cache** changes *what plaintext the supervisor retains* — it
+  holds the last-decrypted secret set for up to 4h so an overnight crash can
+  restart without a fresh approval. It cannot bridge a full unattended day.
+- The **standing lease** changes *when the supervisor may reissue its own
+  session unattended* — after one human establishing approval, a machine-bound
+  supervisor session reissues itself with no further Discord approval, until
+  revoked. It adds **no new plaintext cache**.
+
+Reach for a standing lease when a daemon must fire on a fixed schedule around
+the clock — an evening bell, an overnight dead-man tripwire, a monthly
+heartbeat — with **zero recurring phone taps**. It is opt-in per supervisor
+**and** per machine (`standing_lease = true` plus a required
+`client_machine_index`), scoped to the supervisor's `scope`, audited on every
+reissue (a distinct `standing-reissue` audit event), and revocable in one
+operator action.
+
+The lifecycle is: **provision** (vault the scoped secret, set the flag, start
+the supervisor, tap Approve once), **rotate** (`hush secret rotate` +
+`hush client refresh` — no re-establishment needed), **revoke** (`hush revoke`
+the active session, drop the flag, reload — claims return to the 24h human
+floor), **monitor** (the `standing-reissue` audit events, watchdog `401`
+patterns, and the daemon's own run records). The establishing / first grant is
+still human — only reissue of an already-approved session is unattended.
+
+See `docs/LIFECYCLE-SCENARIOS.md` Scenario 17 for the end-to-end flow and
+`docs/STANDING-LEASE.md` for the full design + threat model; the accepted
+residual risk is in `docs/SECURITY.md` §6.
+
 ---
 
 ## 7. Status socket — the agent-visible freshness API
@@ -402,6 +435,7 @@ distinct supervisor; the old host's pidfile/socket can be removed.
 | Named lifecycle scenarios | [`docs/LIFECYCLE-SCENARIOS.md`](LIFECYCLE-SCENARIOS.md) |
 | Per-supervisor TOML schema | [`docs/CONFIG-SCHEMA.md`](CONFIG-SCHEMA.md) |
 | Threat model + grace-cache residual risk | [`docs/SECURITY.md`](SECURITY.md) |
+| Standing machine-bound lease (design + threat model) | [`docs/STANDING-LEASE.md`](STANDING-LEASE.md) |
 | Status socket JSON shape | [`docs/CONFIG-SCHEMA.md`](CONFIG-SCHEMA.md) |
 | HTTP API used during refill | [`docs/API.md`](API.md) |
 | Supervisor state machine | [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) §8 |

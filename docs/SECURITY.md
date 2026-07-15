@@ -412,10 +412,12 @@ approval**, until it is revoked. It is deliberately narrow:
   human-approval floor.
 
 Because a standing grant that reissues without a fresh approval relaxes
-Principles II and V, it requires a ratified constitutional amendment. The full
-design, threat model, and lifecycle (provision / rotate / revoke / monitor)
-live in [`docs/STANDING-LEASE.md`](STANDING-LEASE.md); the accepted residual
-risk is recorded in §6; the amendment is in
+Principles II and V, it is governed by a **ratified** constitutional amendment
+— Amendment 1 (machine-bound standing supervisor lease), ratified 2026-07-14,
+which bumped the Constitution to v3.0.0 and folded the carve-out into
+Principles II & V. The full design, threat model, and lifecycle (provision /
+rotate / revoke / monitor) live in [`docs/STANDING-LEASE.md`](STANDING-LEASE.md);
+the accepted residual risk is recorded in §6; the ratified amendment is in
 `.specify/memory/constitution.md`.
 
 ---
@@ -449,7 +451,7 @@ Documented for transparency. These are accepted trade-offs.
 | `--format eval` stdout leakage | Medium | Plaintext printed to stdout — captured by terminal scrollback, tmux, `script`. Use `--exec` whenever possible. `--format eval` is opt-in. |
 | NTP clock skew | Low | 30s timestamp window requires synced clocks. Init/serve use read-only SNTP probes against `time.apple.com`, `time.cloudflare.com`, and `pool.ntp.org` with 2s per provider, write a 0600 recent-good cache for 1h fallback when every provider is unavailable, and fail closed on provider outage or measured drift unless the operator explicitly uses `--allow-clock-skew` (`clock_skew_override`). Smoke downgrades only probe-unavailable network failures by default; measured drift still fails. Cache fallback emits `clock_sync_cache_fallback`. |
 | Grace-window plaintext cache in supervisor memory | Medium | When `cache_secrets_for_restart=true`, supervisor holds last decrypted secrets in mlocked memory for `grace.window` (default 60m, capped 4h) beyond JWT validity. Doubles on-host plaintext surface (child + supervisor). Approval becomes a gate on first arrival, not ongoing presence. **Opt-in per supervisor**; `--no-cache` disables it. |
-| Standing machine-bound supervisor lease reissues without recurring approval | Medium | When `standing_lease=true`, one establishing human approval mints a session that reissues itself against the enrolled machine's client key past the 24h ceiling, until revoked — for **one machine and one scope only**. If that machine's keychain-held client signing key is fully compromised, the attacker can reissue the single scoped secret unattended for the life of the lease, within the bounded window any active session already grants. The **first grant stays human** (Constitution II choke point unchanged), it adds **no new plaintext cache**, every reissue is a distinct hash-chained audit event, and it is **revocable in one operator action**. **Opt-in per supervisor + per machine**; requires the ratified Principles II & V amendment. See [`docs/STANDING-LEASE.md`](STANDING-LEASE.md). |
+| Standing machine-bound supervisor lease reissues without recurring approval | Medium | When `standing_lease=true`, one establishing human approval mints a session that reissues itself against the enrolled machine's client key past the 24h ceiling, until revoked — for **one machine and one scope only**. If that machine's keychain-held client signing key is fully compromised, the attacker can reissue the single scoped secret unattended for the life of the lease, within the bounded window any active session already grants. The **first grant stays human** (Constitution II choke point unchanged), it adds **no new plaintext cache**, every reissue is a distinct hash-chained audit event, and it is **revocable in one operator action**. **Opt-in per supervisor + per machine**; governed by the ratified Principles II & V amendment (Constitution v3.0.0, 2026-07-14). See [`docs/STANDING-LEASE.md`](STANDING-LEASE.md). |
 | Log-pattern detection is version-coupled | Low | Patterns can drift across child versions. Primary signals are validators (fetch-time) and exit-78 (child contract). Log patterns are alert-only. |
 | Supervisor validators make outbound calls from agent host | Low | Validators hit `api.anthropic.com`, `api.openai.com`, etc. — the same endpoints the child will hit anyway. **Vault server makes no outbound calls.** Validators can be disabled per supervisor. |
 | Linux Secret Service retrievals leak an unzeroable string copy | Medium (Linux only) | `zalando/go-keyring` exposes only string APIs on Linux, so `linuxKeychain.Retrieve` necessarily routes the bot token / per-machine client signing scalar through a Go string (`v := backend.Get(...)` → `securebytes.New([]byte(v))`). The string copy lives in unmlocked heap until GC; mlock is applied only to the downstream SecureBytes. macOS retrievals are unaffected (the `/usr/bin/security` shell-out yields raw `[]byte`). Eliminating the residual requires swapping libraries or talking godbus directly. |

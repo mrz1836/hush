@@ -417,6 +417,68 @@ Expected outcomes:
 
 ---
 
+## Scenario 17 — standing lease: one approval, no recurring tap
+
+Applies only to a supervisor that opts in with `standing_lease = true` plus a
+required `client_machine_index` (see `docs/CONFIG-SCHEMA.md` and
+`docs/STANDING-LEASE.md`). Every supervisor that omits `standing_lease` behaves
+exactly as Scenarios 2–9 describe — this scenario is inert unless explicitly
+opted in, and every other supervisor keeps the 24h human-approval floor.
+
+### 17A — establishing grant (human, unchanged)
+
+Flow:
+1. supervisor boots and sends a signed `/claim` with `session_type=supervisor`,
+   `standing_lease=true`, and its `client_machine_index`
+2. the claim walks the full pipeline and lands on the human approver — the
+   Constitution II choke point is untouched
+3. the approver taps Approve **once**
+4. the server issues the supervisor JWT and records a machine-bound standing
+   grant for `(client_ip, scope)`; this first grant is an ordinary `approved`
+   audit event, not a `standing-reissue`
+
+Expected outcomes:
+- the first grant is a normal human approval — a standing lease never
+  auto-approves a first/fresh request
+- the machine-bound standing grant is now established
+
+### 17B — unattended reissue (no Discord approval)
+
+Flow:
+1. the standing session's window lapses, or the supervisor cold-restarts after
+   the window
+2. supervisor sends a fresh signed `/claim` (still `standing_lease=true`, same
+   `client_machine_index`)
+3. the server finds the matching machine-bound standing grant for the same
+   `(client_ip, scope)` and reissues a fresh full-window session — up to
+   `MaxStandingLeaseTTL`, not the remaining 24h window — **without** calling
+   the approver
+4. the server appends a distinct `standing-reissue` audit event
+5. the supervisor fetches secrets and (re)starts the child; the scheduled
+   action fires
+
+Expected outcomes:
+- no Discord DM, no phone tap — the reissue rides the one establishing approval
+- the reissue is a distinct, hash-chained audit event (never silent)
+- a cold restart after the old window does NOT park at `awaiting-approval`
+
+### 17C — machine mismatch or revocation falls back to human
+
+Flow:
+1. a claim presents `standing_lease=true` but is signed by a different
+   machine's key (mismatched `client_machine_index`), or the prior grant was
+   revoked, or the standing flag was dropped and the supervisor reloaded
+2. no matching machine-bound standing grant exists
+3. the claim falls through to the human approver exactly as an ordinary
+   supervisor claim would
+
+Expected outcomes:
+- machine binding degrades safely to the 24h human-approval floor; it never
+  silently reissues for the wrong machine
+- one operator action (`hush revoke` + drop the flag + reload) pulls the lease
+
+---
+
 ## Required alert classes
 
 Distinct operator-visible alert classes:
@@ -445,6 +507,8 @@ The scenarios above cover the questions operators ask most often:
 - What happens when Discord is down?
 - What happens when the vault restarts?
 - What happens overnight, with and without the grace cache?
+- What happens for an always-on daemon that must never page the phone?
+  (Scenario 17 — the opt-in machine-bound standing lease.)
 
 If a behaviour you need isn't covered, open an issue — these are the
 source of truth, and gaps are bugs.

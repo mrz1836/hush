@@ -7,10 +7,10 @@
 > to the "one approval per bounded TTL" model — proposed as a constitutional
 > amendment (Principles II & V), not a blanket auto-approve.
 >
-> Status: **DESIGN — pending owner ratification.** No production code ships
-> until the amendment in `.specify/memory/constitution.md` is ratified. See
-> §9. Pairs with `docs/DAEMONS.md`, `docs/CONFIG-SCHEMA.md`, and
-> `docs/SECURITY.md` §4 / §6.
+> Status: **RATIFIED 2026-07-14.** The Principles II & V amendment in
+> `.specify/memory/constitution.md` is ratified (Constitution v3.0.0), so this
+> design is in force. See §9. Pairs with `docs/DAEMONS.md`,
+> `docs/CONFIG-SCHEMA.md`, and `docs/SECURITY.md` §4 / §6.
 
 ---
 
@@ -317,12 +317,10 @@ reissues a supervisor session without a fresh approval. That relaxes:
   revoked" for opted-in sessions only.
 
 Because this redefines two principles, it is a **MAJOR amendment** (Governance
-§3: incompatible redefinition). The proposed amendment text lives in
-`.specify/memory/constitution.md`, marked `PROPOSED — pending owner
-ratification`. **No production code in `internal/server` or the config
-packages ships until that amendment is ratified.** On ratification the
-constitution version bumps `2.0.0 → 3.0.0` and the sync-impact report records
-the carve-out.
+§3: incompatible redefinition). The amendment text lives in
+`.specify/memory/constitution.md`, **ratified 2026-07-14** (owner sign-off) and
+folded into Principles II & V. The constitution version bumped `2.0.0 → 3.0.0`
+and the sync-impact report records the carve-out.
 
 ---
 

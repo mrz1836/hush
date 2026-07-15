@@ -103,6 +103,41 @@ could lie in any of them. Authorization decisions trust the
 cryptographic identity (client signature, `machine_name`, peer IP)
 only.
 
+### `POST /h/<prefix>/claim` — machine-bound standing-lease reissue (opt-in)
+
+A supervisor claim MAY additionally carry two OPTIONAL fields that opt into a
+machine-bound **standing lease**:
+
+| Field | Type | Purpose |
+|---|---|---|
+| `standing_lease` | bool | opt this supervisor session into standing-lease reissue |
+| `client_machine_index` | int | the machine-binding anchor; must be non-zero when `standing_lease` is set |
+
+Both are `omitempty` on the wire; a claim that omits them is byte-identical to
+a pre-standing-lease claim. The server rejects `standing_lease` with
+`400 bad_request` unless `session_type = "supervisor"` and
+`client_machine_index` is non-zero.
+
+Behavior:
+- The **establishing / first** standing claim is an ordinary claim — it walks
+  the full pipeline and requires a **human Discord approval**. A standing lease
+  never auto-approves a first/fresh request; the Constitution II choke point is
+  unchanged.
+- Once a machine-bound grant is established, a later standing claim from the
+  **same** `client_machine_index` for the same `(client_ip, scope)` reissues a
+  fresh full-window session (up to `MaxStandingLeaseTTL`) **without** invoking
+  the approver — no Discord DM.
+- A standing claim whose machine index does not match the established grant, or
+  one made after revocation, falls back to the human approver.
+
+Audit:
+- an unattended reissue emits a claim-audit event with
+  `outcome = "standing-reissue"`, distinct from the `approved` outcome of a
+  human grant; the reissue is never silent.
+
+See [`docs/STANDING-LEASE.md`](STANDING-LEASE.md) for the design + threat model
+and [`docs/SECURITY.md`](SECURITY.md) §4.1 / §6 for the accepted residual risk.
+
 ### `POST /h/<prefix>/me`
 
 Purpose:
@@ -240,7 +275,9 @@ Response:
 ## API invariants
 
 - no public endpoint model
-- no auto-approve path
+- no auto-approve path — a standing-lease reissue rides an already-established
+  human grant and never approves a first/fresh request (see the `/claim`
+  standing-lease section)
 - no plaintext secret response body
 - no endpoint that writes secret material to agent disk
 - validators run on the supervisor, not the vault server API surface
