@@ -29,6 +29,15 @@ type IssueParams struct {
 	MaxUses         int
 	EphemeralPubKey string
 	SessionType     SessionType
+
+	// StandingLease marks the in-store session as a machine-bound standing
+	// lease. A standing session may be reissued for a fresh full window on a
+	// later claim from the same machine without a new human approval, riding
+	// the one-time human-established grant. ClientMachineIndex is the machine
+	// anchor the reissue path matches against. Both are zero for ordinary
+	// interactive and supervisor sessions.
+	StandingLease      bool
+	ClientMachineIndex uint32
 }
 
 // Token is the in-store record returned by Issue. Encoded is the wire
@@ -49,6 +58,13 @@ type Token struct {
 	MaxUses     int
 	ClientIP    string
 	Scope       []string
+
+	// StandingLease and ClientMachineIndex mark a machine-bound standing
+	// lease so the /claim resumption path can recognize an established grant
+	// and reissue a fresh full-window session for the same machine without a
+	// new human approval. Both are zero for ordinary sessions.
+	StandingLease      bool
+	ClientMachineIndex uint32
 }
 
 //nolint:gochecknoglobals // sentinel-class test seam; set-once at package load, replaced only by tests for deterministic JTI
@@ -134,12 +150,14 @@ func Issue(ctx context.Context, signKey *ecdsa.PrivateKey, params IssueParams) (
 	}
 
 	return &Token{
-		JTI:         jti,
-		Encoded:     signed,
-		ExpiresAt:   expiresAt,
-		SessionType: params.SessionType,
-		MaxUses:     maxUses,
-		ClientIP:    params.ClientIP,
-		Scope:       append([]string(nil), params.Scope...),
+		JTI:                jti,
+		Encoded:            signed,
+		ExpiresAt:          expiresAt,
+		SessionType:        params.SessionType,
+		MaxUses:            maxUses,
+		ClientIP:           params.ClientIP,
+		Scope:              append([]string(nil), params.Scope...),
+		StandingLease:      params.StandingLease,
+		ClientMachineIndex: params.ClientMachineIndex,
 	}, nil
 }

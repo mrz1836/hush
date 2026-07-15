@@ -13,6 +13,7 @@ var (
 	DefaultRefreshNudgeBefore       = 30 * time.Minute
 	DefaultBootRetryTimeout         = 10 * time.Minute
 	DefaultCacheSecretsForRestart   = false
+	DefaultStandingLease            = false
 	DefaultGraceWindow              = 60 * time.Minute
 	DefaultLogLevel                 = "info"
 	DefaultRestartOnCleanExit       = true

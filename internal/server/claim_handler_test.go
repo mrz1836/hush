@@ -249,7 +249,12 @@ type claimBodyOpts struct {
 	MachineName     string
 	SupervisorName  string
 	ForceApproval   bool
-	Fingerprint     string
+	// StandingLease + ClientMachineIndex opt the claim into the machine-bound
+	// standing lease. ClientMachineIndex is emitted on the wire only when
+	// non-zero, mirroring the omitempty wire shape.
+	StandingLease      bool
+	ClientMachineIndex uint32
+	Fingerprint        string
 	// SignWithKey lets tests sign with a different (incorrect) private key
 	// to drive the bad_signature path.
 	SignWithKey *ecdsa.PrivateKey
@@ -307,17 +312,19 @@ func signedClaimBody(t *testing.T, h *claimTestHarness, o claimBodyOpts) []byte 
 		timestamp = time.Now()
 	}
 	payload := signedPayload{
-		EphemeralPubKey: o.EphemeralPubKey,
-		ForceApproval:   o.ForceApproval,
-		MachineName:     o.MachineName,
-		Nonce:           o.Nonce,
-		Reason:          o.Reason,
-		RequestID:       o.RequestID,
-		Scope:           o.Scope,
-		SessionType:     o.SessionType,
-		SupervisorName:  o.SupervisorName,
-		Timestamp:       timestamp.Format(time.RFC3339Nano),
-		TTL:             o.TTL.String(),
+		ClientMachineIndex: o.ClientMachineIndex,
+		EphemeralPubKey:    o.EphemeralPubKey,
+		ForceApproval:      o.ForceApproval,
+		MachineName:        o.MachineName,
+		Nonce:              o.Nonce,
+		Reason:             o.Reason,
+		RequestID:          o.RequestID,
+		Scope:              o.Scope,
+		SessionType:        o.SessionType,
+		StandingLease:      o.StandingLease,
+		SupervisorName:     o.SupervisorName,
+		Timestamp:          timestamp.Format(time.RFC3339Nano),
+		TTL:                o.TTL.String(),
 	}
 	canonical, err := sign.CanonicalJSON(payload)
 	if err != nil {
@@ -349,6 +356,10 @@ func signedClaimBody(t *testing.T, h *claimTestHarness, o claimBodyOpts) []byte 
 		"request_id":             o.RequestID,
 		"machine_name":           o.MachineName,
 		"client_key_fingerprint": fp,
+		// Emitted unconditionally; both are zero-valued (and thus signature-
+		// neutral, since CanonicalJSON always includes them) on ordinary claims.
+		"standing_lease":       o.StandingLease,
+		"client_machine_index": o.ClientMachineIndex,
 	}
 	if o.SupervisorName != "" {
 		body["supervisor_name"] = o.SupervisorName
@@ -2253,5 +2264,208 @@ func TestClaim_InteractiveSessionDoesNotResume(t *testing.T) {
 	}
 	if got := len(h.approver.calls); got != 2 {
 		t.Fatalf("approver calls=%d want 2 (interactive must NOT resume)", got)
+	}
+}
+
+// ---- Standing lease (machine-bound) --------------------------------------
+
+// standingLeaseScopeName is the single secret a machine-bound standing lease is
+// scoped to across these tests.
+const standingLeaseScopeName = "STANDING_DAEMON_TOKEN"
+
+// doClaimOK performs a signed claim, asserts a 200, and returns the decoded
+// success response. Collapses the repeated status-assert + decode across the
+// standing-lease tests.
+func doClaimOK(t *testing.T, h *claimTestHarness, o claimBodyOpts) claimResponse {
+	t.Helper()
+	rr, _ := h.do(t, signedClaimBody(t, h, o))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("claim status=%d want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	var resp claimResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode claim response: %v", err)
+	}
+	return resp
+}
+
+// ordinarySupervisorOpts builds a non-standing supervisor claim for the shared
+// standing-lease scope, with the given TTL.
+func ordinarySupervisorOpts(h *claimTestHarness, ttl time.Duration) claimBodyOpts {
+	o := defaultClaimBodyOpts(h)
+	o.SessionType = "supervisor"
+	o.SupervisorName = "standing-daemon"
+	o.TTL = ttl
+	o.Scope = []string{standingLeaseScopeName}
+	return o
+}
+
+// standingSupervisorOpts builds a machine-bound standing-lease supervisor claim
+// for the given machine index. The requested 30h deliberately exceeds the
+// ordinary 24h supervisor ceiling so a full-window reissue is observable. The
+// establishing grant still walks the human approver; only a later claim from
+// the same machine reissues unattended.
+func standingSupervisorOpts(h *claimTestHarness, machineIndex uint32) claimBodyOpts {
+	o := ordinarySupervisorOpts(h, 30*time.Hour)
+	o.StandingLease = true
+	o.ClientMachineIndex = machineIndex
+	return o
+}
+
+// untilExpiry parses an RFC3339Nano expires_at and returns the remaining
+// duration from now — used to distinguish a fresh full-window standing reissue
+// from an inherited remaining-window resume.
+func untilExpiry(t *testing.T, expiresAt string) time.Duration {
+	t.Helper()
+	exp, err := time.Parse(time.RFC3339Nano, expiresAt)
+	if err != nil {
+		t.Fatalf("parse expires_at %q: %v", expiresAt, err)
+	}
+	return time.Until(exp)
+}
+
+// approveScript builds an approver script of n identical approve decisions.
+func approveScript(n int, ttl time.Duration) harnessOpt {
+	decs := make([]Decision, n)
+	errs := make([]error, n)
+	for i := range decs {
+		decs[i] = Decision{Approved: true, GrantedTTL: ttl, ApproverID: "human"}
+	}
+	return withApproverScript(decs, errs)
+}
+
+// TestClaim_StandingLease_ReissuesFullWindowWithoutApprover — a machine-bound
+// standing lease: the first grant walks the human approver, but a later claim
+// from the same machine reissues a fresh FULL-WINDOW session (past the ordinary
+// 24h supervisor ceiling, up to the standing ceiling) WITHOUT calling the
+// approver, and audits the reissue distinctly.
+func TestClaim_StandingLease_ReissuesFullWindowWithoutApprover(t *testing.T) {
+	t.Parallel()
+	h := newClaimHarness(t, approveScript(1, 30*time.Hour))
+
+	// Establishing claim — walks the human approver. Requested 30h is capped
+	// to the ordinary 20h supervisor ceiling for the first (human) grant.
+	resp1 := doClaimOK(t, h, standingSupervisorOpts(h, 1))
+	if got := len(h.approver.calls); got != 1 {
+		t.Fatalf("after establishing claim: approver calls=%d want 1", got)
+	}
+	if until := untilExpiry(t, resp1.ExpiresAt); until > 21*time.Hour {
+		t.Fatalf("establishing grant until=%s want ≤ ordinary 20h ceiling", until)
+	}
+
+	// Standing reissue — same machine, no approver, fresh FULL window.
+	o2 := standingSupervisorOpts(h, 1)
+	o2.Nonce = freshNonce()
+	resp2 := doClaimOK(t, h, o2)
+
+	// The whole point: the approver was NOT invoked a second time.
+	if got := len(h.approver.calls); got != 1 {
+		t.Fatalf("after standing reissue: approver calls=%d want 1 (standing reissue must skip approver)", got)
+	}
+	if resp1.JTI == resp2.JTI {
+		t.Fatalf("standing reissue JTI %q equals establishing — expected fresh JTI", resp2.JTI)
+	}
+	// Fresh full window: past the ordinary 24h supervisor ceiling, up to 30h.
+	assertFullStandingWindow(t, resp2.ExpiresAt)
+
+	// The reissue audits distinctly as standing-reissue, never plain approved.
+	events := h.auditEvents()
+	if got := events[len(events)-1].Detail["outcome"]; got != string(outcomeStandingReissue) {
+		t.Fatalf("last audit outcome=%q want %q", got, outcomeStandingReissue)
+	}
+}
+
+// assertFullStandingWindow asserts a reissued session carries a fresh full
+// window — past the ordinary 24h supervisor ceiling, up to the requested 30h.
+func assertFullStandingWindow(t *testing.T, expiresAt string) {
+	t.Helper()
+	until := untilExpiry(t, expiresAt)
+	if until <= 24*time.Hour || until > 31*time.Hour {
+		t.Fatalf("standing reissue until=%s want fresh full window (24h, 30h]", until)
+	}
+}
+
+// TestClaim_StandingLease_WrongMachineIndexFallsBackToApproval — a standing
+// claim from a DIFFERENT machine index than the established grant must NOT ride
+// the standing lease; it falls back to the human approver.
+func TestClaim_StandingLease_WrongMachineIndexFallsBackToApproval(t *testing.T) {
+	t.Parallel()
+	h := newClaimHarness(t, approveScript(2, 30*time.Hour))
+
+	doClaimOK(t, h, standingSupervisorOpts(h, 1))
+
+	// Same client IP + scope, but machine index 2 (the grant is bound to 1).
+	o2 := standingSupervisorOpts(h, 2)
+	o2.Nonce = freshNonce()
+	doClaimOK(t, h, o2)
+
+	if got := len(h.approver.calls); got != 2 {
+		t.Fatalf("approver calls=%d want 2 (wrong machine index must NOT reissue)", got)
+	}
+}
+
+// TestClaim_StandingLease_RevokedGrantFallsBackToApproval — once the
+// established standing grant is revoked, the next standing claim finds no live
+// session and must obtain a fresh human-established grant.
+func TestClaim_StandingLease_RevokedGrantFallsBackToApproval(t *testing.T) {
+	t.Parallel()
+	h := newClaimHarness(t, approveScript(2, 30*time.Hour))
+
+	resp1 := doClaimOK(t, h, standingSupervisorOpts(h, 1))
+
+	// Revoke the established standing grant.
+	if existed, _ := h.server.tokenStore.RevokeIdempotent(resp1.JTI); !existed {
+		t.Fatalf("revoke established grant %q: not found", resp1.JTI)
+	}
+
+	o2 := standingSupervisorOpts(h, 1)
+	o2.Nonce = freshNonce()
+	doClaimOK(t, h, o2)
+
+	if got := len(h.approver.calls); got != 2 {
+		t.Fatalf("approver calls=%d want 2 (revoked grant must re-approve)", got)
+	}
+}
+
+// TestClaim_StandingLease_OrdinaryPriorGrantFallsBackToApproval — a standing
+// claim must NOT escalate an ordinary (non-standing) supervisor grant into a
+// standing lease; it falls back to the human approver so the first standing
+// grant is always human-established.
+func TestClaim_StandingLease_OrdinaryPriorGrantFallsBackToApproval(t *testing.T) {
+	t.Parallel()
+	h := newClaimHarness(t, approveScript(2, 4*time.Hour))
+
+	// Establish an ORDINARY (non-standing) supervisor session.
+	doClaimOK(t, h, ordinarySupervisorOpts(h, 4*time.Hour))
+
+	// A standing claim over that ordinary grant must go through the approver.
+	o2 := standingSupervisorOpts(h, 1)
+	o2.Nonce = freshNonce()
+	doClaimOK(t, h, o2)
+
+	if got := len(h.approver.calls); got != 2 {
+		t.Fatalf("approver calls=%d want 2 (standing must not escalate an ordinary grant)", got)
+	}
+}
+
+// TestClaim_StandingLease_OrdinaryResumeUnchanged — a non-standing supervisor
+// still resumes by inheriting only the REMAINING window; the standing path
+// leaves ordinary resumption behavior untouched.
+func TestClaim_StandingLease_OrdinaryResumeUnchanged(t *testing.T) {
+	t.Parallel()
+	h := newClaimHarness(t, approveScript(1, 4*time.Hour))
+
+	doClaimOK(t, h, ordinarySupervisorOpts(h, 4*time.Hour))
+
+	o2 := ordinarySupervisorOpts(h, 4*time.Hour)
+	o2.Nonce = freshNonce()
+	resp2 := doClaimOK(t, h, o2)
+
+	if got := len(h.approver.calls); got != 1 {
+		t.Fatalf("approver calls=%d want 1 (ordinary resume must skip approver)", got)
+	}
+	// Inherited remaining window — never a full window past the 4h grant.
+	if until := untilExpiry(t, resp2.ExpiresAt); until > 4*time.Hour+time.Minute {
+		t.Fatalf("ordinary resume until=%s want ≤ inherited 4h remaining", until)
 	}
 }

@@ -50,6 +50,7 @@ type outcomeLabel string
 
 const (
 	outcomeApproved           outcomeLabel = "approved"
+	outcomeStandingReissue    outcomeLabel = "standing-reissue"
 	outcomeBadRequest         outcomeLabel = "bad-request"
 	outcomeBadSignature       outcomeLabel = "bad-signature"
 	outcomeNonceReplay        outcomeLabel = "nonce-replay"
@@ -86,6 +87,7 @@ var (
 	errShapeSupervisorNameSet     = errors.New("server: claim: interactive session must not carry supervisor_name")
 	errShapeSupervisorNameInvalid = errors.New("server: claim: supervisor_name invalid")
 	errShapeAgentFieldTooLong     = errors.New("server: claim: agent context field exceeds maximum length")
+	errShapeStandingLeaseInvalid  = errors.New("server: claim: standing_lease requires supervisor session and non-zero client_machine_index")
 )
 
 // Static error codes returned in response bodies. The set is exhaustive;
@@ -188,6 +190,15 @@ type claimRequest struct {
 	ClientKeyFingerprint string   `json:"client_key_fingerprint"`
 	ForceApproval        bool     `json:"force_approval,omitempty"`
 
+	// StandingLease + ClientMachineIndex opt a supervisor claim into the
+	// machine-bound standing lease. When true, a later claim from the same
+	// machine (matching client_machine_index) may reissue a fresh full-window
+	// session against the grant a human already established — no recurring
+	// human approval. Both are absent (zero) on ordinary claims. The first
+	// grant on a machine still walks the human approver (Constitution II).
+	StandingLease      bool   `json:"standing_lease,omitempty"`
+	ClientMachineIndex uint32 `json:"client_machine_index,omitempty"`
+
 	// Optional agent-context fields. Visible to the Discord approver
 	// and recorded in the audit log. Empty values are omitted from
 	// canonical-JSON so old clients (no agent context) remain
@@ -235,22 +246,24 @@ type errorResponse struct {
 // produces the same canonical bytes as a pre-PR-4 client — preserving
 // signature compatibility across the upgrade.
 type signedPayload struct {
-	AgentIdentity   string   `json:"agent_identity,omitempty"`
-	AgentModel      string   `json:"agent_model,omitempty"`
-	CommandPreview  string   `json:"command_preview,omitempty"`
-	EphemeralPubKey string   `json:"ephemeral_pubkey"`
-	ForceApproval   bool     `json:"force_approval,omitempty"`
-	MachineName     string   `json:"machine_name"`
-	Nonce           string   `json:"nonce"`
-	Reason          string   `json:"reason"`
-	RecentSummary   string   `json:"recent_summary,omitempty"`
-	RequestID       string   `json:"request_id"`
-	Scope           []string `json:"scope"`
-	SessionType     string   `json:"session_type"`
-	SupervisorName  string   `json:"supervisor_name,omitempty"`
-	Timestamp       string   `json:"timestamp"`
-	ToolName        string   `json:"tool_name,omitempty"`
-	TTL             string   `json:"ttl"`
+	AgentIdentity      string   `json:"agent_identity,omitempty"`
+	AgentModel         string   `json:"agent_model,omitempty"`
+	ClientMachineIndex uint32   `json:"client_machine_index,omitempty"`
+	CommandPreview     string   `json:"command_preview,omitempty"`
+	EphemeralPubKey    string   `json:"ephemeral_pubkey"`
+	ForceApproval      bool     `json:"force_approval,omitempty"`
+	MachineName        string   `json:"machine_name"`
+	Nonce              string   `json:"nonce"`
+	Reason             string   `json:"reason"`
+	RecentSummary      string   `json:"recent_summary,omitempty"`
+	RequestID          string   `json:"request_id"`
+	Scope              []string `json:"scope"`
+	SessionType        string   `json:"session_type"`
+	StandingLease      bool     `json:"standing_lease,omitempty"`
+	SupervisorName     string   `json:"supervisor_name,omitempty"`
+	Timestamp          string   `json:"timestamp"`
+	ToolName           string   `json:"tool_name,omitempty"`
+	TTL                string   `json:"ttl"`
 }
 
 // RegisterHandlers mounts the POST /claim route on the chassis. Must be
@@ -358,10 +371,16 @@ func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
 	// existing approval window; if the operator wants longer, they must
 	// wait for the old session to expire and re-approve.
 	//
+	// A machine-bound standing lease (standing_lease) is the one exception to
+	// the "never extend" rule: it reissues a fresh full-window session against
+	// the grant a human already established for the same machine — the
+	// requestedTTL is passed through so the standing path can re-anchor to the
+	// full standing ceiling instead of the remaining window.
+	//
 	// Eliminates the per-restart user-visible "wait 5 minutes for Discord
 	// rate-limit window" cycle for long-lived supervisors — the supervisor
 	// process restarts cheap, the human's approval cadence stays intact.
-	if !req.ForceApproval && s.tryResumeSupervisorSession(w, r, ctx, req, sessionType, peer, cappedTTL) {
+	if !req.ForceApproval && s.tryResumeSupervisorSession(w, r, ctx, req, sessionType, peer, requestedTTL, cappedTTL) {
 		return
 	}
 
@@ -395,7 +414,7 @@ func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case apprErr == nil && dec.Approved && dec.GrantedTTL > 0:
 		// ONLY path to a 200. Constitution II — no other branch may issue.
-		s.issueAndRespond(w, r, ctx, req, sessionType, peer, cappedTTL, dec)
+		s.issueAndRespond(w, r, ctx, req, sessionType, peer, cappedTTL, outcomeApproved)
 		return
 	case errors.Is(apprErr, ErrApproverDenied):
 		s.respondApproverError(w, ctx, http.StatusForbidden, errCodeDenied,
@@ -420,15 +439,24 @@ func (s *Server) handleClaim(w http.ResponseWriter, r *http.Request) {
 // tryResumeSupervisorSession implements Stage 6.5 session resumption: when a
 // SessionSupervisor caller already holds a live, non-revoked token for this
 // exact (ClientIP, Scope) tuple, issue a fresh JWT carrying the caller's NEW
-// EphemeralPubKey while inheriting the remaining TTL from the old session,
-// then revoke the old JTI. Returns true when resumption fired (caller MUST
-// return). Returns false when the request should flow through the normal
-// approver path.
+// EphemeralPubKey. Returns true when resumption fired (caller MUST return).
+// Returns false when the request should flow through the human approver path.
 //
-// Bypasses the approver entirely — no DM, no rate-limit, no keychain prompt.
-// The TTL cap means we never silently extend an existing approval window; if
-// the operator wants longer, they must wait for the old session to expire
-// and re-approve.
+// Two shapes ride this fast path, both bypassing the approver (no DM, no
+// rate-limit, no keychain prompt):
+//
+//   - Ordinary supervisor resume — inherits only the REMAINING TTL of the
+//     live session; it never extends the window a human granted. If the
+//     operator wants longer, they wait for the old session to expire and
+//     re-approve.
+//   - Machine-bound standing lease — when the incoming claim opts into a
+//     standing lease AND the live session is itself a standing grant for the
+//     SAME client_machine_index, reissue a fresh FULL-WINDOW session (the
+//     standing ceiling) riding the one-time human-established grant, so a
+//     scheduled daemon never needs a recurring human approval. Any mismatch —
+//     a standing claim over an ordinary grant, or a different machine index —
+//     falls through to the human approver so the FIRST grant on a machine is
+//     always human-established (Constitution II).
 func (s *Server) tryResumeSupervisorSession(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -436,6 +464,7 @@ func (s *Server) tryResumeSupervisorSession(
 	req *claimRequest,
 	sessionType SessionType,
 	peer netip.Addr,
+	requestedTTL time.Duration,
 	cappedTTL time.Duration,
 ) bool {
 	if sessionType != SessionSupervisor {
@@ -449,11 +478,34 @@ func (s *Server) tryResumeSupervisorSession(
 	if remaining <= 0 {
 		return false
 	}
+
+	// Standing-lease reissue. Only fires when the live grant is a standing
+	// grant bound to the same machine index the caller presents; otherwise the
+	// claim must obtain a fresh human-established grant.
+	if req.StandingLease {
+		if !existing.StandingLease || existing.ClientMachineIndex != req.ClientMachineIndex {
+			return false
+		}
+		standingTTL := capTTL(sessionType, requestedTTL, s.cfg.Crypto, true)
+		s.issueAndRespond(w, r, ctx, req, sessionType, peer, standingTTL, outcomeStandingReissue)
+		// Best-effort revoke of the old token so a stale JWT fails closed.
+		_, _ = s.tokenStore.RevokeIdempotent(existing.JTI)
+		s.logOpsEvent(
+			ctx, "claim standing-reissue",
+			"request_id", RequestID(ctx),
+			"client_ip", peer.String(),
+			"old_jti", existing.JTI,
+			"machine_index", req.ClientMachineIndex,
+			"reissued_ttl", standingTTL.String(),
+		)
+		return true
+	}
+
 	resumedTTL := cappedTTL
 	if resumedTTL > remaining {
 		resumedTTL = remaining
 	}
-	s.issueAndRespond(w, r, ctx, req, sessionType, peer, resumedTTL, Decision{Approved: true, GrantedTTL: resumedTTL, ApproverID: "resumed:" + existing.JTI})
+	s.issueAndRespond(w, r, ctx, req, sessionType, peer, resumedTTL, outcomeApproved)
 	// Best-effort revoke of the old token so subsequent /request calls
 	// bearing the prior JWT fail closed. Failure is non-fatal: the new token
 	// was already issued and the old one will expire naturally within
@@ -481,7 +533,7 @@ func (s *Server) issueAndRespond(
 	sessionType SessionType,
 	peer netip.Addr,
 	cappedTTL time.Duration,
-	_ Decision,
+	outcome outcomeLabel,
 ) {
 	maxUses := s.cfg.Crypto.DefaultMaxUses
 	if maxUses <= 0 {
@@ -493,14 +545,16 @@ func (s *Server) issueAndRespond(
 	}
 
 	tok, err := s.tokenIssuer(ctx, token.IssueParams{
-		Now:             s.clock(),
-		TTL:             cappedTTL,
-		Scope:           sortedScope(req.Scope),
-		ClientIP:        peer.String(),
-		RequestID:       RequestID(ctx),
-		MaxUses:         maxUses,
-		EphemeralPubKey: req.EphemeralPubKey,
-		SessionType:     tokenSession,
+		Now:                s.clock(),
+		TTL:                cappedTTL,
+		Scope:              sortedScope(req.Scope),
+		ClientIP:           peer.String(),
+		RequestID:          RequestID(ctx),
+		MaxUses:            maxUses,
+		EphemeralPubKey:    req.EphemeralPubKey,
+		SessionType:        tokenSession,
+		StandingLease:      req.StandingLease,
+		ClientMachineIndex: req.ClientMachineIndex,
 	})
 	if err != nil {
 		// Token mint failure is treated as unknown-outcome (fail-closed):
@@ -517,13 +571,13 @@ func (s *Server) issueAndRespond(
 		return
 	}
 
-	detail := buildAuditDetail(outcomeApproved, sortedScope(req.Scope), sessionType, cappedTTL, tok.JTI)
+	detail := buildAuditDetail(outcome, sortedScope(req.Scope), sessionType, cappedTTL, tok.JTI)
 	s.emitClaimAudit(ctx, RequestID(ctx), peer, detail)
 	s.logOpsEvent(
 		ctx, "claim approved",
 		"request_id", RequestID(ctx),
 		"client_ip", peer.String(),
-		"outcome", string(outcomeApproved),
+		"outcome", string(outcome),
 		"session_type", sessionType.String(),
 		"scope_count", len(req.Scope),
 		"granted_ttl", cappedTTL.String(),
@@ -585,6 +639,12 @@ func (s *Server) parseClaimRequest(r *http.Request) (*claimRequest, error) {
 			return nil, errShapeSupervisorNameSet
 		}
 	}
+	// A machine-bound standing lease is supervisor-only and MUST carry a
+	// non-zero client_machine_index (the machine anchor the reissue path
+	// matches against). Reject any other shape before it reaches the pipeline.
+	if req.StandingLease && (req.SessionType != sessionTypeSupervisorStr || req.ClientMachineIndex == 0) {
+		return nil, errShapeStandingLeaseInvalid
+	}
 	if !getEphemeralPubKeyRe().MatchString(req.EphemeralPubKey) {
 		return nil, errShapeEphemeralPub
 	}
@@ -642,22 +702,24 @@ func (s *Server) verifyClaimSignature(ctx context.Context, req *claimRequest) er
 		return err
 	}
 	payload := signedPayload{
-		AgentIdentity:   req.AgentIdentity,
-		AgentModel:      req.AgentModel,
-		CommandPreview:  req.CommandPreview,
-		EphemeralPubKey: req.EphemeralPubKey,
-		ForceApproval:   req.ForceApproval,
-		MachineName:     req.MachineName,
-		Nonce:           req.Nonce,
-		Reason:          req.Reason,
-		RecentSummary:   req.RecentSummary,
-		RequestID:       req.RequestID,
-		Scope:           req.Scope,
-		SessionType:     req.SessionType,
-		SupervisorName:  req.SupervisorName,
-		Timestamp:       req.Timestamp,
-		ToolName:        req.ToolName,
-		TTL:             req.TTL,
+		AgentIdentity:      req.AgentIdentity,
+		AgentModel:         req.AgentModel,
+		ClientMachineIndex: req.ClientMachineIndex,
+		CommandPreview:     req.CommandPreview,
+		EphemeralPubKey:    req.EphemeralPubKey,
+		ForceApproval:      req.ForceApproval,
+		MachineName:        req.MachineName,
+		Nonce:              req.Nonce,
+		Reason:             req.Reason,
+		RecentSummary:      req.RecentSummary,
+		RequestID:          req.RequestID,
+		Scope:              req.Scope,
+		SessionType:        req.SessionType,
+		StandingLease:      req.StandingLease,
+		SupervisorName:     req.SupervisorName,
+		Timestamp:          req.Timestamp,
+		ToolName:           req.ToolName,
+		TTL:                req.TTL,
 	}
 	canonical, err := sign.CanonicalJSON(payload)
 	if err != nil {

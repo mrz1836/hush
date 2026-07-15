@@ -21,6 +21,9 @@ var (
 	ErrGraceWindowTooLong   = errors.New("hush/supervise/config: grace window exceeds 4h cap")
 	ErrGraceTTLWithoutCache = errors.New("hush/supervise/config: cache_grace_ttl set but cache_secrets_for_restart is false")
 
+	// Standing-lease errors.
+	ErrStandingLeaseNeedsMachineIndex = errors.New("hush/supervise/config: standing_lease requires a non-zero client_machine_index")
+
 	// Refresh-window errors.
 	ErrRefreshWindowFormat = errors.New("hush/supervise/config: refresh_window must be HH:MM-HH:MM")
 	ErrRefreshWindowOrder  = errors.New("hush/supervise/config: refresh_window start must be earlier than end")

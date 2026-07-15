@@ -196,10 +196,14 @@ func (s *Supervisor) Validate() error {
 	if s.SessionType != "supervisor" {
 		errs = append(errs, fmt.Errorf("%w: got %q", ErrSessionTypeInvalid, s.SessionType))
 	}
-	// requested_ttl ceiling. A machine-bound standing lease may exceed 24h; the
-	// opt-in flag lands with the standing-lease wiring, so today every supervisor
-	// resolves to the ordinary 24h ceiling.
-	if ceiling := requestedTTLCeiling(false); s.RequestedTTL > ceiling {
+	// standing_lease, when opted in, must anchor to a concrete machine client
+	// key (a non-zero client_machine_index) so an unattended reissue re-binds.
+	if s.StandingLease && s.ClientMachineIndex == 0 {
+		errs = append(errs, fmt.Errorf("%w", ErrStandingLeaseNeedsMachineIndex))
+	}
+	// requested_ttl ceiling. A machine-bound standing lease may exceed 24h up to
+	// MaxStandingLeaseTTL; every ordinary supervisor keeps the 24h ceiling.
+	if ceiling := requestedTTLCeiling(s.StandingLease); s.RequestedTTL > ceiling {
 		errs = append(errs, fmt.Errorf("%w: requested_ttl=%s, ceiling=%s", ErrRequestedTTLOutOfRange, s.RequestedTTL, ceiling))
 	}
 	if err := validateRefreshWindow(s.RefreshWindow); err != nil {

@@ -87,6 +87,37 @@ func TestIssue_Supervisor(t *testing.T) {
 	}
 }
 
+// TestIssue_StandingLeaseMarker — the standing-lease marker (StandingLease +
+// ClientMachineIndex) is carried onto the in-store Token record so the /claim
+// resumption path can recognize an established machine-bound grant.
+func TestIssue_StandingLeaseMarker(t *testing.T) {
+	priv := freshKey(t)
+	params := defaultIssueParams(time.Now())
+	params.SessionType = SessionSupervisor
+	params.StandingLease = true
+	params.ClientMachineIndex = 1
+
+	tok, err := Issue(t.Context(), priv, params)
+	if err != nil {
+		t.Fatalf("Issue: %v", err)
+	}
+	if !tok.StandingLease {
+		t.Error("Token.StandingLease: got false, want true")
+	}
+	if tok.ClientMachineIndex != 1 {
+		t.Errorf("Token.ClientMachineIndex: got %d, want 1", tok.ClientMachineIndex)
+	}
+
+	// Ordinary session leaves the marker zero.
+	ord, err := Issue(t.Context(), priv, defaultIssueParams(time.Now()))
+	if err != nil {
+		t.Fatalf("Issue ordinary: %v", err)
+	}
+	if ord.StandingLease || ord.ClientMachineIndex != 0 {
+		t.Errorf("ordinary token marker: got standing=%v index=%d, want false/0", ord.StandingLease, ord.ClientMachineIndex)
+	}
+}
+
 func TestIssue_FreshJTIPerCall(t *testing.T) {
 	priv := freshKey(t)
 	params := defaultIssueParams(time.Now())
