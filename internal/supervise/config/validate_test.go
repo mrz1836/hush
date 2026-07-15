@@ -431,7 +431,8 @@ func TestSuperviseConfig_StandingLease_DefaultsFalse(t *testing.T) {
 // requested_ttl beyond the ordinary 24h supervisor cap.
 func TestSuperviseConfig_StandingLease_EnabledParses(t *testing.T) {
 	t.Parallel()
-	body := withMinimalReplaced(t,
+	body := withMinimalReplaced(
+		t,
 		`requested_ttl = "20h"`, `requested_ttl = "336h"`,
 		`client_machine_index = 2`, "client_machine_index = 2\nstanding_lease = true",
 	)
@@ -446,7 +447,8 @@ func TestSuperviseConfig_StandingLease_EnabledParses(t *testing.T) {
 // concrete machine client key.
 func TestSuperviseConfig_StandingLease_RequiresMachineIndex(t *testing.T) {
 	t.Parallel()
-	body := withMinimalReplaced(t,
+	body := withMinimalReplaced(
+		t,
 		`client_machine_index = 2`, "client_machine_index = 0\nstanding_lease = true",
 	)
 	_, err := loadBody(t, body)
@@ -467,7 +469,8 @@ func TestSuperviseConfig_StandingLease_TTLCeiling(t *testing.T) {
 
 	// Standing lease: just over the standing ceiling rejected.
 	over := (MaxStandingLeaseTTL + time.Hour).String()
-	body2 := withMinimalReplaced(t,
+	body2 := withMinimalReplaced(
+		t,
 		`requested_ttl = "20h"`, `requested_ttl = "`+over+`"`,
 		`client_machine_index = 2`, "client_machine_index = 2\nstanding_lease = true",
 	)
@@ -480,7 +483,8 @@ func TestSuperviseConfig_StandingLease_TTLCeiling(t *testing.T) {
 // programmatic Validate path enforces the same machine-index rule as Load.
 func TestSuperviseConfig_StandingLease_ValidateMirrorsMachineIndexRule(t *testing.T) {
 	t.Parallel()
-	body := withMinimalReplaced(t,
+	body := withMinimalReplaced(
+		t,
 		`client_machine_index = 2`, "client_machine_index = 2\nstanding_lease = true",
 	)
 	s, err := loadBody(t, body)
