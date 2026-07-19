@@ -143,6 +143,51 @@ func TestLifecycleRenew_RestartRefillsAndRestartsChild(t *testing.T) {
 	assert.True(t, tl.auditLog.Has(audit.ActionSupervisorSilentRefill))
 }
 
+// TestLifecycleRenew_RestartRestoresScopeHealthAfterStale is a regression test
+// for the status-reporting bug where an approval-driven recovery
+// (renew --restart → silentRefillAndRestart) re-fetched, validated, and
+// restarted the child successfully but never cleared the stale scope-health
+// markers left by the preceding refill failure. The status socket then kept
+// reporting scope_healthy=[] / scope_stale=<all>, so the health publisher
+// rendered a false DEGRADED even though every secret was live — a state only a
+// full cold boot (applyClaimResponse) cleared.
+func TestLifecycleRenew_RestartRestoresScopeHealthAfterStale(t *testing.T) {
+	tl := newTestLifecycle(t, longChildCmd())
+	cancel, done := runUntilRunning(t, tl)
+	defer shutdownLifecycle(t, cancel, done)
+
+	originalPID := currentChildPID(t, tl)
+
+	// Reproduce the state a refill failure leaves behind (e.g. 401
+	// token_expired once the session expired): every configured scope stale,
+	// scope_healthy empty. This is exactly what markAllScopesStale does on the
+	// awaiting-approval paths that precede an operator renewal.
+	tl.lc.markAllScopesStale()
+	require.Empty(t, tl.lc.inputs.ScopeHealthy(), "precondition: no scope healthy")
+	require.ElementsMatch(t, tl.cfg.Scope, tl.lc.inputs.ScopeStale(), "precondition: all scopes stale")
+
+	// Operator approves a fresh session and asks for a clean child restart —
+	// the exact `hush client renew --supervisor openclaw --restart` path.
+	tl.vault.QueueOK()
+	res, err := dispatchRenewForTest(t, tl, RenewRequest{Restart: true})
+	require.NoError(t, err)
+	assert.Equal(t, RenewOutcomeRenewed, res.Outcome)
+	assert.True(t, res.Restarted)
+
+	eventually(t, "child restarted after renew", 5*time.Second, func() bool {
+		pid := currentChildPID(t, tl)
+		return pid > 0 && pid != originalPID && snapshotState(tl) == StateRunning
+	})
+	require.True(t, tl.auditLog.Has(audit.ActionSupervisorSilentRefill))
+
+	// The fix: a successful refill+validate+restart must restore the healthy
+	// status a cold boot would, not leave the pre-recovery stale markers.
+	assert.ElementsMatch(t, tl.cfg.Scope, tl.lc.inputs.ScopeHealthy(),
+		"every scope must be healthy after a successful refill+restart")
+	assert.Empty(t, tl.lc.inputs.ScopeStale(),
+		"no scope may remain stale after a successful refill+restart")
+}
+
 func TestLifecycleRenew_Outcomes(t *testing.T) {
 	cases := []struct {
 		name    string

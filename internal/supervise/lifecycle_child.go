@@ -564,6 +564,12 @@ func (l *Lifecycle) silentRefillAndRestart(ctx context.Context) error {
 		return perr
 	}
 	l.retainSecrets(secrets)
+	// Recovery succeeded: secrets were re-fetched, validated, and the child
+	// restarted with them. Clear the stale markers left by the failure that
+	// triggered this recovery (see markAllScopesHealthy) so the status socket
+	// reports healthy — otherwise an approval-driven recovery surfaces a false
+	// DEGRADED until the next cold boot.
+	l.markAllScopesHealthy()
 	l.inputs.restartCount.Add(1)
 	l.emitSilentRefill(ctx, l.config.Scope)
 	l.transition(ctx, EventFetchOK)
@@ -636,6 +642,23 @@ func (l *Lifecycle) markAllScopesStale() {
 	empty := []string{}
 	l.inputs.scopeStale.Store(&stale)
 	l.inputs.scopeHealthy.Store(&empty)
+}
+
+// markAllScopesHealthy marks every configured scope as healthy on
+// statusInputs and clears the stale list — the inverse of markAllScopesStale.
+// It mirrors the health reset applyClaimResponse performs on the boot/claim
+// path so that an approval-driven recovery (renew/refresh →
+// silentRefillAndRestart) reports the same clean status a cold boot would.
+//
+// Without it, a successful refill+validate+restart leaves the pre-recovery
+// stale markers in place, surfacing a false DEGRADED on the status socket
+// until the next supervisor cold boot: the renew/refresh path never routes
+// through applyClaimResponse, so nothing else clears them.
+func (l *Lifecycle) markAllScopesHealthy() {
+	healthy := append([]string(nil), l.config.Scope...)
+	empty := []string{}
+	l.inputs.scopeHealthy.Store(&healthy)
+	l.inputs.scopeStale.Store(&empty)
 }
 
 // markScopeStale removes one scope from healthy and adds it to stale.
