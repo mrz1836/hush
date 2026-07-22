@@ -423,6 +423,7 @@ func (l *Lifecycle) executeSwap(ctx context.Context) (SwapResult, error) {
 	l.childMu.Unlock()
 	l.inputs.childStartedAt.Store(&now)
 	l.childRunning.Store(true)
+	l.store.setChildPID(newPID)
 
 	l.backendMu.Lock()
 	l.backendPort = newPort
