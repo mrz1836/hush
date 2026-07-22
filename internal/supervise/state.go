@@ -296,3 +296,17 @@ func (s *Store) destroyToken() {
 	_ = s.token.Destroy()
 	s.token = nil
 }
+
+// setChildPID records the OS process id of the currently supervised child
+// under the write lock so Snapshot — and therefore the status socket's
+// `child_pid` field — reflects the live child. The orchestrator sets it right
+// after a successful Child.Start (initial boot, every restart, and each
+// zero-downtime swap) and clears it to 0 when the child exits or is stopped for
+// a refresh. A value of 0 renders as JSON null (renderStatus emits child_pid
+// only when > 0). Package-private seam: the Lifecycle in this package is the
+// only caller.
+func (s *Store) setChildPID(pid int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.childPID = pid
+}

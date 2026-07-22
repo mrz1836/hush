@@ -348,6 +348,7 @@ func (l *Lifecycle) startChild(ctx context.Context, secrets secretSet) error {
 	l.childMu.Unlock()
 	l.inputs.childStartedAt.Store(&now)
 	l.childRunning.Store(true)
+	l.store.setChildPID(child.PID())
 
 	l.wg.Add(1)
 	go l.childWaitLoop(ctx, child, stdoutCloser, stderrCloser)
@@ -462,6 +463,7 @@ func (l *Lifecycle) dispatchChildExit(ctx context.Context, exit childExit) {
 	l.childMu.Unlock()
 	zeroTime := time.Time{}
 	l.inputs.childStartedAt.Store(&zeroTime)
+	l.store.setChildPID(0)
 	uptime := time.Duration(0)
 	if !startedAt.IsZero() {
 		uptime = l.deps.NowFn().Sub(startedAt)
@@ -633,6 +635,7 @@ func (l *Lifecycle) stopChildForRefresh() {
 	l.childRunning.Store(false)
 	zeroTime := time.Time{}
 	l.inputs.childStartedAt.Store(&zeroTime)
+	l.store.setChildPID(0)
 	_ = child.Forward(syscall.SIGTERM)
 }
 
