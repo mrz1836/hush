@@ -181,13 +181,33 @@ type claimWireRequest struct {
 
 // claimSignedPayload mirrors the server's signedPayload exactly. The
 // alphabetical-tag fields produce a byte-identical canonical encoding
-// via sign.CanonicalJSON. CanonicalJSON ignores omitempty — both client
-// and server emit empty strings for unset fields, so the signatures
-// match regardless of whether the wire envelope carries the field.
+// via sign.CanonicalJSON.
+//
+// CanonicalJSON emits EVERY exported field and never consults omitempty,
+// so canonical parity depends on the Go field set, not on the wire
+// envelope. A field the server declares and this struct omits is a key
+// the server canonicalises and the client does not — the bytes can never
+// match and every claim fails bad_signature. Declaring a field here is
+// therefore mandatory even when this client never populates it; that is
+// why the supervisor-only fields below are present but always zero.
+// TestClaimSignedPayloadMatchesServer enforces this invariant.
 type claimSignedPayload struct {
-	AgentIdentity   string   `json:"agent_identity,omitempty"`
-	AgentModel      string   `json:"agent_model,omitempty"`
-	CommandPreview  string   `json:"command_preview,omitempty"`
+	AgentIdentity  string `json:"agent_identity,omitempty"`
+	AgentModel     string `json:"agent_model,omitempty"`
+	CommandPreview string `json:"command_preview,omitempty"`
+
+	// ClientMachineIndex and StandingLease belong to the supervisor
+	// standing-lease path and are rejected on an interactive claim
+	// (server: standing_lease requires supervisor session and non-zero
+	// client_machine_index). They are never placed on this client's wire
+	// envelope, so the server verifies against the zero value — these
+	// MUST stay unpopulated. In particular, do NOT assign the
+	// --machine-index flag here: that flag selects the keychain item
+	// (hush-client/machine-N) and is not transmitted, so signing it
+	// would reintroduce the mismatch on every machine except index 0.
+	ClientMachineIndex uint32 `json:"client_machine_index,omitempty"`
+	StandingLease      bool   `json:"standing_lease,omitempty"`
+
 	EphemeralPubKey string   `json:"ephemeral_pubkey"`
 	ForceApproval   bool     `json:"force_approval,omitempty"`
 	MachineName     string   `json:"machine_name"`
