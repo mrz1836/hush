@@ -774,23 +774,34 @@ func TestRequest_ClaimSignaturePayloadCanonical(t *testing.T) {
 	}
 }
 
+// serverClaimSignedPayloadForTest stands in for internal/server's
+// signedPayload (unexported, so it cannot be imported here) when asserting
+// that a client signature verifies the way the real server verifies it.
+//
+// Its whole value depends on staying identical to the server's field set:
+// when this struct drifts the same way a client has drifted, the two
+// mistakes cancel and the test passes while production fails. That is
+// exactly what happened with standing_lease / client_machine_index.
+// TestServerStandInPayloadMatchesServer guards it.
 type serverClaimSignedPayloadForTest struct {
-	AgentIdentity   string   `json:"agent_identity,omitempty"`
-	AgentModel      string   `json:"agent_model,omitempty"`
-	CommandPreview  string   `json:"command_preview,omitempty"`
-	EphemeralPubKey string   `json:"ephemeral_pubkey"`
-	ForceApproval   bool     `json:"force_approval,omitempty"`
-	MachineName     string   `json:"machine_name"`
-	Nonce           string   `json:"nonce"`
-	Reason          string   `json:"reason"`
-	RecentSummary   string   `json:"recent_summary,omitempty"`
-	RequestID       string   `json:"request_id"`
-	Scope           []string `json:"scope"`
-	SessionType     string   `json:"session_type"`
-	SupervisorName  string   `json:"supervisor_name,omitempty"`
-	Timestamp       string   `json:"timestamp"`
-	ToolName        string   `json:"tool_name,omitempty"`
-	TTL             string   `json:"ttl"`
+	AgentIdentity      string   `json:"agent_identity,omitempty"`
+	AgentModel         string   `json:"agent_model,omitempty"`
+	ClientMachineIndex uint32   `json:"client_machine_index,omitempty"`
+	CommandPreview     string   `json:"command_preview,omitempty"`
+	EphemeralPubKey    string   `json:"ephemeral_pubkey"`
+	ForceApproval      bool     `json:"force_approval,omitempty"`
+	MachineName        string   `json:"machine_name"`
+	Nonce              string   `json:"nonce"`
+	Reason             string   `json:"reason"`
+	RecentSummary      string   `json:"recent_summary,omitempty"`
+	RequestID          string   `json:"request_id"`
+	Scope              []string `json:"scope"`
+	SessionType        string   `json:"session_type"`
+	StandingLease      bool     `json:"standing_lease,omitempty"`
+	SupervisorName     string   `json:"supervisor_name,omitempty"`
+	Timestamp          string   `json:"timestamp"`
+	ToolName           string   `json:"tool_name,omitempty"`
+	TTL                string   `json:"ttl"`
 }
 
 func serverClaimSignedPayloadFromWireForTest(req claimWireRequest) serverClaimSignedPayloadForTest {
