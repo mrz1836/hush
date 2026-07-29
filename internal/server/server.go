@@ -52,12 +52,24 @@ const (
 	// request (headers + body). Hardening default for http.Server.
 	DefaultReadTimeout = 30 * time.Second
 
-	// DefaultWriteTimeout caps how long the chassis allows a handler to
-	// produce its response. It must exceed ClaimApprovalTimeout (60s default),
+	// DefaultWriteTimeout is the floor for how long the chassis allows a
+	// handler to produce its response. It must exceed ClaimApprovalTimeout,
 	// otherwise a human-approved claim can mint successfully after Discord
 	// approval while the HTTP response has already been killed, surfacing as EOF
 	// to the client.
+	//
+	// This constant alone cannot uphold that invariant: claim_approval_timeout
+	// is operator-configurable up to config.MaxClaimApprovalTimeout (10m), so
+	// any deployment that raises it above this floor would silently violate it.
+	// The effective write timeout is therefore computed by writeTimeoutFor,
+	// which treats this value as a lower bound rather than the answer.
 	DefaultWriteTimeout = 90 * time.Second
+
+	// ClaimApprovalWriteHeadroom is the margin writeTimeoutFor adds on top of
+	// the configured claim approval window. It covers the work the handler
+	// still has to do after the approver taps — minting, audit write, response
+	// encode — so the connection outlives the slowest legitimate approval.
+	ClaimApprovalWriteHeadroom = 30 * time.Second
 
 	// DefaultIdleTimeout caps how long an idle keep-alive connection may
 	// remain open. Hardening default for http.Server.
@@ -514,6 +526,30 @@ func decodeCompressedSecp256k1(s string) (*ecdsa.PublicKey, error) {
 	}, nil
 }
 
+// writeTimeoutFor returns the http.Server write timeout for a chassis whose
+// claim approval window is approval.
+//
+// POST /claim blocks in-handler while a human decides in Discord, so the
+// write timeout has to outlast the whole approval window plus the minting
+// that follows it. When it does not, the chassis kills the connection
+// mid-decision: the client sees a bare EOF, and the approval still lands
+// afterwards — minting and burning a token nobody can receive. That is
+// invisible to the operator, because the server logs the claim as approved.
+//
+// approval is operator-configurable up to config.MaxClaimApprovalTimeout
+// (10m), which is why this cannot be a constant. DefaultWriteTimeout is
+// kept as a floor so ordinary requests retain the hardening default, and a
+// non-positive approval (unset config) falls back to it.
+func writeTimeoutFor(approval time.Duration) time.Duration {
+	if approval <= 0 {
+		return DefaultWriteTimeout
+	}
+	if want := approval + ClaimApprovalWriteHeadroom; want > DefaultWriteTimeout {
+		return want
+	}
+	return DefaultWriteTimeout
+}
+
 // Run executes the chassis lifecycle: startup checks → bind → launch
 // background loops (SIGHUP, nonce-cache sweep) → serve → shutdown. Run
 // blocks until ctx cancels or a startup check fails.
@@ -560,7 +596,7 @@ func (s *Server) Run(ctx context.Context) error {
 		Handler:           chain,
 		ReadHeaderTimeout: DefaultReadHeaderTimeout,
 		ReadTimeout:       DefaultReadTimeout,
-		WriteTimeout:      DefaultWriteTimeout,
+		WriteTimeout:      writeTimeoutFor(s.cfg.Crypto.ClaimApprovalTimeout),
 		IdleTimeout:       DefaultIdleTimeout,
 	}
 	s.mu.Lock()
