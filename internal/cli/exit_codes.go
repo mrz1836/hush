@@ -7,6 +7,8 @@ import (
 	"io/fs"
 	"os"
 
+	selfupdate "github.com/mrz1836/go-selfupdate"
+
 	"github.com/mrz1836/hush/internal/config"
 	"github.com/mrz1836/hush/internal/keychain"
 	"github.com/mrz1836/hush/internal/server"
@@ -14,7 +16,6 @@ import (
 	supcfg "github.com/mrz1836/hush/internal/supervise/config"
 	"github.com/mrz1836/hush/internal/token"
 	"github.com/mrz1836/hush/internal/transport/sign"
-	"github.com/mrz1836/hush/internal/upgrade"
 	"github.com/mrz1836/hush/internal/vault"
 	"github.com/mrz1836/hush/pkg/client"
 )
@@ -332,7 +333,7 @@ func mapErr(err error) int {
 		errors.Is(err, vault.ErrFilePermsLoose),
 		errors.Is(err, config.ErrConfigFileMode),
 		errors.Is(err, keychain.ErrKeychainPermissionDenied),
-		errors.Is(err, upgrade.ErrInstallDirNotWritable):
+		errors.Is(err, selfupdate.ErrInstallDirNotWritable):
 		return ExitPerm
 	}
 

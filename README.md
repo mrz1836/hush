@@ -151,8 +151,7 @@ files not exist.
 
 ## 🚀 Installation
 
-**hush** requires a [supported release of Go](https://golang.org/doc/devel/release.html#policy)
-(Go 1.26+) and is built `CGO_ENABLED=0` — a single static binary.
+**hush** ships as a single static binary (`CGO_ENABLED=0`) for Linux and macOS.
 
 > **Status:** this is still `ALPHA` and PR's are welcome to improve the project.
 
@@ -160,49 +159,65 @@ Prerequisites: a vault host and an agent host on the same Tailscale
 tailnet, plus a Discord bot you control
 (<https://discord.com/developers/applications>) for the approval channel.
 
-### Build from source
+Install the latest prebuilt release into `~/.local/bin` — a user‑writable directory, so
+no `sudo`, and `hush update` can self‑update in place afterward:
+
+```bash
+# Install the latest hush release into ~/.local/bin
+VER=$(curl -fsSL https://api.github.com/repos/mrz1836/hush/releases/latest | grep '"tag_name"' | cut -d'"' -f4 | tr -d v)
+OS=$(uname -s | tr '[:upper:]' '[:lower:]'); ARCH=$(uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')
+mkdir -p ~/.local/bin
+curl -fsSL "https://github.com/mrz1836/hush/releases/download/v${VER}/hush_${VER}_${OS}_${ARCH}.tar.gz" | tar -xzf - -C ~/.local/bin hush
+hush version
+```
+
+If `hush` isn't found afterward, add `~/.local/bin` to your `PATH` (put
+`export PATH="$HOME/.local/bin:$PATH"` in your `~/.zshrc` or `~/.bashrc`).
+
+<details>
+<summary><strong>Build from source (contributors)</strong></summary>
+
+Requires a [supported release of Go](https://golang.org/doc/devel/release.html#policy) (Go 1.26+).
 
 ```bash
 git clone https://github.com/mrz1836/hush.git && cd hush
-magex build && sudo install -m 0755 cmd/hush/hush /usr/local/bin/hush
+magex build && install -m 0755 cmd/hush/hush ~/.local/bin/hush
 ```
+
+</details>
 
 <br/>
 
-### Upgrade
+### Keep hush up to date
 
-Once `hush` is on your `PATH`, the binary can upgrade itself in place
-from the [GitHub releases](https://github.com/mrz1836/hush/releases):
-
-```bash
-hush upgrade          # download the latest release tarball, verify SHA-256, install in place
-hush upgrade --check  # report the latest available version without installing
-hush upgrade --force  # reinstall the latest release even when already current
-```
-
-Channel selection is controlled by the `UPDATE_CHANNEL` environment
-variable (case-insensitive; default `stable`):
+`hush update` (alias `hush upgrade`) downloads the latest release, verifies its
+SHA‑256 checksum against the published `hush_<ver>_checksums.txt`, and atomically
+replaces the running binary — no `sudo` when it lives in `~/.local/bin`.
 
 ```bash
-UPDATE_CHANNEL=stable hush upgrade   # latest non-prerelease (default)
-UPDATE_CHANNEL=beta   hush upgrade   # latest prerelease, falls back to stable when none
-UPDATE_CHANNEL=edge   hush upgrade   # most recent release of any kind (excludes drafts)
-
-# Or override the env per-invocation with --channel:
-hush upgrade --channel beta
+hush update            # download & install the latest release
+hush update --check    # report whether a newer version is available
+hush update --force    # reinstall the latest even if already current
+hush update --verbose  # narrate each step
 ```
 
-The install target is the resolved path of the running binary
-(`os.Executable()` with symlinks evaluated — typically `$(which hush)`).
-`hush upgrade` requires write access to that directory; when the
-directory is not writable the command exits with a clear error naming
-the directory rather than silently installing elsewhere. Re-run the
-command under `sudo` (or copy the new binary into place manually) when
-that happens.
+Every other command also runs a passive, cached background check and prints a one‑line
+"a new version is available" notice. It never blocks or fails a command, is skipped for
+development builds, and is silenced by `HUSH_NO_UPDATE_CHECK=1` (or the shared
+`NO_UPDATE_CHECK` / `CI`). If you hit GitHub API rate limits, a token is read from
+`HUSH_GITHUB_TOKEN`, then `GITHUB_TOKEN`, then `GH_TOKEN`.
 
-After a successful upgrade `hush upgrade` prints a `Restart any
-running 'hush serve' to pick up the new version` reminder — the
-upgrade does not touch any supervised process.
+The install target is the resolved path of the running binary (`os.Executable()` with
+symlinks evaluated). When that directory is not writable, `hush update` exits with a
+clear error naming the directory rather than installing elsewhere — install into
+`~/.local/bin` (above) to keep self‑update working without `sudo`.
+
+> **Heads up:** a binary that another installer owns — `go install`'s `~/go/bin`, or a
+> Homebrew prefix — is **refused** by `hush update` rather than overwritten (that would
+> break the tool that owns it).
+
+After an upgrade, restart any running `hush serve` to pick up the new version — the
+update does not touch a supervised process.
 
 <br/>
 
@@ -221,7 +236,7 @@ Every hush subcommand at a glance — every entry below is real today.
 | `hush supervise <config.toml>` | Long-running daemon with grace cache + validators |
 | `hush health` / `server-url` / `version` | Daily-driver helpers |
 | `hush revoke --jti …` | Kill an active session token |
-| `hush upgrade` | Self-upgrade from a GitHub release (stable / beta / edge) |
+| `hush update` | Self-update from a GitHub release (alias: `upgrade`) |
 
 Global flags — `--config <path>`, `--verbose`, `--quiet`, `--no-color` — work on every command.
 

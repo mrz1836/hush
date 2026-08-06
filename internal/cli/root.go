@@ -60,8 +60,13 @@ func newRootCmd(initialOut *outputContext) *cobra.Command {
 	root.AddCommand(newSmokeCmd())
 	root.AddCommand(newSuperviseCmd())
 	root.AddCommand(newClientCmd())
-	root.AddCommand(newUpgradeCmd())
 	root.AddCommand(newVaultCmd())
+
+	// Register the self-update command (alias: upgrade) and the passive update
+	// notice. Wired here, after root's persistent hooks are set, because the
+	// banner chains onto them and needs the resolved build version to tell a
+	// real release apart from a development build.
+	attachUpdateCommand(root)
 
 	return root
 }
