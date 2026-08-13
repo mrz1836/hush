@@ -202,18 +202,18 @@ func runServe(ctx context.Context, stdout, stderr *Stream, deps serveDeps) error
 		return err
 	}
 
-	// 4. Derive master seed.
-	var masterSeed []byte
-	if useErr := passphrase.Use(func(b []byte) {
-		masterSeed, err = keys.DeriveMasterSeed(ctx, b, salt)
-	}); useErr != nil {
-		return useErr
-	}
+	// 4. Recover the master seed. For a legacy (password-only) vault this is
+	// the original passphrase -> Argon2id derivation. When a YubiKey keyslots
+	// envelope is enrolled it is recovered via that envelope instead (a touch,
+	// plus the passphrase for password-and-yubikey; the passphrase is unused
+	// for yubikey-only).
+	masterSeed, err := unlockMasterSeed(ctx, cfg.Server.StateDir, passphrase, salt,
+		ykmanUnlockerFactory(defaultYkmanPath, defaultYkmanSlot))
 	if err != nil {
 		return err
 	}
 	defer zeroBytes(masterSeed)
-	verbose("keys: master seed derived")
+	verbose("keys: master seed recovered")
 
 	// 5. Derive subkeys.
 	jwtKey, err := keys.DeriveJWTSigningKey(masterSeed)
