@@ -164,6 +164,7 @@ func newVaultCmd() *cobra.Command {
 		Short: "Manage the vault root key (rekey)",
 	}
 	cmd.AddCommand(newVaultRekeyCmd())
+	cmd.AddCommand(newVaultEnrollYubiKeyCmd())
 	return cmd
 }
 
