@@ -30,6 +30,9 @@ const defaultOTPSlot uint8 = 2
 var (
 	ErrPassphraseRequired = errors.New("yubikey: passphrase required for password-and-yubikey policy")
 	ErrUnsupportedPolicy  = errors.New("yubikey: unsupported policy")
+	// ErrNoPassphraseFactor is returned by RewrapPassphrase when the envelope
+	// has no passphrase factor to re-wrap (a yubikey-only vault).
+	ErrNoPassphraseFactor = errors.New("yubikey: no passphrase factor to rekey (yubikey-only)")
 )
 
 // Store builds and unlocks tumbler envelopes that wrap a hush master seed.
@@ -178,6 +181,92 @@ func (s *Store) EffectivePolicy(envelope []byte) (tumbler.Policy, error) {
 		return tumbler.PolicyInvalid, err
 	}
 	return env.EffectivePolicy(), nil
+}
+
+// RewrapPassphrase re-wraps the envelope's password-and-yubikey slot under a NEW
+// passphrase, in place — an O(1) envelope operation that leaves the data key
+// (and therefore the master seed and every derived key) unchanged. It:
+//   - refuses a non-2FA envelope (ErrNoPassphraseFactor for yubikey-only, whose
+//     single factor has no passphrase to rekey);
+//   - requires exactly one password-and-yubikey slot (ErrUnsupportedPolicy);
+//   - unlocks the DEK with the OLD passphrase (touch #1); the DEK stays inside
+//     securebytes and is never exposed as a raw []byte;
+//   - enrolls a new 2FA slot from newPassphrase (touch #2) BEFORE removing the
+//     old one, so the envelope never holds zero primary slots;
+//   - leaves any recovery slots untouched.
+//
+// The caller owns newPassphrase and must zero it; the bytes returned by
+// oldPassphraseFn are zeroed internally.
+func (s *Store) RewrapPassphrase(ctx context.Context, envelope []byte, oldPassphraseFn func() ([]byte, error), newPassphrase []byte) ([]byte, error) {
+	env, err := tumbler.ParseEnvelope(envelope)
+	if err != nil {
+		return nil, err
+	}
+	if env.EffectivePolicy() != tumbler.PolicyPasswordAndYubiKey {
+		return nil, ErrNoPassphraseFactor
+	}
+	oldID, err := singlePasswordYubiKeySlot(env)
+	if err != nil {
+		return nil, err
+	}
+
+	// 1. Unlock the DEK with the OLD passphrase (touch #1).
+	dek, err := s.unlockDEK(ctx, env, oldPassphraseFn)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = dek.Destroy() }()
+
+	// 2. Build a new 2FA method from the new passphrase (same pinned Argon2id,
+	//    same OTP slot).
+	newM, newPwSB, err := s.primaryMethod(tumbler.PolicyPasswordAndYubiKey, newPassphrase)
+	if err != nil {
+		return nil, err
+	}
+	if newPwSB != nil {
+		defer func() { _ = newPwSB.Destroy() }()
+	}
+
+	// 3. Add-before-remove: enroll the new slot (touch #2), then drop the old.
+	if err = env.AddSlot(ctx, dek, newM); err != nil {
+		return nil, err
+	}
+	if err = env.RemoveSlot(oldID); err != nil {
+		return nil, err
+	}
+	return env.Marshal()
+}
+
+// unlockDEK recovers the data key from a 2FA envelope using passphraseFn (this
+// is where the touch happens). The returned DEK stays inside securebytes; the
+// caller must Destroy it.
+func (s *Store) unlockDEK(ctx context.Context, env *tumbler.Envelope, passphraseFn func() ([]byte, error)) (*securebytes.SecureBytes, error) {
+	method, pwSB, err := s.unlockMethod(tumbler.PolicyPasswordAndYubiKey, passphraseFn)
+	if err != nil {
+		return nil, err
+	}
+	if pwSB != nil {
+		defer func() { _ = pwSB.Destroy() }()
+	}
+	return env.Unlock(ctx, method)
+}
+
+// singlePasswordYubiKeySlot returns the ID of the sole password-and-yubikey slot
+// in env, or ErrUnsupportedPolicy if there are zero or more than one (a
+// multi-primary envelope this simple re-wrap does not support).
+func singlePasswordYubiKeySlot(env *tumbler.Envelope) ([8]byte, error) {
+	var id [8]byte
+	found := 0
+	for _, info := range env.SlotInfos() {
+		if info.Type == tumbler.MethodPasswordAndYubiKey {
+			id = info.ID
+			found++
+		}
+	}
+	if found != 1 {
+		return id, fmt.Errorf("%w: expected exactly one password-and-yubikey slot, found %d", ErrUnsupportedPolicy, found)
+	}
+	return id, nil
 }
 
 func (s *Store) primaryMethod(policy tumbler.Policy, passphrase []byte) (tumbler.Method, *securebytes.SecureBytes, error) {
