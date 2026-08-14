@@ -268,6 +268,37 @@ Required fields:
 
 ---
 
+### `[yubikey]`
+
+Governs the opt-in daemon **touch cache** for YubiKey vaults. Absent section ⇒
+cache off (touch per `serve` restart). See [`DAEMONS.md`](DAEMONS.md) §6 and
+[`SECURITY.md`](SECURITY.md) §6 for the trade-off.
+
+Optional fields:
+
+- `cache_touch`
+  - type: bool
+  - default: `false`
+  - behavior:
+    - when `true`, a successful YubiKey unlock caches the recovered master seed
+      in a dedicated per-binary-ACL Keychain item (`hush-vault-yubikey-token`)
+      so a `serve` restart within the TTL skips the touch
+    - `hush serve --no-cache` overrides it for one run
+    - only takes effect on macOS (per-binary ACL); a no-op with a warning
+      elsewhere
+
+- `cache_touch_ttl`
+  - type: duration string
+  - default: `60m`
+  - behavior:
+    - absolute lifetime of a cached seed, measured from the last real touch
+      (not refreshed on cache hits)
+    - hard-capped at **4h** by both config validation (when `cache_touch=true`)
+      and the token codec at write time; a value ≤ 0 or > 4h with the cache
+      enabled fails config load
+
+---
+
 ## Supervisor config
 
 Primary location:

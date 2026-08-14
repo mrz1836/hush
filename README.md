@@ -355,6 +355,14 @@ The migration prints a one‑time recovery code and a rollback snapshot path. Po
 > `hush serve` start**, so unattended launchd restart of a YubiKey vault is intentionally blocked
 > (matches strict‑mode in [`docs/DAEMONS.md`](docs/DAEMONS.md)). Keep unattended daemons on the
 > passphrase path, or migrate only interactively‑started servers.
+>
+> **Opt‑in touch cache (off by default).** If you accept the trade‑off, `[yubikey] cache_touch = true`
+> (with `cache_touch_ttl`, capped at 4h) caches the recovered master seed in a dedicated per‑binary‑ACL
+> Keychain item so a `serve` restart skips the touch until the TTL elapses. The default stays
+> touch‑per‑restart precisely to preserve the hardware‑presence guarantee; enabling the cache means a
+> Keychain reader *as the hush binary* (root / a compromised binary) can recover the seed for the TTL
+> window. `hush serve --no-cache` overrides it for one run. See [`docs/DAEMONS.md`](docs/DAEMONS.md) §6
+> and [`docs/SECURITY.md`](docs/SECURITY.md) §6.
 
 > 🔑 **Presence, not identity.** `yubikey-only` challenge‑response has no PIN, so a stolen key
 > plus the stolen file can unlock — prefer `password-and-yubikey`, and keep the recovery code
