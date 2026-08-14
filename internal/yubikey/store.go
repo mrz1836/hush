@@ -36,6 +36,7 @@ var (
 type Store struct {
 	transport transport.Transport
 	slot      uint8
+	onTouch   func()
 }
 
 // NewStore builds a store from an explicit transport (tests inject a fake).
@@ -45,6 +46,11 @@ func NewStore(t transport.Transport, slot uint8) *Store {
 	}
 	return &Store{transport: t, slot: slot}
 }
+
+// SetTouchPrompt registers a callback fired at the exact moment the YubiKey
+// starts blinking for a touch (after any passphrase prompt and key
+// derivation), so the CLI can print "touch your key now" at the right time.
+func (s *Store) SetTouchPrompt(fn func()) { s.onTouch = fn }
 
 // NewStoreFromConfig builds a store backed by the real ykman CLI.
 func NewStoreFromConfig(ykmanPath string, slot uint8) (*Store, error) {
@@ -173,9 +179,10 @@ func (s *Store) EffectivePolicy(envelope []byte) (tumbler.Policy, error) {
 }
 
 func (s *Store) primaryMethod(policy tumbler.Policy, passphrase []byte) (tumbler.Method, *securebytes.SecureBytes, error) {
+	touch := tumbler.WithTouchAnnounce(s.onTouch)
 	switch policy {
 	case tumbler.PolicyYubiKeyOnly:
-		return tumbler.NewYubiKeyMethod(s.transport, tumbler.YubiKeyConfig{Slot: s.slot}, nil), nil, nil
+		return tumbler.NewYubiKeyMethod(s.transport, tumbler.YubiKeyConfig{Slot: s.slot}, nil, touch), nil, nil
 	case tumbler.PolicyPasswordAndYubiKey:
 		if len(passphrase) == 0 {
 			return nil, nil, ErrPassphraseRequired
@@ -187,7 +194,7 @@ func (s *Store) primaryMethod(policy tumbler.Policy, passphrase []byte) (tumbler
 		m := tumbler.NewYubiKeyMethod(s.transport, tumbler.YubiKeyConfig{
 			Slot: s.slot,
 			KDF:  tumbler.NewArgon2idKDF(argon2Time, argon2MemKiB, argon2Threads),
-		}, pw)
+		}, pw, touch)
 		return m, pw, nil
 	default:
 		return nil, nil, fmt.Errorf("%w: %s", ErrUnsupportedPolicy, policy)
@@ -195,9 +202,10 @@ func (s *Store) primaryMethod(policy tumbler.Policy, passphrase []byte) (tumbler
 }
 
 func (s *Store) unlockMethod(policy tumbler.Policy, passphraseFn func() ([]byte, error)) (tumbler.Method, *securebytes.SecureBytes, error) {
+	touch := tumbler.WithTouchAnnounce(s.onTouch)
 	switch policy {
 	case tumbler.PolicyYubiKeyOnly:
-		return tumbler.NewYubiKeyMethod(s.transport, tumbler.YubiKeyConfig{}, nil), nil, nil
+		return tumbler.NewYubiKeyMethod(s.transport, tumbler.YubiKeyConfig{}, nil, touch), nil, nil
 	case tumbler.PolicyPasswordAndYubiKey:
 		if passphraseFn == nil {
 			return nil, nil, ErrPassphraseRequired
@@ -211,7 +219,7 @@ func (s *Store) unlockMethod(policy tumbler.Policy, passphraseFn func() ([]byte,
 		if err != nil {
 			return nil, nil, err
 		}
-		return tumbler.NewYubiKeyMethod(s.transport, tumbler.YubiKeyConfig{}, pwSB), pwSB, nil
+		return tumbler.NewYubiKeyMethod(s.transport, tumbler.YubiKeyConfig{}, pwSB, touch), pwSB, nil
 	default:
 		return nil, nil, fmt.Errorf("%w: %s", ErrUnsupportedPolicy, policy)
 	}

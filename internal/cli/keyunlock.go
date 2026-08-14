@@ -83,9 +83,18 @@ func legacyDeriveMasterSeed(ctx context.Context, passphrase *securebytes.SecureB
 }
 
 // ykmanUnlockerFactory returns a factory that builds a real ykman-backed
-// unlocker from server config. Passed to unlockMasterSeed at the call sites.
-func ykmanUnlockerFactory(ykmanPath string, slot uint8) func() (masterSeedUnlocker, error) {
+// unlocker from server config. onTouch (if non-nil) is fired at the exact
+// moment the key blinks for a touch, so the caller can prompt the operator
+// (ykman's own prompt is captured by the transport and not shown).
+func ykmanUnlockerFactory(ykmanPath string, slot uint8, onTouch func()) func() (masterSeedUnlocker, error) {
 	return func() (masterSeedUnlocker, error) {
-		return yubikey.NewStoreFromConfig(ykmanPath, slot)
+		s, err := yubikey.NewStoreFromConfig(ykmanPath, slot)
+		if err != nil {
+			return nil, err
+		}
+		if onTouch != nil {
+			s.SetTouchPrompt(onTouch)
+		}
+		return s, nil
 	}
 }

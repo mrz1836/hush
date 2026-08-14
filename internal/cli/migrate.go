@@ -103,6 +103,9 @@ func runVaultEnrollYubiKey(ctx context.Context, stdout, stderr *Stream, in, stdo
 	if err != nil {
 		return fmt.Errorf("this migration requires a YubiKey (is ykman installed?): %w", err)
 	}
+	store.SetTouchPrompt(func() {
+		_ = stdout.WriteText("\n👆  Touch your YubiKey now — it's blinking...\n")
+	})
 
 	opts := yubikey.EnrollOptions{WithRecovery: withRecovery}
 	if policy == tumbler.PolicyPasswordAndYubiKey {
@@ -114,7 +117,7 @@ func runVaultEnrollYubiKey(ctx context.Context, stdout, stderr *Stream, in, stdo
 		defer zeroBytes(opts.Passphrase)
 	}
 
-	_ = stdout.WriteText("hush: vault: touch your YubiKey when it blinks...\n")
+	_ = stdout.WriteText("hush: vault: enrolling — you'll be asked to touch your key in a moment...\n")
 	stateDir := filepath.Dir(vaultPath)
 	recoveryCode, err := migrateVaultToYubiKey(ctx, vaultPath, stateDir, secrets, store, policy, opts)
 	if err != nil {

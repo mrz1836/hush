@@ -208,7 +208,9 @@ func runServe(ctx context.Context, stdout, stderr *Stream, deps serveDeps) error
 	// plus the passphrase for password-and-yubikey; the passphrase is unused
 	// for yubikey-only).
 	masterSeed, err := unlockMasterSeed(ctx, cfg.Server.StateDir, passphrase, salt,
-		ykmanUnlockerFactory(defaultYkmanPath, defaultYkmanSlot))
+		ykmanUnlockerFactory(defaultYkmanPath, defaultYkmanSlot, func() {
+			_ = stderr.WriteText("\n👆  Touch your YubiKey now — it's blinking...\n")
+		}))
 	if err != nil {
 		return err
 	}
