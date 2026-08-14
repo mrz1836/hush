@@ -140,6 +140,7 @@ func TestVault_ProductionDeps_NotNil(t *testing.T) {
 	require.NotNil(t, d.isStdoutTTY)
 	require.NotNil(t, d.deriveMasterSeed)
 	require.NotNil(t, d.readVaultSalt)
+	require.NotNil(t, d.newRewrapper)
 	require.NotNil(t, d.kill)
 	require.NotNil(t, d.readPIDFile)
 	require.NotNil(t, d.randReader)
