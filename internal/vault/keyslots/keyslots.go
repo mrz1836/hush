@@ -38,6 +38,12 @@ var ErrFilePermsLoose = errors.New("hush/keyslots: file permissions loose")
 // ErrTooLarge indicates the sidecar exceeds the size bound.
 var ErrTooLarge = errors.New("hush/keyslots: file too large")
 
+// ErrEmptyEnvelope indicates Save was called with no envelope bytes.
+var ErrEmptyEnvelope = errors.New("hush/keyslots: empty envelope")
+
+// ErrNotDirectory indicates the state path exists but is not a directory.
+var ErrNotDirectory = errors.New("hush/keyslots: state path is not a directory")
+
 // container is the on-disk JSON shape. Envelope is base64-encoded by
 // encoding/json automatically.
 type container struct {
@@ -94,7 +100,7 @@ func Load(stateDir string) (envelope []byte, policy string, err error) {
 // permissions, after checking the parent directory mode.
 func Save(stateDir string, envelope []byte, policy string) error {
 	if len(envelope) == 0 {
-		return errors.New("hush/keyslots: empty envelope")
+		return ErrEmptyEnvelope
 	}
 	if err := checkDirMode(stateDir); err != nil {
 		return err
@@ -140,7 +146,7 @@ func checkDirMode(stateDir string) error {
 		return fmt.Errorf("hush/keyslots: stat dir: %w", err)
 	}
 	if !info.IsDir() {
-		return fmt.Errorf("hush/keyslots: %q is not a directory", stateDir)
+		return fmt.Errorf("%w: %q", ErrNotDirectory, stateDir)
 	}
 	if got := info.Mode().Perm(); got != dirPerm {
 		return fmt.Errorf("hush/keyslots: dir mode %#o != %#o: %w", got, dirPerm, ErrFilePermsLoose)

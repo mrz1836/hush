@@ -62,7 +62,7 @@ func TestUnlockMasterSeed_LegacyPath(t *testing.T) {
 	seed, err := unlockMasterSeed(context.Background(), dir, pass, salt,
 		func() (masterSeedUnlocker, error) {
 			t.Fatal("unlocker factory must not be called without an envelope")
-			return nil, nil
+			return nil, errSyntheticTest // unreachable after t.Fatal; satisfies nilnil
 		})
 	require.NoError(t, err)
 	assert.Len(t, seed, 64)

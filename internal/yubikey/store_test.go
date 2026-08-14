@@ -12,14 +12,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newStore() (*yubikey.Store, *transport.FakeTransport) {
+func newStore() *yubikey.Store {
 	fake := transport.NewFakeTransport(2, []byte("device-hmac-secret-20"))
-	return yubikey.NewStore(fake, 2), fake
+	return yubikey.NewStore(fake, 2)
 }
 
 func TestEnroll_GeneratesRandom64ByteSeed(t *testing.T) {
 	ctx := context.Background()
-	store, _ := newStore()
+	store := newStore()
 
 	res, err := store.Enroll(ctx, tumbler.PolicyYubiKeyOnly, yubikey.EnrollOptions{})
 	require.NoError(t, err)
@@ -34,7 +34,7 @@ func TestEnroll_GeneratesRandom64ByteSeed(t *testing.T) {
 
 func TestEnrollUnlock_TwoFactor(t *testing.T) {
 	ctx := context.Background()
-	store, _ := newStore()
+	store := newStore()
 	pass := []byte("correct-horse-battery-staple")
 
 	res, err := store.Enroll(ctx, tumbler.PolicyPasswordAndYubiKey, yubikey.EnrollOptions{Passphrase: pass})
@@ -60,7 +60,7 @@ func TestEnrollUnlock_TwoFactor(t *testing.T) {
 
 func TestEnrollUnlock_YubiKeyOnly(t *testing.T) {
 	ctx := context.Background()
-	store, _ := newStore()
+	store := newStore()
 
 	res, err := store.Enroll(ctx, tumbler.PolicyYubiKeyOnly, yubikey.EnrollOptions{})
 	require.NoError(t, err)
@@ -72,14 +72,14 @@ func TestEnrollUnlock_YubiKeyOnly(t *testing.T) {
 
 func TestEnroll_TwoFactorRequiresPassphrase(t *testing.T) {
 	ctx := context.Background()
-	store, _ := newStore()
+	store := newStore()
 	_, err := store.Enroll(ctx, tumbler.PolicyPasswordAndYubiKey, yubikey.EnrollOptions{})
 	assert.ErrorIs(t, err, yubikey.ErrPassphraseRequired)
 }
 
 func TestRecoveryCode(t *testing.T) {
 	ctx := context.Background()
-	store, _ := newStore()
+	store := newStore()
 
 	res, err := store.Enroll(ctx, tumbler.PolicyPasswordAndYubiKey, yubikey.EnrollOptions{
 		Passphrase:   []byte("passphrase-value"),

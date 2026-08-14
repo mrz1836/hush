@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,6 +17,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Static errors for the enroll/migration flow (satisfies err113).
+var (
+	errUnknownPolicy   = errors.New("unknown policy")
+	errAlreadyEnrolled = errors.New("this vault already has a YubiKey envelope enrolled")
+)
+
 // parseEnrollPolicy maps the --policy flag to a tumbler policy.
 func parseEnrollPolicy(s string) (tumbler.Policy, error) {
 	switch s {
@@ -24,7 +31,7 @@ func parseEnrollPolicy(s string) (tumbler.Policy, error) {
 	case "yubikey-only":
 		return tumbler.PolicyYubiKeyOnly, nil
 	default:
-		return tumbler.PolicyInvalid, fmt.Errorf("unknown policy %q (use password-and-yubikey or yubikey-only)", s)
+		return tumbler.PolicyInvalid, fmt.Errorf("%w %q (use password-and-yubikey or yubikey-only)", errUnknownPolicy, s)
 	}
 }
 
@@ -69,7 +76,7 @@ func runVaultEnrollYubiKey(ctx context.Context, stdout, stderr *Stream, in, stdo
 		return err
 	}
 	if keyslots.Exists(filepath.Dir(vaultPath)) {
-		return fmt.Errorf("this vault already has a YubiKey envelope enrolled")
+		return errAlreadyEnrolled
 	}
 
 	currentPass, err := deps.promptPassphrase(in, stderr.w, promptVaultCurrentPassphrase)
