@@ -7,10 +7,14 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"log/slog"
+	"os"
 	"time"
 
+	tumbler "github.com/mrz1836/go-tumbler"
 	"github.com/mrz1836/hush/internal/config"
 	"github.com/mrz1836/hush/internal/keychain"
+	"github.com/mrz1836/hush/internal/vault/keyslots"
 	"github.com/mrz1836/hush/internal/vault/securebytes"
 )
 
@@ -97,6 +101,137 @@ func decodeTouchToken(raw []byte, wantBind [32]byte, nowUnix int64) ([]byte, err
 	return seed, nil
 }
 
+// Touch-cache outcomes recorded in the startup audit event.
+const (
+	touchCacheOutcomeHit         = "hit"          // recovered from cache; no touch
+	touchCacheOutcomeStored      = "stored"       // touched, then cached
+	touchCacheOutcomeStoreFailed = "store_failed" // touched; caching the token failed (non-fatal)
+	touchCacheOutcomeUnlocked    = "unlocked"     // touched; cache inactive (nil)
+)
+
+// recoverMasterSeed recovers the master seed for runServe, using the opt-in
+// touch cache when active. A valid cached token skips the touch entirely;
+// otherwise it unlocks via the (possibly injected) unlocker and best-effort
+// caches the result. It returns the seed (caller must zero), the touch cache (or
+// nil), and the outcome for the startup audit event.
+func serveRecoverMasterSeed(
+	ctx context.Context,
+	cfg *config.Server,
+	deps serveDeps,
+	stateDir string,
+	salt []byte,
+	passphrase *securebytes.SecureBytes,
+	onTouch func(),
+	warn func(string, ...any),
+) ([]byte, *touchCache, string, error) {
+	tc := newTouchCache(cfg, deps, stateDir, salt, warn)
+	if tc != nil {
+		if seed, hit := tc.lookup(ctx); hit {
+			return seed, tc, touchCacheOutcomeHit, nil
+		}
+	}
+
+	unlockerFn := deps.newUnlocker
+	if unlockerFn == nil {
+		unlockerFn = func(t func()) (masterSeedUnlocker, error) {
+			return ykmanUnlockerFactory(defaultYkmanPath, defaultYkmanSlot, t)()
+		}
+	}
+	seed, err := unlockMasterSeed(ctx, stateDir, passphrase, salt,
+		func() (masterSeedUnlocker, error) { return unlockerFn(onTouch) })
+	if err != nil {
+		return nil, tc, "", err
+	}
+	outcome := touchCacheOutcomeUnlocked
+	if tc != nil {
+		if tc.store(ctx, seed) {
+			outcome = touchCacheOutcomeStored
+		} else {
+			outcome = touchCacheOutcomeStoreFailed
+		}
+	}
+	return seed, tc, outcome, nil
+}
+
+// newTouchCache builds the touch cache for runServe, or returns nil when the
+// cache must not run — in which case the caller never constructs a keychain and
+// the original touch path runs verbatim. It is nil unless ALL hold:
+//   - cfg.YubiKey.CacheTouch is true and --no-cache was not passed;
+//   - a keyslots envelope is enrolled (a password-only vault has no touch);
+//   - the platform supports a per-binary ACL (darwin only).
+//
+// A keychain-construction or envelope-load failure disables the cache (with a
+// warning) rather than failing serve — fail-closed to the touch path.
+func newTouchCache(cfg *config.Server, deps serveDeps, stateDir string, salt []byte, warn func(string, ...any)) *touchCache {
+	if !cfg.YubiKey.CacheTouch || deps.noCache {
+		return nil
+	}
+	if !keyslots.Exists(stateDir) {
+		return nil
+	}
+	platformACL, kcFactory, nowFn, binPath := resolveTouchCacheSeams(deps)
+	if !platformACL() {
+		warn("hush: serve: touch cache requested but per-binary ACL is unsupported on this platform; caching disabled\n")
+		return nil
+	}
+
+	envelope, _, err := keyslots.Load(stateDir)
+	if err != nil {
+		warn("hush: serve: touch cache disabled (keyslots unreadable): %v\n", err)
+		return nil
+	}
+
+	kc, err := kcFactory()
+	if err != nil || kc == nil {
+		warn("hush: serve: touch cache disabled (keychain unavailable): %v\n", err)
+		return nil
+	}
+
+	return &touchCache{
+		kc:          kc,
+		service:     touchCacheService,
+		account:     touchCacheAccount,
+		bindTag:     computeBindTag(envelope, salt),
+		ttl:         cfg.YubiKey.CacheTouchTTL,
+		now:         nowFn,
+		binaryPath:  binPath,
+		yubikeyOnly: envelopeIsYubiKeyOnly(envelope),
+		warn:        warn,
+	}
+}
+
+// resolveTouchCacheSeams fills the touch-cache seams with their production
+// defaults where a test left them nil.
+func resolveTouchCacheSeams(deps serveDeps) (func() bool, func() (keychain.Keychain, error), func() time.Time, func() (string, error)) {
+	platformACL := deps.platformACL
+	if platformACL == nil {
+		platformACL = keychain.PerBinaryACLSupported
+	}
+	kcFactory := deps.keychainFactory
+	if kcFactory == nil {
+		kcFactory = func() (keychain.Keychain, error) { return keychain.New(slog.Default()) }
+	}
+	nowFn := deps.now
+	if nowFn == nil {
+		nowFn = time.Now
+	}
+	binPath := deps.binaryPath
+	if binPath == nil {
+		binPath = os.Executable
+	}
+	return platformACL, kcFactory, nowFn, binPath
+}
+
+// envelopeIsYubiKeyOnly reports the authoritative posture, never trusting the
+// sidecar's advisory policy hint.
+func envelopeIsYubiKeyOnly(envelope []byte) bool {
+	env, err := tumbler.ParseEnvelope(envelope)
+	if err != nil {
+		return false
+	}
+	return env.EffectivePolicy() == tumbler.PolicyYubiKeyOnly
+}
+
 // touchCache is the opt-in per-binary-ACL Keychain cache of the master seed. It
 // lets a `serve` restart skip the YubiKey touch until an absolute TTL. It is
 // constructed only when the operator has opted in AND the platform supports a
@@ -143,36 +278,38 @@ func (c *touchCache) lookup(ctx context.Context) ([]byte, bool) {
 	return seed, true
 }
 
-// store best-effort upserts the token for the given seed. A Delete/Store failure
-// is a non-fatal warning (the daemon still runs; the next restart just touches).
-func (c *touchCache) store(ctx context.Context, seed []byte) {
+// store best-effort upserts the token for the given seed and reports whether it
+// was cached. A Delete/Store failure is a non-fatal warning (the daemon still
+// runs; the next restart just touches).
+func (c *touchCache) store(ctx context.Context, seed []byte) bool {
 	binPath, err := c.resolveBinaryPath()
 	if err != nil {
 		c.warn("hush: serve: touch cache store skipped: %v\n", err)
-		return
+		return false
 	}
 
 	expiry := c.now().Add(minDuration(c.ttl, config.MaxYubiKeyTouchTTL)).Unix()
 	token, err := encodeTouchToken(seed, expiry, c.bindTag)
 	if err != nil {
 		c.warn("hush: serve: touch cache encode failed (non-fatal): %v\n", err)
-		return
+		return false
 	}
 	tokenSB, err := securebytes.New(token) // copies + zeroes the plaintext token
 	if err != nil {
 		c.warn("hush: serve: touch cache wrap failed (non-fatal): %v\n", err)
-		return
+		return false
 	}
 	defer func() { _ = tokenSB.Destroy() }()
 
 	c.bestEffortDelete(ctx) // upsert: Store rejects an existing item
 	if serr := c.kc.Store(ctx, c.service, c.account, tokenSB, binPath); serr != nil {
 		c.warn("hush: serve: touch cache store failed (non-fatal): %v\n", serr)
-		return
+		return false
 	}
 	if c.yubikeyOnly {
 		c.warn("hush: serve: ⚠ yubikey-only master seed cached — protected only by this binary's Keychain ACL for up to %s. Prefer password-and-yubikey.\n", minDuration(c.ttl, config.MaxYubiKeyTouchTTL))
 	}
+	return true
 }
 
 // resolveBinaryPath returns the per-binary ACL path (os.Executable in
