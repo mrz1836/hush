@@ -868,6 +868,7 @@ func TestSecret_ProductionDeps_NotNil(t *testing.T) {
 	require.NotNil(t, d.isStdinTTY)
 	require.NotNil(t, d.isStdoutTTY)
 	require.NotNil(t, d.deriveMasterSeed)
+	require.NotNil(t, d.newUnlocker)
 	require.NotNil(t, d.readVaultSalt)
 	require.NotNil(t, d.kill)
 	require.NotNil(t, d.readPIDFile)

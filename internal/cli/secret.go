@@ -37,6 +37,7 @@ import (
 	"github.com/mrz1836/hush/internal/config"
 	"github.com/mrz1836/hush/internal/keys"
 	"github.com/mrz1836/hush/internal/vault"
+	"github.com/mrz1836/hush/internal/vault/keyslots"
 	"github.com/mrz1836/hush/internal/vault/securebytes"
 )
 
@@ -143,7 +144,12 @@ type secretDeps struct {
 	isStdoutTTY func(*os.File) bool
 
 	deriveMasterSeed func(ctx context.Context, passphrase, salt []byte) ([]byte, error)
-	readVaultSalt    func(path string) ([]byte, error)
+	// newUnlocker builds the envelope-backed master-seed unlocker for enrolled
+	// (v2) vaults; onTouch (if non-nil) fires the moment the key blinks. It is
+	// invoked ONLY when a keyslots envelope exists, so password-only vaults never
+	// construct a ykman transport. The legacy fixture leaves this nil (safe).
+	newUnlocker   func(onTouch func()) (masterSeedUnlocker, error)
+	readVaultSalt func(path string) ([]byte, error)
 
 	kill        func(pid int, sig syscall.Signal) error
 	readPIDFile func(path string) ([]byte, error)
@@ -179,12 +185,15 @@ func productionSecretDeps() *secretDeps {
 		isStdinTTY:       defaultIsTTY,
 		isStdoutTTY:      defaultIsTTY,
 		deriveMasterSeed: keys.DeriveMasterSeed,
-		readVaultSalt:    readVaultSalt,
-		kill:             syscall.Kill,
-		readPIDFile:      os.ReadFile,
-		stateDirRoot:     "",
-		logger:           slog.Default(),
-		nowFn:            time.Now,
+		newUnlocker: func(onTouch func()) (masterSeedUnlocker, error) {
+			return ykmanUnlockerFactory(defaultYkmanPath, defaultYkmanSlot, onTouch)()
+		},
+		readVaultSalt: readVaultSalt,
+		kill:          syscall.Kill,
+		readPIDFile:   os.ReadFile,
+		stateDirRoot:  "",
+		logger:        slog.Default(),
+		nowFn:         time.Now,
 	}
 }
 
@@ -421,16 +430,18 @@ func resolveStateDirPath(ctx context.Context, deps *secretDeps) (string, error) 
 // deriveVaultKey runs the passphrase → master seed → vault encryption
 // key derivation. Returns the AES-GCM key wrapped in *SecureBytes; the
 // caller owns it and MUST Destroy.
-func deriveVaultKey(ctx context.Context, deps *secretDeps, passphrase *securebytes.SecureBytes, salt []byte) (*securebytes.SecureBytes, error) {
-	var masterSeed []byte
-	var deriveErr error
-	if useErr := passphrase.Use(func(b []byte) {
-		masterSeed, deriveErr = deps.deriveMasterSeed(ctx, b, salt)
-	}); useErr != nil {
-		return nil, useErr
-	}
-	if deriveErr != nil {
-		return nil, deriveErr
+//
+// It branches on the vault posture: an enrolled (v2) vault recovers its random
+// master seed through the exact seam serve.go uses (unlockMasterSeed →
+// deps.newUnlocker), so the security path never diverges and a 2FA envelope
+// still demands the passphrase (and a touch, announced via onTouch). A legacy
+// (v1) vault takes the inline deps.deriveMasterSeed path — routing it through
+// unlockMasterSeed would run the real 256MiB Argon2id and diverge from the
+// frozen-seed fast-test fixtures.
+func deriveVaultKey(ctx context.Context, deps *secretDeps, passphrase *securebytes.SecureBytes, salt []byte, stateDir string, onTouch func()) (*securebytes.SecureBytes, error) {
+	masterSeed, err := recoverMasterSeed(ctx, deps, passphrase, salt, stateDir, onTouch)
+	if err != nil {
+		return nil, err
 	}
 	defer zeroBytes(masterSeed)
 
@@ -439,6 +450,50 @@ func deriveVaultKey(ctx context.Context, deps *secretDeps, passphrase *securebyt
 		return nil, err
 	}
 	return securebytes.New(rawKey)
+}
+
+// recoverMasterSeed returns the 64-byte master seed for the vault at stateDir:
+// via the keyslots envelope for enrolled (v2) vaults, or the legacy passphrase
+// KDF (deps.deriveMasterSeed seam) otherwise. The caller must zero the result.
+func recoverMasterSeed(ctx context.Context, deps *secretDeps, passphrase *securebytes.SecureBytes, salt []byte, stateDir string, onTouch func()) ([]byte, error) {
+	if keyslots.Exists(stateDir) {
+		return unlockMasterSeed(ctx, stateDir, passphrase, salt, func() (masterSeedUnlocker, error) {
+			return deps.newUnlocker(onTouch)
+		})
+	}
+	var (
+		masterSeed []byte
+		deriveErr  error
+	)
+	if useErr := passphrase.Use(func(b []byte) {
+		masterSeed, deriveErr = deps.deriveMasterSeed(ctx, b, salt)
+	}); useErr != nil {
+		return nil, useErr
+	}
+	if deriveErr != nil {
+		return nil, deriveErr
+	}
+	return masterSeed, nil
+}
+
+// saveVaultPreservingVersion writes the vault while preserving its on-disk
+// format version: v2 (enveloped) when a keyslots envelope exists, else the
+// legacy v1 path via deps.saveVault (seam preserved for tests). For v2 it reuses
+// the file's existing header salt — vestigial for v2 (the key derives from the
+// random master seed, not the salt) but it must round-trip unchanged so the
+// header stays coherent. Without this, a write-back on an enrolled vault would
+// silently downgrade it to v1 and lock out the envelope.
+func saveVaultPreservingVersion(ctx context.Context, deps *secretDeps, stateDir, vaultPath string, vaultKey *securebytes.SecureBytes, salt []byte, secrets []vault.Secret) error {
+	if keyslots.Exists(stateDir) {
+		return vault.SaveWithSaltAndVersion(ctx, vaultPath, vaultKey, salt, vault.Version2, secrets)
+	}
+	return deps.saveVault(ctx, vaultPath, vaultKey, salt, secrets)
+}
+
+// touchAnnouncer returns an onTouch callback that prints the blink line to the
+// verb's stderr, byte-identical to serve.go / migrate.go.
+func touchAnnouncer(stderr *Stream) func() {
+	return func() { _ = stderr.WriteText("\n👆  Touch your YubiKey now — it's blinking...\n") }
 }
 
 // destroySecrets calls Destroy on every value SecureBytes inside the
@@ -467,7 +522,7 @@ func openVaultForAdd(ctx context.Context, deps *secretDeps, in *os.File, stderr 
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	vaultKey, err := deriveVaultKey(ctx, deps, passphrase, salt)
+	vaultKey, err := deriveVaultKey(ctx, deps, passphrase, salt, filepath.Dir(vaultPath), touchAnnouncer(stderr))
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -607,7 +662,7 @@ func runSecretAdd(ctx context.Context, stderr *Stream, in *os.File, deps *secret
 	combined = append(combined, secrets...)
 	combined = append(combined, vault.Secret{Name: name, Description: description, Value: value})
 
-	if err := deps.saveVault(ctx, vaultPath, vaultKey, salt, combined); err != nil {
+	if err := saveVaultPreservingVersion(ctx, deps, filepath.Dir(vaultPath), vaultPath, vaultKey, salt, combined); err != nil {
 		return err
 	}
 
@@ -655,7 +710,7 @@ func runSecretRemove(ctx context.Context, stderr *Stream, in *os.File, deps *sec
 		return err
 	}
 
-	vaultKey, err := deriveVaultKey(ctx, deps, passphrase, salt)
+	vaultKey, err := deriveVaultKey(ctx, deps, passphrase, salt, filepath.Dir(vaultPath), touchAnnouncer(stderr))
 	if err != nil {
 		return err
 	}
@@ -695,7 +750,7 @@ func runSecretRemove(ctx context.Context, stderr *Stream, in *os.File, deps *sec
 	filtered = append(filtered, secrets[:idx]...)
 	filtered = append(filtered, secrets[idx+1:]...)
 
-	if err := deps.saveVault(ctx, vaultPath, vaultKey, salt, filtered); err != nil {
+	if err := saveVaultPreservingVersion(ctx, deps, filepath.Dir(vaultPath), vaultPath, vaultKey, salt, filtered); err != nil {
 		return err
 	}
 
@@ -737,7 +792,7 @@ func runSecretList(ctx context.Context, stdout, stderr *Stream, in, stdoutFile *
 		return err
 	}
 
-	vaultKey, err := deriveVaultKey(ctx, deps, passphrase, salt)
+	vaultKey, err := deriveVaultKey(ctx, deps, passphrase, salt, filepath.Dir(vaultPath), touchAnnouncer(stderr))
 	if err != nil {
 		return err
 	}
@@ -836,7 +891,7 @@ func runSecretRotate(ctx context.Context, stderr *Stream, in *os.File, deps *sec
 		return err
 	}
 
-	vaultKey, err := deriveVaultKey(ctx, deps, passphrase, salt)
+	vaultKey, err := deriveVaultKey(ctx, deps, passphrase, salt, stateDir, touchAnnouncer(stderr))
 	if err != nil {
 		return err
 	}
@@ -853,9 +908,9 @@ func runSecretRotate(ctx context.Context, stderr *Stream, in *os.File, deps *sec
 
 	// Re-save with the file's existing salt so the salt → KDF → vaultKey
 	// chain stays coherent across rotate. The nonce is freshly minted
-	// per call by SaveWithSalt; ciphertext bytes still
-	// change while the plaintext set is preserved.
-	if err := deps.saveVault(ctx, vaultPath, vaultKey, salt, secrets); err != nil {
+	// per call; ciphertext bytes still change while the plaintext set is
+	// preserved. Enrolled (v2) vaults are re-saved as v2 (never downgraded).
+	if err := saveVaultPreservingVersion(ctx, deps, stateDir, vaultPath, vaultKey, salt, secrets); err != nil {
 		return err
 	}
 
