@@ -323,50 +323,42 @@ hush serve                             # binds Tailscale, brokers approvals
 
 ### Protect the vault with a YubiKey (optional)
 
-Add a **YubiKey** as an unlock factor for the vault — either with your
-passphrase (true two‑factor) or on its own. Because hush derives its keys from
-the passphrase, enrollment re‑encrypts the vault under a **new random master
-seed** wrapped by a hardware keyslot, so the passphrase alone can no longer
-open it. A pre‑migration snapshot is written for rollback.
+Add a **YubiKey** as an unlock factor for the vault — with your passphrase (true two‑factor)
+or on its own. Because hush derives its keys from the passphrase, enrollment re‑encrypts the
+vault under a **new random master seed** wrapped by a hardware keyslot, so the passphrase alone
+can no longer open it. A pre‑migration snapshot is always written for rollback.
 
-**Prerequisites** — install Yubico's [`ykman`](https://developers.yubico.com/yubikey-manager/)
-and program a challenge‑response slot **once per key**:
+**One‑time key setup** — install Yubico's [`ykman`](https://developers.yubico.com/yubikey-manager/),
+then program a challenge‑response slot (once per key):
 
 ```bash
-ykman otp chalresp --generate --touch 2   # slot 2, generate a secret, require touch
-
-# Sanity‑check challenge‑response (this is exactly what hush calls):
-ykman otp calculate 2 00112233             # prints a 40‑char hex response
+brew install ykman                          # macOS  (Linux/Windows: see the ykman docs)
+ykman otp chalresp --generate --touch 2     # program slot 2 — type "y" to confirm
+ykman otp calculate 2 00112233              # sanity check → prints a 40-char response
 ```
 
-**Migrate an existing vault** (a snapshot is taken first; test on a scratch
-`--state-dir` before doing this to a production vault):
+Plugging the key in may pop up a macOS "keyboard setup" window — that's normal, just close it.
+
+**Migrate the vault** — enter the current passphrase, then touch the key when it blinks (try it
+on a throwaway `--state-dir` first, never a production vault on your first run):
 
 ```bash
-# Re-encrypt the vault under password + YubiKey, with a printed recovery code
 hush vault enroll-yubikey --policy password-and-yubikey --recovery-code
-#   → enter the current passphrase, then TOUCH the key when it blinks
-#   → write down the one-time recovery code; a vault snapshot path is printed
-
-# Restart the server so it picks up the new key
-hush serve                                 # now prompts passphrase → touch
+hush serve                                  # restart; now prompts passphrase → touch
 ```
 
-Policies: `--policy password-and-yubikey` (recommended) or `--policy
-yubikey-only`. The passphrase‑only `hush serve` path is unchanged until you
-migrate.
+The migration prints a one‑time recovery code and a rollback snapshot path. Policies:
+`--policy password-and-yubikey` (recommended) or `--policy yubikey-only`. The passphrase‑only
+`hush serve` path is unchanged until you migrate.
 
-> ⏰ **Daemons can't press a button at 3am.** A YubiKey vault requires one
-> touch **per interactive `hush serve` start**, so unattended launchd restart
-> of a YubiKey vault is intentionally blocked (it matches strict‑mode in
-> [`docs/DAEMONS.md`](docs/DAEMONS.md)). Keep unattended daemons on the
+> ⏰ **Daemons can't press a button at 3am.** A YubiKey vault needs one touch **per interactive
+> `hush serve` start**, so unattended launchd restart of a YubiKey vault is intentionally blocked
+> (matches strict‑mode in [`docs/DAEMONS.md`](docs/DAEMONS.md)). Keep unattended daemons on the
 > passphrase path, or migrate only interactively‑started servers.
 
-> **Note:** the YubiKey path is new. The full software path is tested against a
-> simulated key; confirm the `ykman` invocation on your hardware with the
-> sanity‑check above first. `yubikey-only` proves *presence*, not *identity*
-> (no PIN) — prefer `password-and-yubikey`, and keep the recovery code and the
-> pre‑migration snapshot until you've verified unlock end‑to‑end.
+> 🔑 **Presence, not identity.** `yubikey-only` challenge‑response has no PIN, so a stolen key
+> plus the stolen file can unlock — prefer `password-and-yubikey`, and keep the recovery code
+> and the pre‑migration snapshot until you've verified unlock end‑to‑end.
 
 <br/>
 
