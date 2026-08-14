@@ -122,6 +122,17 @@ func (s *Server) Validate() error { //nolint:cyclop,gocognit,gocyclo // rule-eng
 		))
 	}
 
+	// 10. cache_touch_ttl bounds — hard 4h absolute ceiling on how long a cached
+	// master seed can outlive a real touch. Only enforced when the cache is
+	// enabled; a latent value is re-validated the moment cache_touch flips on.
+	if s.YubiKey.CacheTouch && (s.YubiKey.CacheTouchTTL <= 0 || s.YubiKey.CacheTouchTTL > MaxYubiKeyTouchTTL) {
+		errs = append(errs, fmt.Errorf(
+			"field cache_touch_ttl=%s (max=%s): %w",
+			s.YubiKey.CacheTouchTTL, MaxYubiKeyTouchTTL,
+			ErrYubiKeyCacheTTLOutOfRange,
+		))
+	}
+
 	return errors.Join(errs...)
 }
 

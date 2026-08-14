@@ -72,3 +72,8 @@ var ErrNonceTTLBelowReplayWindow = errors.New("hush/config: nonce_ttl must be �
 // File-permissions error. Surfaced when require_file_mode_checks is true and
 // the config file's own permissions are looser than 0600.
 var ErrConfigFileMode = errors.New("hush/config: config file permissions must be 0600")
+
+// ErrYubiKeyCacheTTLOutOfRange is returned when cache_touch_ttl is ≤ 0 or above
+// the hard 4h absolute ceiling (MaxYubiKeyTouchTTL). The cap bounds how long a
+// cached master seed can outlive a real touch before a fresh touch is forced.
+var ErrYubiKeyCacheTTLOutOfRange = errors.New("hush/config: cache_touch_ttl out of range (must be > 0 and ≤ 4h)")
