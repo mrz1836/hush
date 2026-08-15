@@ -75,6 +75,18 @@ var (
 	DefaultMaxClockDrift         = 60 * time.Second
 )
 
+// YubiKey touch-cache defaults. The cache is OFF by default so the hardware
+// presence guarantee (a touch per serve restart) holds unless an operator
+// explicitly opts in. MaxYubiKeyTouchTTL is the hard absolute ceiling enforced
+// both in Validate() and by the token codec at write time.
+//
+//nolint:gochecknoglobals // sentinel-class: set-once at package load, never mutated
+var (
+	DefaultYubiKeyCacheTouch    = false
+	DefaultYubiKeyCacheTouchTTL = 60 * time.Minute
+	MaxYubiKeyTouchTTL          = 4 * time.Hour
+)
+
 // path_prefix bounds.
 //
 //nolint:gochecknoglobals // sentinel-class: set-once at package load, never mutated

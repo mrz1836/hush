@@ -9,12 +9,13 @@ require (
 	github.com/decred/dcrd/hdkeychain/v3 v3.1.3
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/mrz1836/go-selfupdate v0.1.3
+	github.com/mrz1836/go-tumbler v0.1.0
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.11.1
 	github.com/zalando/go-keyring v0.2.8
-	golang.org/x/crypto v0.54.0
+	golang.org/x/crypto v0.55.0
 	golang.org/x/sys v0.47.0
 	golang.org/x/term v0.45.0
 )

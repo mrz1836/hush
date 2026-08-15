@@ -24,6 +24,7 @@ import (
 	"github.com/mrz1836/hush/internal/audit"
 	"github.com/mrz1836/hush/internal/config"
 	"github.com/mrz1836/hush/internal/discord"
+	"github.com/mrz1836/hush/internal/keychain"
 	"github.com/mrz1836/hush/internal/keys"
 	"github.com/mrz1836/hush/internal/logging"
 	"github.com/mrz1836/hush/internal/server"
@@ -124,6 +125,19 @@ type serveDeps struct {
 	// platform-specific startup probes.
 	clockSyncProbe  func(ctx context.Context) (bool, time.Duration, error)
 	interfaceLister func() ([]net.Addr, error)
+
+	// YubiKey touch-cache seams (item B). All optional; runServe falls back to
+	// the production implementation when a seam is nil. noCache mirrors the
+	// --no-cache flag. newUnlocker overrides the ykman-backed unlocker so tests
+	// can count touches. keychainFactory, now, platformACL, and binaryPath let
+	// the whole cache be exercised on Linux CI with a FakeKeychain and a fixed
+	// clock.
+	noCache         bool
+	newUnlocker     func(onTouch func()) (masterSeedUnlocker, error)
+	keychainFactory func() (keychain.Keychain, error)
+	now             func() time.Time
+	platformACL     func() bool
+	binaryPath      func() (string, error)
 }
 
 func newServeCmd() *cobra.Command {
@@ -145,11 +159,13 @@ func newServeCmd() *cobra.Command {
 			// override path.
 			deps.allowClockSkew, _ = cmd.Flags().GetBool("allow-clock-skew")
 			deps.reloadOnVaultChange, _ = cmd.Flags().GetBool("reload-on-vault-change")
+			deps.noCache, _ = cmd.Flags().GetBool("no-cache")
 			return runServe(cmd.Context(), out.stdout, out.stderr, deps)
 		},
 	}
 	cmd.Flags().Bool("allow-clock-skew", false, "Downgrade a failing clock-sync startup check to a logged warning + audit event (no auto-sudo)")
 	cmd.Flags().Bool("reload-on-vault-change", false, "Automatically reload the vault when secrets.vault changes")
+	cmd.Flags().Bool("no-cache", false, "Disable the YubiKey touch cache for this run (overrides [yubikey] cache_touch)")
 	return cmd
 }
 
@@ -202,18 +218,28 @@ func runServe(ctx context.Context, stdout, stderr *Stream, deps serveDeps) error
 		return err
 	}
 
-	// 4. Derive master seed.
-	var masterSeed []byte
-	if useErr := passphrase.Use(func(b []byte) {
-		masterSeed, err = keys.DeriveMasterSeed(ctx, b, salt)
-	}); useErr != nil {
-		return useErr
-	}
+	// 4. Recover the master seed. For a legacy (password-only) vault this is
+	// the original passphrase -> Argon2id derivation. When a YubiKey keyslots
+	// envelope is enrolled it is recovered via that envelope instead (a touch,
+	// plus the passphrase for password-and-yubikey; the passphrase is unused
+	// for yubikey-only).
+	//
+	// The opt-in touch cache (item B) is nil unless the operator enabled it AND
+	// the platform supports a per-binary ACL; when nil the original touch path
+	// below runs verbatim (today's behavior). A valid cached token recovers the
+	// seed with no touch and no ykman; a cache-hit seed is still validated by
+	// the AEAD vault.Load at step 6 (fail-closed on a bad seed).
+	onTouch := func() { _ = stderr.WriteText("\n👆  Touch your YubiKey now — it's blinking...\n") }
+	warn := func(format string, args ...any) { _ = stderr.WriteText(format, args...) }
+	masterSeed, tc, cacheOutcome, err := serveRecoverMasterSeed(ctx, cfg, deps, cfg.Server.StateDir, salt, passphrase, onTouch, warn)
 	if err != nil {
 		return err
 	}
 	defer zeroBytes(masterSeed)
-	verbose("keys: master seed derived")
+	if cacheOutcome == touchCacheOutcomeHit {
+		verbose("keys: master seed recovered from touch cache (no touch)")
+	}
+	verbose("keys: master seed recovered")
 
 	// 5. Derive subkeys.
 	jwtKey, err := keys.DeriveJWTSigningKey(masterSeed)
@@ -266,6 +292,17 @@ func runServe(ctx context.Context, stdout, stderr *Stream, deps serveDeps) error
 	defer func() { <-auditDone }()
 	defer auditCancel()
 	verbose("audit: writer started at %s", cfg.Server.AuditLog)
+
+	// Startup audit for the opt-in touch cache — only when the cache is active,
+	// so a default (disabled) serve emits nothing new. Records the outcome (hit /
+	// stored / store_failed) and the weakest-posture flag.
+	if tc != nil && cacheOutcome != "" {
+		logger.Info("yubikey_touch_cache",
+			"outcome", cacheOutcome,
+			"yubikey_only", tc.yubikeyOnly,
+			"ttl", cfg.YubiKey.CacheTouchTTL.String(),
+		)
+	}
 
 	// 8. Construct the Discord approver.
 	approver, discordHealthFn, err := deps.approverFactory(ctx, cfg, logger)

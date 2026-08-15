@@ -23,6 +23,7 @@ type Server struct {
 	Crypto   CryptoSection
 	Network  NetworkSection
 	Security SecuritySection
+	YubiKey  YubiKeySection
 
 	// rawListenAddr and rawHealthBind carry the original TOML strings so that
 	// Validate can produce precise error messages. They are unexported and not
@@ -82,6 +83,16 @@ type SecuritySection struct {
 	MaxClockDrift         time.Duration
 }
 
+// YubiKeySection holds the [yubikey] TOML table. It governs the opt-in daemon
+// touch cache: when CacheTouch is true, a successful YubiKey unlock may cache
+// the recovered master seed in a dedicated per-binary-ACL Keychain item so a
+// `serve` restart skips the touch until an absolute TTL (capped at
+// MaxYubiKeyTouchTTL). Off by default; see DAEMONS.md and SECURITY.md.
+type YubiKeySection struct {
+	CacheTouch    bool
+	CacheTouchTTL time.Duration
+}
+
 // ---- Wire-shape (decoded) types — INTERNAL ----------------------------------
 
 type serverDecoded struct {
@@ -90,6 +101,7 @@ type serverDecoded struct {
 	Crypto   cryptoSectionDecoded   `toml:"crypto"`
 	Network  networkSectionDecoded  `toml:"network"`
 	Security securitySectionDecoded `toml:"security"`
+	YubiKey  yubikeySectionDecoded  `toml:"yubikey"`
 }
 
 type serverSectionDecoded struct {
@@ -134,6 +146,11 @@ type securitySectionDecoded struct {
 	RequireKeychainACL    *bool  `toml:"require_keychain_acl"`
 	RequireNTPSync        *bool  `toml:"require_ntp_sync"`
 	MaxClockDrift         string `toml:"max_clock_drift"`
+}
+
+type yubikeySectionDecoded struct {
+	CacheTouch    *bool  `toml:"cache_touch"`
+	CacheTouchTTL string `toml:"cache_touch_ttl"`
 }
 
 // ---- LoadServer -------------------------------------------------------------
@@ -417,6 +434,16 @@ func materialize(d serverDecoded) (*Server, error) { //nolint:cyclop,gocognit,go
 		s.Security.RequireNTPSync = DefaultRequireNTPSync
 	}
 	if s.Security.MaxClockDrift, err = parseDuration(d.Security.MaxClockDrift, DefaultMaxClockDrift, "max_clock_drift"); err != nil {
+		return nil, err
+	}
+
+	// ---- [yubikey] ----
+	if d.YubiKey.CacheTouch != nil {
+		s.YubiKey.CacheTouch = *d.YubiKey.CacheTouch
+	} else {
+		s.YubiKey.CacheTouch = DefaultYubiKeyCacheTouch
+	}
+	if s.YubiKey.CacheTouchTTL, err = parseDuration(d.YubiKey.CacheTouchTTL, DefaultYubiKeyCacheTouchTTL, "cache_touch_ttl"); err != nil {
 		return nil, err
 	}
 

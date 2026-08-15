@@ -280,6 +280,36 @@ to force strict mode regardless of TOML.
 
 Documented residual risk: see [`docs/SECURITY.md`](SECURITY.md) §6.
 
+### YubiKey touch cache (`[yubikey] cache_touch`) — orthogonal to the grace cache
+
+A YubiKey vault needs one physical touch **per `hush serve` start**. That is the
+hardware-presence guarantee: whoever restarts the server proves possession of the
+key. It also means a daemon cannot restart itself unattended. The **opt-in touch
+cache** trades that guarantee for restart availability, in the same strict-vs-cache
+shape as the supervisor grace window — but it is a **different object entirely**
+(the `serve` process, the OS Keychain, the master seed), sharing only the
+vocabulary.
+
+**Strict mode (`cache_touch = false`, default).** Every `serve` start requires a
+touch. A 3am restart of a YubiKey vault waits for a human. This preserves the
+hardware-presence guarantee byte-for-byte — the Keychain is never even opened.
+
+**Cache mode (`cache_touch = true`, `cache_touch_ttl` default `60m`, cap `4h`).**
+After a successful touch, `serve` caches the recovered 64-byte master seed in a
+**dedicated per-binary-ACL Keychain item** (`hush-vault-yubikey-token`, separate
+from the operator-managed passphrase item). A restart within the TTL recovers the
+seed with **no touch and no ykman**. The TTL is **absolute** — measured from the
+last real touch, not refreshed on each hit — and capped at **4h** by both config
+validation and the token codec. The token is bound to `SHA-256(envelope ‖ salt)`,
+so a re-enrollment or a `vault rekey` invalidates it automatically; any
+decode/bind/expiry failure drops the item and falls back to a touch (fail-closed).
+`hush serve --no-cache` forces strict mode for one run regardless of TOML.
+
+`yubikey-only` + cache is the weakest posture (no second factor on the host, so the
+seed is protected only by the binary ACL for the TTL window); it is allowed but
+emits an unmissable warning on every store and hit. Documented residual risk: see
+[`docs/SECURITY.md`](SECURITY.md) §6.
+
 ### Standing lease (`standing_lease`) — orthogonal to the grace cache
 
 `standing_lease` and `cache_secrets_for_restart` solve different halves of the

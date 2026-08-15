@@ -240,6 +240,7 @@ Every hush subcommand at a glance — every entry below is real today.
 | `hush serve` | Run the vault server (Tailscale-only) |
 | `hush secret add` / `list` / `remove` / `rotate` | Manage vault entries (rotate re-encrypts and hot-reloads) |
 | `hush vault rekey` | Change the vault passphrase — rotates the root of trust (TTY-only) |
+| `hush vault enroll-yubikey` | Protect the vault with a YubiKey (password+YubiKey or YubiKey-only; TTY-only) |
 | `hush request --exec …` | One-shot interactive fetch + child exec |
 | `hush supervise <config.toml>` | Long-running daemon with grace cache + validators |
 | `hush health` / `server-url` / `version` | Daily-driver helpers |
@@ -317,6 +318,55 @@ hush serve                             # binds Tailscale, brokers approvals
 > 🔐 **macOS Keychain locked?** Choose the env-token fallback during init
 > and run `hush serve` with `HUSH_DISCORD_BOT_TOKEN` exported in that
 > terminal. Full recovery flow in [`docs/SECURITY.md`](docs/SECURITY.md) §2.4.
+
+<br/>
+
+### Protect the vault with a YubiKey (optional)
+
+Add a **YubiKey** as an unlock factor for the vault — with your passphrase (true two‑factor)
+or on its own. Because hush derives its keys from the passphrase, enrollment re‑encrypts the
+vault under a **new random master seed** wrapped by a hardware keyslot, so the passphrase alone
+can no longer open it. A pre‑migration snapshot is always written for rollback.
+
+**One‑time key setup** — install Yubico's [`ykman`](https://developers.yubico.com/yubikey-manager/),
+then program a challenge‑response slot (once per key):
+
+```bash
+brew install ykman                          # macOS  (Linux/Windows: see the ykman docs)
+ykman otp chalresp --generate --touch 2     # program slot 2 — type "y" to confirm
+ykman otp calculate 2 00112233              # sanity check → prints a 40-char response
+```
+
+Plugging the key in may pop up a macOS "keyboard setup" window — that's normal, just close it.
+
+**Migrate the vault** — enter the current passphrase, then touch the key when it blinks (try it
+on a throwaway `--state-dir` first, never a production vault on your first run):
+
+```bash
+hush vault enroll-yubikey --policy password-and-yubikey --recovery-code
+hush serve                                  # restart; now prompts passphrase → touch
+```
+
+The migration prints a one‑time recovery code and a rollback snapshot path. Policies:
+`--policy password-and-yubikey` (recommended) or `--policy yubikey-only`. The passphrase‑only
+`hush serve` path is unchanged until you migrate.
+
+> ⏰ **Daemons can't press a button at 3am.** A YubiKey vault needs one touch **per interactive
+> `hush serve` start**, so unattended launchd restart of a YubiKey vault is intentionally blocked
+> (matches strict‑mode in [`docs/DAEMONS.md`](docs/DAEMONS.md)). Keep unattended daemons on the
+> passphrase path, or migrate only interactively‑started servers.
+>
+> **Opt‑in touch cache (off by default).** If you accept the trade‑off, `[yubikey] cache_touch = true`
+> (with `cache_touch_ttl`, capped at 4h) caches the recovered master seed in a dedicated per‑binary‑ACL
+> Keychain item so a `serve` restart skips the touch until the TTL elapses. The default stays
+> touch‑per‑restart precisely to preserve the hardware‑presence guarantee; enabling the cache means a
+> Keychain reader *as the hush binary* (root / a compromised binary) can recover the seed for the TTL
+> window. `hush serve --no-cache` overrides it for one run. See [`docs/DAEMONS.md`](docs/DAEMONS.md) §6
+> and [`docs/SECURITY.md`](docs/SECURITY.md) §6.
+
+> 🔑 **Presence, not identity.** `yubikey-only` challenge‑response has no PIN, so a stolen key
+> plus the stolen file can unlock — prefer `password-and-yubikey`, and keep the recovery code
+> and the pre‑migration snapshot until you've verified unlock end‑to‑end.
 
 <br/>
 

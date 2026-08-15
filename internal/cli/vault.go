@@ -20,13 +20,16 @@ import (
 	"syscall"
 	"time"
 
+	tumbler "github.com/mrz1836/go-tumbler"
 	"github.com/spf13/cobra"
 
 	"github.com/mrz1836/hush/internal/config"
 	"github.com/mrz1836/hush/internal/keychain"
 	"github.com/mrz1836/hush/internal/keys"
 	"github.com/mrz1836/hush/internal/vault"
+	"github.com/mrz1836/hush/internal/vault/keyslots"
 	"github.com/mrz1836/hush/internal/vault/securebytes"
+	"github.com/mrz1836/hush/internal/yubikey"
 )
 
 // vaultSaltLen is the on-disk salt width expected by vault.SaveWithSalt
@@ -60,6 +63,13 @@ const (
 	vaultMsgKcItemMissing  = "hush: vault: --update-keychain: existing Keychain item not found; skipping (no Keychain mutation)"
 	vaultMsgKcUpdated      = "hush: vault: --update-keychain: Keychain item updated"
 	vaultMsgPartialFailFmt = "hush: vault: vault rekey SUCCEEDED but Keychain update FAILED — manual follow-up required: %v"
+
+	// Enveloped (v2) rekey copy. An enveloped rekey re-wraps only the
+	// passphrase factor: the master seed, data key, and vault key are all
+	// unchanged, so no server restart is needed.
+	vaultMsgRekeyNoPassphraseFactor = "hush: vault: this vault is yubikey-only; there is no passphrase to rekey (nothing changed)"
+	vaultMsgRekeyTouchTwice         = "hush: vault: re-wrapping the passphrase — you'll touch your YubiKey TWICE (unlock, then re-enroll)..."
+	vaultMsgRekeyEnvelopedFmt       = "hush: vault: passphrase re-wrapped; seed and vault unchanged (no restart needed); snapshot=%s"
 )
 
 // Locked prompt labels for the rekey flow. gosec G101 false positive
@@ -88,6 +98,13 @@ var errPassphraseUnchanged = fmt.Errorf("hush: vault: new passphrase unchanged: 
 // to that name maps to the catch-all internal code.
 var errVaultRekeyPartial = errors.New("hush: vault: rekey succeeded but Keychain update failed")
 
+// passphraseRewrapper re-wraps an envelope's password-and-yubikey slot under a
+// new passphrase in place (O(1), no seed rotation). Implemented by
+// *yubikey.Store; a fake is injected in tests.
+type passphraseRewrapper interface {
+	RewrapPassphrase(ctx context.Context, envelope []byte, oldPassphraseFn func() ([]byte, error), newPassphrase []byte) ([]byte, error)
+}
+
 // vaultDeps groups the testable seams threaded into the rekey flow.
 // Mirrors secretDeps in spirit but is intentionally separate so the
 // vault parent stays decoupled from secret-verb dependencies.
@@ -102,6 +119,11 @@ type vaultDeps struct {
 
 	deriveMasterSeed func(ctx context.Context, passphrase, salt []byte) ([]byte, error)
 	readVaultSalt    func(path string) ([]byte, error)
+
+	// newRewrapper builds the envelope-passphrase rewrapper for enrolled (v2)
+	// vaults; onTouch fires the moment the key blinks. Invoked ONLY for the
+	// enveloped rekey branch, so v1 vaults never construct a ykman transport.
+	newRewrapper func(onTouch func()) (passphraseRewrapper, error)
 
 	kill        func(pid int, sig syscall.Signal) error
 	readPIDFile func(path string) ([]byte, error)
@@ -143,15 +165,25 @@ func productionVaultDeps() *vaultDeps {
 		isStdoutTTY:      defaultIsTTY,
 		deriveMasterSeed: keys.DeriveMasterSeed,
 		readVaultSalt:    readVaultSalt,
-		kill:             syscall.Kill,
-		readPIDFile:      os.ReadFile,
-		randReader:       rand.Reader,
-		keychain:         kc,
-		binaryPath:       os.Executable,
-		platformACL:      keychain.PerBinaryACLSupported,
-		stateDirRoot:     "",
-		logger:           slog.Default(),
-		nowFn:            time.Now,
+		newRewrapper: func(onTouch func()) (passphraseRewrapper, error) {
+			s, err := yubikey.NewStoreFromConfig(defaultYkmanPath, defaultYkmanSlot)
+			if err != nil {
+				return nil, err
+			}
+			if onTouch != nil {
+				s.SetTouchPrompt(onTouch)
+			}
+			return s, nil
+		},
+		kill:         syscall.Kill,
+		readPIDFile:  os.ReadFile,
+		randReader:   rand.Reader,
+		keychain:     kc,
+		binaryPath:   os.Executable,
+		platformACL:  keychain.PerBinaryACLSupported,
+		stateDirRoot: "",
+		logger:       slog.Default(),
+		nowFn:        time.Now,
 	}
 }
 
@@ -164,6 +196,7 @@ func newVaultCmd() *cobra.Command {
 		Short: "Manage the vault root key (rekey)",
 	}
 	cmd.AddCommand(newVaultRekeyCmd())
+	cmd.AddCommand(newVaultEnrollYubiKeyCmd())
 	return cmd
 }
 
@@ -203,6 +236,12 @@ func runVaultRekey(ctx context.Context, stdout, stderr *Stream, in, stdoutFile *
 	vaultPath, err := resolveVaultRekeyPath(ctx, deps)
 	if err != nil {
 		return err
+	}
+
+	// Enrolled (v2) vaults re-wrap the passphrase factor in place (O(1), no
+	// seed rotation); the legacy v1 flow below is byte-for-byte unchanged.
+	if keyslots.Exists(filepath.Dir(vaultPath)) {
+		return runVaultRekeyEnveloped(ctx, stdout, stderr, in, deps, filepath.Dir(vaultPath))
 	}
 
 	currentPass, err := deps.promptPassphrase(in, stderr.w, promptVaultCurrentPassphrase)
@@ -298,6 +337,167 @@ func finishVaultRekey(ctx context.Context, stdout, stderr *Stream, deps *vaultDe
 	return nil
 }
 
+// runVaultRekeyEnveloped re-wraps the passphrase factor of an enrolled (v2)
+// vault in place. The data key — and therefore the master seed, the vault
+// encryption key, and secrets.vault itself — are UNCHANGED, so a running server
+// keeps working (restart_required=false). A yubikey-only vault has no passphrase
+// to rekey and is refused without mutating anything. Two touches are required
+// for password-and-yubikey (unlock, then re-enroll).
+//
+//nolint:gocognit,gocyclo // sequential enveloped-rekey flow: policy gate → prompts → snapshot → rewrap
+func runVaultRekeyEnveloped(ctx context.Context, stdout, stderr *Stream, in *os.File, deps *vaultDeps, stateDir string) error {
+	envelope, _, err := keyslots.Load(stateDir)
+	if err != nil {
+		return err
+	}
+
+	// Authoritative policy check (never trust the sidecar's advisory hint):
+	// only a password-and-yubikey envelope has a passphrase factor to rekey.
+	env, err := tumbler.ParseEnvelope(envelope)
+	if err != nil {
+		return err
+	}
+	if env.EffectivePolicy() != tumbler.PolicyPasswordAndYubiKey {
+		_ = stderr.WriteText(vaultMsgRekeyNoPassphraseFactor)
+		auditVaultRekeyEnveloped(ctx, deps.logger, slog.LevelWarn, "no_passphrase_factor", false, "")
+		return nil
+	}
+
+	currentPass, newPass, err := promptRekeyPassphrases(ctx, deps, stderr, in)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = currentPass.Destroy() }()
+	defer func() { _ = newPass.Destroy() }()
+
+	// Snapshot the sidecar BEFORE any mutation — the rollback artifact.
+	snapshotPath, err := snapshotKeyslotsFile(deps, stateDir)
+	if err != nil {
+		return err
+	}
+
+	rewrapper, err := deps.newRewrapper(touchAnnouncer(stderr))
+	if err != nil {
+		return fmt.Errorf("this vault requires a YubiKey (is ykman installed?): %w", err)
+	}
+
+	_ = stderr.WriteText(vaultMsgRekeyTouchTwice)
+	newEnvelope, err := rewrapEnvelope(ctx, rewrapper, envelope, currentPass, newPass)
+	if err != nil {
+		if errors.Is(err, tumbler.ErrAuthFailed) {
+			auditVaultRekeyEnveloped(ctx, deps.logger, slog.LevelWarn, "passphrase_failed", false, snapshotPath)
+		}
+		return err
+	}
+
+	newEnv, err := tumbler.ParseEnvelope(newEnvelope)
+	if err != nil {
+		return err
+	}
+	if saveErr := keyslots.Save(stateDir, newEnvelope, newEnv.EffectivePolicy().String()); saveErr != nil {
+		return saveErr // snapshot remains as the rollback artifact
+	}
+
+	return finishVaultRekeyEnveloped(ctx, stdout, stderr, deps, snapshotPath, newPass)
+}
+
+// promptRekeyPassphrases prompts current → new → confirm and runs the shared
+// new-passphrase validators (length, confirmation, changed). It does NOT touch
+// the vault body; the current passphrase is authenticated later by the envelope
+// unlock inside RewrapPassphrase.
+func promptRekeyPassphrases(ctx context.Context, deps *vaultDeps, stderr *Stream, in *os.File) (current, next *securebytes.SecureBytes, err error) {
+	current, err = deps.promptPassphrase(in, stderr.w, promptVaultCurrentPassphrase)
+	if err != nil {
+		return nil, nil, err
+	}
+	next, err = deps.promptPassphrase(in, stderr.w, promptVaultNewPassphrase)
+	if err != nil {
+		_ = current.Destroy()
+		return nil, nil, err
+	}
+	confirm, err := deps.promptPassphrase(in, stderr.w, promptVaultConfirmNew)
+	if err != nil {
+		_ = current.Destroy()
+		_ = next.Destroy()
+		return nil, nil, err
+	}
+	defer func() { _ = confirm.Destroy() }()
+
+	if vErr := validateRekeyPassphrases(ctx, deps, stderr, current, next, confirm); vErr != nil {
+		_ = current.Destroy()
+		_ = next.Destroy()
+		return nil, nil, vErr
+	}
+	return current, next, nil
+}
+
+// validateRekeyPassphrases runs the length, confirmation, and changed checks
+// shared with the v1 flow.
+func validateRekeyPassphrases(ctx context.Context, deps *vaultDeps, stderr *Stream, current, next, confirm *securebytes.SecureBytes) error {
+	if err := enforceNewPassphraseLen(ctx, deps, stderr, next); err != nil {
+		return err
+	}
+	if err := enforceNewPassphraseConfirmation(ctx, deps, stderr, next, confirm); err != nil {
+		return err
+	}
+	return enforceNewPassphraseChanged(ctx, deps, stderr, current, next)
+}
+
+// rewrapEnvelope re-wraps envelope under newPass, keeping both passphrases
+// mlocked through the operation. The old passphrase is cloned per call by the
+// rewrapper's unlock; the new passphrase is borrowed inside its Use callback.
+func rewrapEnvelope(ctx context.Context, rewrapper passphraseRewrapper, envelope []byte, currentPass, newPass *securebytes.SecureBytes) ([]byte, error) {
+	oldFn := func() ([]byte, error) {
+		var out []byte
+		if useErr := currentPass.Use(func(b []byte) { out = append([]byte(nil), b...) }); useErr != nil {
+			return nil, useErr
+		}
+		return out, nil
+	}
+	var (
+		newEnvelope []byte
+		rewrapErr   error
+	)
+	if useErr := newPass.Use(func(nw []byte) {
+		newEnvelope, rewrapErr = rewrapper.RewrapPassphrase(ctx, envelope, oldFn, nw)
+	}); useErr != nil {
+		return nil, useErr
+	}
+	return newEnvelope, rewrapErr
+}
+
+// finishVaultRekeyEnveloped runs the post-rewrap steps for an enrolled vault:
+// the optional Keychain update (so the next `serve` uses the new passphrase),
+// the success/partial copy, and the terminal audit event. It does NOT probe the
+// PID or print a restart line — an enveloped rekey leaves the seed/DEK/vault key
+// unchanged, so a running server keeps working (restart_required=false).
+func finishVaultRekeyEnveloped(ctx context.Context, stdout, stderr *Stream, deps *vaultDeps, snapshotPath string, newPass *securebytes.SecureBytes) error {
+	keychainUpdated, kcErr := maybeUpdateKeychainPassphrase(ctx, deps, stderr, newPass)
+	if kcErr != nil {
+		_ = stderr.WriteText(vaultMsgPartialFailFmt, kcErr)
+		auditVaultRekeyEnveloped(ctx, deps.logger, slog.LevelWarn, "success_partial", keychainUpdated, snapshotPath)
+		return errVaultRekeyPartial
+	}
+	_ = stdout.WriteText(vaultMsgRekeyEnvelopedFmt, snapshotPath)
+	auditVaultRekeyEnveloped(ctx, deps.logger, slog.LevelInfo, "success", keychainUpdated, snapshotPath)
+	return nil
+}
+
+// auditVaultRekeyEnveloped emits the `vault_rekeyed` record for the enveloped
+// path. restart_required is always false (seed/DEK/vault key unchanged) and the
+// record carries rekey_mode="enveloped" to distinguish it from the v1 flow.
+func auditVaultRekeyEnveloped(ctx context.Context, logger *slog.Logger, level slog.Level, outcome string, keychainUpdated bool, snapshotPath string) {
+	logger.Log(
+		ctx, level, "vault_rekeyed",
+		"verb", "rekey",
+		"outcome", outcome,
+		"restart_required", false,
+		"keychain_updated", keychainUpdated,
+		"snapshot_path", snapshotPath,
+		"rekey_mode", "enveloped",
+	)
+}
+
 // probeAndReportPID runs the read-only PID probe against
 // <stateDir>/hush.pid and prints the per-status stderr line. Returns
 // restartRequired=true ONLY for pidPresent — that is the single
@@ -384,12 +584,27 @@ func maybeUpdateKeychainPassphrase(ctx context.Context, deps *vaultDeps, stderr 
 // AC-6's atomicity guarantee holds — if snapshotting fails the rekey
 // aborts with the vault file untouched.
 func snapshotVaultFile(deps *vaultDeps, vaultPath string) (string, error) {
-	body, err := os.ReadFile(vaultPath) //nolint:gosec // vaultPath is resolved through deps.stateDirRoot or loaded server config
+	return snapshotFile(deps, vaultPath)
+}
+
+// snapshotKeyslotsFile copies the keyslots sidecar to a sibling
+// `keyslots.json.bak-<RFC3339>` before an enveloped rekey rewrites it. This is
+// the rollback artifact for the enveloped path (the vault body is untouched).
+func snapshotKeyslotsFile(deps *vaultDeps, stateDir string) (string, error) {
+	return snapshotFile(deps, keyslots.Path(stateDir))
+}
+
+// snapshotFile copies srcPath to a sibling `<name>.bak-<RFC3339>` with 0600
+// perms via O_EXCL (no silent overwrite), returning the absolute snapshot path.
+// It is created BEFORE any rewrite so the operator always has a rollback
+// artifact; if snapshotting fails the caller aborts with the source untouched.
+func snapshotFile(deps *vaultDeps, srcPath string) (string, error) {
+	body, err := os.ReadFile(srcPath) //nolint:gosec // srcPath is resolved through deps.stateDirRoot or loaded server config
 	if err != nil {
 		return "", fmt.Errorf("hush: vault: read for snapshot: %w", err)
 	}
 	timestamp := deps.nowFn().UTC().Format(time.RFC3339)
-	snapPath := vaultPath + ".bak-" + timestamp
+	snapPath := srcPath + ".bak-" + timestamp
 	// O_EXCL guards against the (theoretical) RFC3339-second-collision
 	// case where two rekeys land in the same wall-clock second; the
 	// caller surfaces the error rather than silently overwriting a

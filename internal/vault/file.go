@@ -18,12 +18,28 @@ import (
 var magic = []byte{0x48, 0x55, 0x53, 0x48}
 
 const (
-	version    byte = 0x01
-	saltLen         = 16
-	nonceLen        = 12
-	headerLen       = 4 + 1 + saltLen + nonceLen // = 33
-	maxFileLen      = 64 * 1024 * 1024           // 64 MiB
+	version  byte = 0x01 // legacy: vault key derived from passphrase (Argon2id).
+	version2 byte = 0x02 // enveloped: vault key derived from a random master
+	// seed recovered via a go-tumbler keyslots envelope (YubiKey/2FA). A
+	// v2 body is intentionally NOT openable by the old passphrase-derived
+	// key — that is the migration re-encryption.
+	saltLen    = 16
+	nonceLen   = 12
+	headerLen  = 4 + 1 + saltLen + nonceLen // = 33
+	maxFileLen = 64 * 1024 * 1024           // 64 MiB
 )
+
+// Exported format-version aliases for callers outside the package (the CLI
+// migration writes Version2 after re-encrypting under a random master seed).
+const (
+	Version1 = version
+	Version2 = version2
+)
+
+// supportedVersion reports whether v is a vault format version this build can
+// read. Both are decrypted identically (AEAD under the supplied vaultKey); the
+// version only records HOW the caller derived that key.
+func supportedVersion(v byte) bool { return v == version || v == version2 }
 
 // OS operation bridges; replaceable in tests to cover OS-failure paths
 // (same pattern as securebytes.mlockFn/munlockFn).
@@ -151,7 +167,7 @@ func decryptWires(data []byte, vaultKey *securebytes.SecureBytes) ([]wireSecret,
 	if len(data) < 5 {
 		return nil, fmt.Errorf("vault: %w", ErrShortHeader)
 	}
-	if data[4] != version {
+	if !supportedVersion(data[4]) {
 		return nil, fmt.Errorf("vault: %w", ErrBadVersion)
 	}
 	// Minimum: headerLen(33) + cipher.Overhead(16) = 49
@@ -201,9 +217,24 @@ func Save(ctx context.Context, path string, vaultKey *securebytes.SecureBytes, s
 // Init uses this so the salt that derived vaultKey lands in the file;
 // secret/rotate flows read the existing salt from the file and pass it
 // here so the file's salt → KDF → vaultKey roundtrip stays coherent.
-//
-//nolint:gocognit,gocyclo // multi-step atomic-write flow; complexity is structural
 func SaveWithSalt(ctx context.Context, path string, vaultKey *securebytes.SecureBytes, salt []byte, secrets []Secret) error {
+	return saveWithSaltVersion(ctx, path, vaultKey, salt, version, secrets)
+}
+
+// SaveWithSaltAndVersion is SaveWithSalt with an explicit format version. The
+// YubiKey migration writes version2 (0x02) after re-encrypting the vault under
+// a key derived from the random master seed recovered via the keyslots
+// envelope. A v2 body is intentionally not openable by the passphrase-derived
+// key.
+func SaveWithSaltAndVersion(ctx context.Context, path string, vaultKey *securebytes.SecureBytes, salt []byte, ver byte, secrets []Secret) error {
+	if !supportedVersion(ver) {
+		return fmt.Errorf("vault: %w: %#x", ErrBadVersion, ver)
+	}
+	return saveWithSaltVersion(ctx, path, vaultKey, salt, ver, secrets)
+}
+
+//nolint:gocognit,gocyclo // multi-step atomic-write flow; complexity is structural
+func saveWithSaltVersion(ctx context.Context, path string, vaultKey *securebytes.SecureBytes, salt []byte, ver byte, secrets []Secret) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -254,7 +285,7 @@ func SaveWithSalt(ctx context.Context, path string, vaultKey *securebytes.Secure
 
 	// Atomic write: temp file → fsync → rename.
 	tmpPath := path + ".tmp"
-	if err = writeTmp(tmpPath, salt, nonce, ciphertext); err != nil {
+	if err = writeTmp(tmpPath, ver, salt, nonce, ciphertext); err != nil {
 		return err
 	}
 	// Best-effort cleanup of the tmp file on any subsequent error.
@@ -283,7 +314,7 @@ func SaveWithSalt(ctx context.Context, path string, vaultKey *securebytes.Secure
 // so tests can inject OS-level failures.
 //
 //nolint:gocognit // cleanup-path branching; complexity is structural
-func writeTmp(tmpPath string, salt, nonce, ciphertext []byte) error {
+func writeTmp(tmpPath string, ver byte, salt, nonce, ciphertext []byte) error {
 	f, err := osOpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return fmt.Errorf("vault: create tmp: %w", err)
@@ -299,7 +330,7 @@ func writeTmp(tmpPath string, salt, nonce, ciphertext []byte) error {
 
 	header := make([]byte, headerLen)
 	copy(header[0:4], magic)
-	header[4] = version
+	header[4] = ver
 	copy(header[5:5+saltLen], salt)
 	copy(header[5+saltLen:headerLen], nonce)
 

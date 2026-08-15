@@ -737,7 +737,7 @@ func TestVault_LoadBadVersion_ReturnsErrBadVersion(t *testing.T) {
 
 	data := make([]byte, headerLen+16)
 	copy(data, magic)
-	data[4] = 0x02 // wrong version
+	data[4] = 0x7F // unsupported version (0x01 and 0x02 are valid)
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}

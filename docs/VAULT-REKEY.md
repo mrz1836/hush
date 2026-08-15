@@ -28,6 +28,36 @@ material. Pick the one whose effect actually matches what you need.
 Rule of thumb: `secret rotate` is housekeeping; `vault rekey` is a
 passphrase change.
 
+> The **Root-of-trust effect** and **Running daemon** rows above describe a
+> legacy (v1) passphrase-derived vault. An **enrolled (v2) YubiKey vault**
+> rekeys differently — see the next subsection.
+
+### Enveloped (v2) YubiKey vaults — in-place passphrase re-wrap
+
+When the vault is protected by a YubiKey (`hush vault enroll-yubikey`), the
+master seed is a **random** value wrapped by the keyslots envelope, not derived
+from the passphrase. `vault rekey` detects this (a `keyslots.json` sidecar
+exists) and performs an **O(1) in-place re-wrap of the passphrase factor**
+instead of a full re-encryption:
+
+- The **master seed, data key, vault encryption key, and `secrets.vault`
+  ciphertext are all UNCHANGED** — only the `password-and-yubikey` keyslot is
+  replaced with one wrapped under the new passphrase. `secrets.vault` is left
+  byte-for-byte identical.
+- Because no derived key changes, **no daemon restart is required** (unlike a v1
+  rekey): a running `hush serve` keeps working with the seed it already holds.
+  The audit event records `restart_required=false` and `rekey_mode=enveloped`.
+- The rollback artifact is a **`keyslots.json.bak-<RFC3339>` snapshot** (mode
+  `0600`), not a `secrets.vault` snapshot — the vault body was never touched.
+- For a `password-and-yubikey` vault you will **touch the key twice**: once to
+  unlock the data key with the current passphrase, once to re-enroll it under
+  the new passphrase. `--update-keychain` still applies (the next `serve` picks
+  up the re-wrapped passphrase from the Keychain).
+- A **`yubikey-only` vault is refused** — it has no passphrase factor to rekey,
+  so nothing is mutated and the command exits `0` with a clear message
+  (`outcome=no_passphrase_factor`). Rotate the underlying seed by re-enrolling
+  (`hush vault enroll-yubikey`) if you need to invalidate a lost key.
+
 ---
 
 ## 2. Before you start
@@ -246,25 +276,28 @@ Every terminal path emits one `vault_rekeyed` event through
 | Attribute          | Type   | Notes |
 |--------------------|--------|-------|
 | `verb`             | string | Always `"rekey"`. |
-| `outcome`          | string | `success`, `success_partial`, `tty_refused`, `passphrase_failed`, `passphrase_too_short`, `new_passphrase_mismatch`, `new_passphrase_unchanged`. |
-| `restart_required` | bool   | True only when the read-only PID probe found a live server. |
+| `outcome`          | string | `success`, `success_partial`, `tty_refused`, `passphrase_failed`, `passphrase_too_short`, `new_passphrase_mismatch`, `new_passphrase_unchanged`, `no_passphrase_factor` (enveloped yubikey-only refusal). |
+| `restart_required` | bool   | True only when the read-only PID probe found a live server (v1 path). Always `false` for an enveloped (v2) rekey — no derived key changed. |
 | `keychain_updated` | bool   | True only on a successful opt-in Keychain update. |
-| `snapshot_path`    | string | Absolute path on success / `success_partial`. Empty string for pre-snapshot failures. |
+| `snapshot_path`    | string | Absolute path on success / `success_partial` (the `secrets.vault.bak-…` for v1, the `keyslots.json.bak-…` for v2). Empty string for pre-snapshot failures. |
+| `rekey_mode`       | string | Present on the enveloped path only: `"enveloped"`. Absent for the v1 flow. |
 
 No passphrase, salt, key, or secret material appears in audit
 attributes. Pre-snapshot failures (`tty_refused`,
-`passphrase_failed`, validation errors) carry empty `snapshot_path`
-because no snapshot was written.
+`passphrase_failed`, validation errors, `no_passphrase_factor`) carry
+empty `snapshot_path` because no snapshot was written.
 
 ---
 
 ## 7. What `vault rekey` does **not** do
 
-- It does **not** signal the daemon. `secret rotate` SIGHUPs `hush
-  serve`; `vault rekey` deliberately does not, because the running
-  process still holds the **old** key in memory and a SIGHUP would
-  just make it re-read the new vault with the wrong key. The command
-  prints a restart-required line when a live server is detected.
+- It does **not** signal the daemon **on the v1 path**. `secret rotate`
+  SIGHUPs `hush serve`; a v1 `vault rekey` deliberately does not, because
+  the running process still holds the **old** key in memory and a SIGHUP
+  would just make it re-read the new vault with the wrong key. The command
+  prints a restart-required line when a live server is detected. (An
+  **enveloped v2 rekey** changes no derived key, so it neither signals nor
+  requires a restart — see §1.)
 - It does **not** migrate, re-encrypt, or touch client keys directly.
   Client BIP32 derivations are produced from the same master seed at
   request time; rotating the master seed (which is what a rekey does)

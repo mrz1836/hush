@@ -130,6 +130,12 @@ var (
 		return newMemStore(wires), nil
 	}
 
-	// WriteTmp exposes the internal writeTmp helper for direct unit tests.
-	WriteTmp = writeTmp
+	// WriteTmp exposes the internal writeTmp helper for direct unit tests,
+	// pinned to the legacy v1 version so existing call sites are unchanged.
+	WriteTmp = func(tmpPath string, salt, nonce, ciphertext []byte) error {
+		return writeTmp(tmpPath, version, salt, nonce, ciphertext)
+	}
+
+	// WriteTmpVersion exposes writeTmp with an explicit version for v2 tests.
+	WriteTmpVersion = writeTmp
 )
