@@ -7,10 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mrz1836/hush/internal/keychain"
-	"github.com/mrz1836/hush/internal/vault/securebytes"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mrz1836/hush/internal/keychain"
+	"github.com/mrz1836/hush/internal/vault/securebytes"
 )
 
 func testSeed() []byte {

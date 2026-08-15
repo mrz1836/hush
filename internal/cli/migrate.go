@@ -9,12 +9,13 @@ import (
 	"path/filepath"
 
 	tumbler "github.com/mrz1836/go-tumbler"
+	"github.com/spf13/cobra"
+
 	"github.com/mrz1836/hush/internal/keys"
 	"github.com/mrz1836/hush/internal/vault"
 	"github.com/mrz1836/hush/internal/vault/keyslots"
 	"github.com/mrz1836/hush/internal/vault/securebytes"
 	"github.com/mrz1836/hush/internal/yubikey"
-	"github.com/spf13/cobra"
 )
 
 // Static errors for the enroll/migration flow (satisfies err113).

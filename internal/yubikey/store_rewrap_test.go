@@ -8,9 +8,10 @@ import (
 	tumbler "github.com/mrz1836/go-tumbler"
 	"github.com/mrz1836/go-tumbler/securebytes"
 	"github.com/mrz1836/go-tumbler/transport"
-	"github.com/mrz1836/hush/internal/yubikey"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mrz1836/hush/internal/yubikey"
 )
 
 func constFn(v string) func() ([]byte, error) {

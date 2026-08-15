@@ -10,13 +10,14 @@ import (
 
 	tumbler "github.com/mrz1836/go-tumbler"
 	"github.com/mrz1836/go-tumbler/transport"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mrz1836/hush/internal/config"
 	"github.com/mrz1836/hush/internal/keychain"
 	"github.com/mrz1836/hush/internal/vault/keyslots"
 	"github.com/mrz1836/hush/internal/vault/securebytes"
 	"github.com/mrz1836/hush/internal/yubikey"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // countingSeedUnlocker is a masterSeedUnlocker that returns a fixed seed and

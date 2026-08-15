@@ -9,13 +9,14 @@ import (
 
 	tumbler "github.com/mrz1836/go-tumbler"
 	"github.com/mrz1836/go-tumbler/transport"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mrz1836/hush/internal/keys"
 	"github.com/mrz1836/hush/internal/vault"
 	"github.com/mrz1836/hush/internal/vault/keyslots"
 	"github.com/mrz1836/hush/internal/vault/securebytes"
 	"github.com/mrz1836/hush/internal/yubikey"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // deriveVaultKey builds the vault encryption key from a passphrase+salt via

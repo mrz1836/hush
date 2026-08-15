@@ -7,13 +7,14 @@ import (
 
 	tumbler "github.com/mrz1836/go-tumbler"
 	"github.com/mrz1836/go-tumbler/transport"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mrz1836/hush/internal/keys"
 	"github.com/mrz1836/hush/internal/testutil"
 	"github.com/mrz1836/hush/internal/vault"
 	"github.com/mrz1836/hush/internal/vault/keyslots"
 	"github.com/mrz1836/hush/internal/vault/securebytes"
 	"github.com/mrz1836/hush/internal/yubikey"
-	"github.com/stretchr/testify/require"
 )
 
 // Deterministic inputs shared by the enrolled-vault fixtures. The FakeTransport

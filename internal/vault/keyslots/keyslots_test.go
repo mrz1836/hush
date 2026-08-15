@@ -5,9 +5,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mrz1836/hush/internal/vault/keyslots"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mrz1836/hush/internal/vault/keyslots"
 )
 
 // stateDir returns a fresh 0700 state directory.

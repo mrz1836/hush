@@ -7,9 +7,10 @@ import (
 
 	tumbler "github.com/mrz1836/go-tumbler"
 	"github.com/mrz1836/go-tumbler/transport"
-	"github.com/mrz1836/hush/internal/yubikey"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mrz1836/hush/internal/yubikey"
 )
 
 func newStore() *yubikey.Store {

@@ -6,10 +6,11 @@ import (
 	"os"
 	"testing"
 
-	"github.com/mrz1836/hush/internal/vault/keyslots"
-	"github.com/mrz1836/hush/internal/vault/securebytes"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mrz1836/hush/internal/vault/keyslots"
+	"github.com/mrz1836/hush/internal/vault/securebytes"
 )
 
 type fakeUnlocker struct {

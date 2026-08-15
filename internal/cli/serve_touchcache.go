@@ -12,6 +12,7 @@ import (
 	"time"
 
 	tumbler "github.com/mrz1836/go-tumbler"
+
 	"github.com/mrz1836/hush/internal/config"
 	"github.com/mrz1836/hush/internal/keychain"
 	"github.com/mrz1836/hush/internal/vault/keyslots"
