@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -656,17 +656,7 @@ func materializeHandoff(d *childHandoffDecoded) (*ChildHandoff, error) {
 // validateReadinessURL parses raw via net/url. Empty / parse-error /
 // empty-host / non-http(s) scheme all map to ErrReadinessURLInvalid.
 func validateReadinessURL(raw string) error {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return fmt.Errorf("%w: parse error", ErrReadinessURLInvalid)
-	}
-	if u.Host == "" {
-		return fmt.Errorf("%w: missing host", ErrReadinessURLInvalid)
-	}
-	if !strings.EqualFold(u.Scheme, "http") && !strings.EqualFold(u.Scheme, "https") {
-		return fmt.Errorf("%w: unsupported scheme %q", ErrReadinessURLInvalid, u.Scheme)
-	}
-	return nil
+	return parseHTTPURL(raw, ErrReadinessURLInvalid)
 }
 
 // childReferencesBindPort returns true when the child contract mentions
@@ -689,10 +679,5 @@ func childReferencesBindPort(c Child) bool {
 			return true
 		}
 	}
-	for _, name := range c.EnvPassthrough {
-		if name == EnvVarBindPort {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(c.EnvPassthrough, EnvVarBindPort)
 }

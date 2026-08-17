@@ -136,15 +136,23 @@ func validateServerURL(raw string) error {
 	if raw == "" {
 		return fmt.Errorf("%w: empty value", ErrServerURLInvalid)
 	}
+	return parseHTTPURL(raw, ErrServerURLInvalid)
+}
+
+// parseHTTPURL parses raw via net/url and rejects parse-error / empty-host /
+// non-http(s)-scheme inputs, wrapping each failure with sentinel. An empty
+// raw string yields the "missing host" case (url.Parse("") has no host);
+// callers that need a distinct empty-value message guard for it beforehand.
+func parseHTTPURL(raw string, sentinel error) error {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("%w: parse error", ErrServerURLInvalid)
+		return fmt.Errorf("%w: parse error", sentinel)
 	}
 	if u.Host == "" {
-		return fmt.Errorf("%w: missing host", ErrServerURLInvalid)
+		return fmt.Errorf("%w: missing host", sentinel)
 	}
 	if !strings.EqualFold(u.Scheme, "http") && !strings.EqualFold(u.Scheme, "https") {
-		return fmt.Errorf("%w: unsupported scheme %q", ErrServerURLInvalid, u.Scheme)
+		return fmt.Errorf("%w: unsupported scheme %q", sentinel, u.Scheme)
 	}
 	return nil
 }
