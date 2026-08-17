@@ -9,6 +9,8 @@ import (
 )
 
 func TestSessionType_Vocabulary(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		s    SessionType
 		want bool
@@ -21,14 +23,19 @@ func TestSessionType_Vocabulary(t *testing.T) {
 		{"super", false},
 	}
 	for _, tc := range cases {
-		if got := validSessionType(tc.s); got != tc.want {
-			t.Errorf("validSessionType(%q) = %v, want %v", tc.s, got, tc.want)
-		}
+		t.Run(string(tc.s), func(t *testing.T) {
+			t.Parallel()
+			if got := validSessionType(tc.s); got != tc.want {
+				t.Errorf("validSessionType(%q) = %v, want %v", tc.s, got, tc.want)
+			}
+		})
 	}
 }
 
 //nolint:gocognit,gocyclo,cyclop // ten-key JSON round-trip: complexity is in the per-key assertion list
 func TestClaims_JSONRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	now := time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC)
 	c := Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -60,9 +67,11 @@ func TestClaims_JSONRoundTrip(t *testing.T) {
 		`"exp":`,
 		`"jti":`,
 	} {
-		if !contains(string(encoded), key) {
-			t.Errorf("encoded JSON missing %q: %s", key, encoded)
-		}
+		t.Run(key, func(t *testing.T) {
+			if !contains(string(encoded), key) {
+				t.Errorf("encoded JSON missing %q: %s", key, encoded)
+			}
+		})
 	}
 
 	var got Claims

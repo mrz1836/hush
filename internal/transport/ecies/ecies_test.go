@@ -40,10 +40,14 @@ func roundTrip(t *testing.T, plaintext []byte) {
 }
 
 func TestECIES_RoundTrip_1B(t *testing.T) {
+	t.Parallel()
+
 	roundTrip(t, []byte{0x42})
 }
 
 func TestECIES_RoundTrip_1KB(t *testing.T) {
+	t.Parallel()
+
 	plaintext := make([]byte, 1024)
 	_, err := rand.Read(plaintext)
 	require.NoError(t, err)
@@ -51,6 +55,8 @@ func TestECIES_RoundTrip_1KB(t *testing.T) {
 }
 
 func TestECIES_RoundTrip_1MB(t *testing.T) {
+	t.Parallel()
+
 	plaintext := make([]byte, 1<<20)
 	_, err := rand.Read(plaintext)
 	require.NoError(t, err)
@@ -58,6 +64,8 @@ func TestECIES_RoundTrip_1MB(t *testing.T) {
 }
 
 func TestECIES_EncryptIsRandomised(t *testing.T) {
+	t.Parallel()
+
 	priv := generateFreshKey(t)
 	plaintext := []byte("hush-randomisation-marker")
 
@@ -69,6 +77,8 @@ func TestECIES_EncryptIsRandomised(t *testing.T) {
 }
 
 func TestECIES_EnvelopeMeetsMinSize(t *testing.T) {
+	t.Parallel()
+
 	priv := generateFreshKey(t)
 	for _, size := range []int{1, 2, 15, 16, 17, 64, 1024} {
 		plaintext := make([]byte, size)
@@ -81,6 +91,8 @@ func TestECIES_EnvelopeMeetsMinSize(t *testing.T) {
 }
 
 func TestECIES_NoPlaintextSubstringInEnvelope(t *testing.T) {
+	t.Parallel()
+
 	priv := generateFreshKey(t)
 	plaintext := []byte("PLAINTEXT_MARKER_IN_ENVELOPE_TEST")
 
@@ -91,6 +103,8 @@ func TestECIES_NoPlaintextSubstringInEnvelope(t *testing.T) {
 }
 
 func TestECIES_DecryptWrongKey_Fails(t *testing.T) {
+	t.Parallel()
+
 	keyA := generateFreshKey(t)
 	keyB := generateFreshKey(t)
 	plaintext := []byte("wrong-key-test")
@@ -104,6 +118,8 @@ func TestECIES_DecryptWrongKey_Fails(t *testing.T) {
 }
 
 func TestECIES_DecryptMangledEnvelope_Fails(t *testing.T) {
+	t.Parallel()
+
 	priv := generateFreshKey(t)
 	plaintext := make([]byte, 64)
 	_, err := rand.Read(plaintext)
@@ -132,6 +148,8 @@ func TestECIES_DecryptMangledEnvelope_Fails(t *testing.T) {
 }
 
 func TestECIES_DecryptTruncatedEnvelope_Fails(t *testing.T) {
+	t.Parallel()
+
 	priv := generateFreshKey(t)
 	plaintext := make([]byte, 100)
 	_, err := rand.Read(plaintext)
@@ -148,6 +166,8 @@ func TestECIES_DecryptTruncatedEnvelope_Fails(t *testing.T) {
 }
 
 func TestECIES_DecryptAppendedByte_Fails(t *testing.T) {
+	t.Parallel()
+
 	priv := generateFreshKey(t)
 	plaintext := []byte("appended-byte-test")
 
@@ -161,6 +181,8 @@ func TestECIES_DecryptAppendedByte_Fails(t *testing.T) {
 }
 
 func TestECIES_DecryptEmptyEnvelope_TooShort(t *testing.T) {
+	t.Parallel()
+
 	priv := generateFreshKey(t)
 	cases := []int{0, 1, 84}
 	for _, length := range cases {
@@ -176,6 +198,8 @@ func TestECIES_DecryptEmptyEnvelope_TooShort(t *testing.T) {
 }
 
 func TestECIES_DecryptReturnsSecureBytes(t *testing.T) {
+	t.Parallel()
+
 	priv := generateFreshKey(t)
 	plaintext := []byte("ownership-transfer-test")
 
@@ -197,6 +221,8 @@ func TestECIES_DecryptReturnsSecureBytes(t *testing.T) {
 }
 
 func TestECIES_EncryptZeroesInternalBuffersOnSuccess(t *testing.T) {
+	t.Parallel()
+
 	priv := generateFreshKey(t)
 	original := []byte("encrypt-zero-success-test")
 	originalCopy := bytes.Clone(original)
@@ -210,6 +236,8 @@ func TestECIES_EncryptZeroesInternalBuffersOnSuccess(t *testing.T) {
 }
 
 func TestECIES_EncryptZeroesInternalBuffersOnError(t *testing.T) {
+	t.Parallel()
+
 	priv := generateFreshKey(t)
 	original := []byte("encrypt-zero-error-test")
 	originalCopy := bytes.Clone(original)
@@ -235,6 +263,8 @@ func TestECIES_EncryptZeroesInternalBuffersOnError(t *testing.T) {
 }
 
 func TestECIES_EncryptDoesNotMutateCallerSlice(t *testing.T) {
+	t.Parallel()
+
 	priv := generateFreshKey(t)
 	original := []byte("caller-slice-immutability-test")
 	originalCopy := bytes.Clone(original)
@@ -245,6 +275,8 @@ func TestECIES_EncryptDoesNotMutateCallerSlice(t *testing.T) {
 }
 
 func TestECIES_EncryptRejectsEmpty(t *testing.T) {
+	t.Parallel()
+
 	priv := generateFreshKey(t)
 	envelope, err := Encrypt(t.Context(), &priv.PublicKey, []byte{})
 	require.ErrorIs(t, err, ErrECIESEmptyPlaintext)
@@ -254,12 +286,16 @@ func TestECIES_EncryptRejectsEmpty(t *testing.T) {
 }
 
 func TestECIES_EncryptRejectsNilPub(t *testing.T) {
+	t.Parallel()
+
 	envelope, err := Encrypt(t.Context(), nil, []byte("plain"))
 	require.ErrorIs(t, err, ErrECIESInvalidRecipientKey)
 	require.Nil(t, envelope)
 }
 
 func TestECIES_EncryptRejectsWrongCurvePub(t *testing.T) {
+	t.Parallel()
+
 	p256, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
@@ -276,6 +312,8 @@ func TestECIES_EncryptRejectsWrongCurvePub(t *testing.T) {
 // curve twist, leaking key bits. The test constructs (X=1, Y=1) which is
 // guaranteed not to be on secp256k1 (1 != 1³ + 7 = 8).
 func TestECIES_EncryptRejectsOffCurvePub(t *testing.T) {
+	t.Parallel()
+
 	offCurve := &ecdsa.PublicKey{
 		Curve: secp256k1.S256(), //nolint:staticcheck // secp256k1 not in crypto/ecdh; S256() is the correct curve accessor
 		X:     big.NewInt(1),
@@ -291,6 +329,8 @@ func TestECIES_EncryptRejectsOffCurvePub(t *testing.T) {
 // rejected. ScalarMult on the identity is meaningless and would produce a
 // predictable shared secret.
 func TestECIES_EncryptRejectsPointAtInfinity(t *testing.T) {
+	t.Parallel()
+
 	identity := &ecdsa.PublicKey{
 		Curve: secp256k1.S256(), //nolint:staticcheck // secp256k1 not in crypto/ecdh; S256() is the correct curve accessor
 		X:     big.NewInt(0),
@@ -306,6 +346,8 @@ func TestECIES_EncryptRejectsPointAtInfinity(t *testing.T) {
 // non-canonical, the math primitives might still produce output if not
 // guarded.
 func TestECIES_EncryptRejectsOutOfFieldCoords(t *testing.T) {
+	t.Parallel()
+
 	p := secp256k1.S256().Params().P            //nolint:staticcheck // secp256k1 not in crypto/ecdh; S256() is the correct curve accessor
 	overP := new(big.Int).Add(p, big.NewInt(1)) // p + 1
 	pub := &ecdsa.PublicKey{
@@ -319,6 +361,8 @@ func TestECIES_EncryptRejectsOutOfFieldCoords(t *testing.T) {
 }
 
 func TestECIES_EncryptRespectsCancelledContext(t *testing.T) {
+	t.Parallel()
+
 	priv := generateFreshKey(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -329,6 +373,8 @@ func TestECIES_EncryptRespectsCancelledContext(t *testing.T) {
 }
 
 func TestECIES_DecryptRespectsCancelledContext(t *testing.T) {
+	t.Parallel()
+
 	priv := generateFreshKey(t)
 	envelope, err := Encrypt(t.Context(), &priv.PublicKey, []byte("ctx-test"))
 	require.NoError(t, err)
@@ -342,6 +388,8 @@ func TestECIES_DecryptRespectsCancelledContext(t *testing.T) {
 }
 
 func TestECIES_DecryptRespectsDeadlineContext(t *testing.T) {
+	t.Parallel()
+
 	priv := generateFreshKey(t)
 	envelope, err := Encrypt(t.Context(), &priv.PublicKey, []byte("deadline-test"))
 	require.NoError(t, err)
@@ -355,6 +403,8 @@ func TestECIES_DecryptRespectsDeadlineContext(t *testing.T) {
 }
 
 func TestECIES_NoLeakOnError(t *testing.T) {
+	t.Parallel()
+
 	sentinel := testutil.SentinelSecret(9)
 	priv := generateFreshKey(t)
 	plaintext := []byte("prefix-" + sentinel + "-suffix")
@@ -390,6 +440,8 @@ func TestECIES_NoLeakOnError(t *testing.T) {
 
 //nolint:gocognit // goroutine fan-out + assert chain: complexity is the race-detector test pattern
 func TestECIES_ConcurrentRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	const goroutines = 64
 	var wg sync.WaitGroup
 	wg.Add(goroutines)

@@ -23,6 +23,8 @@ func testKATFingerprintScalar() []byte {
 }
 
 func TestPublicKeyFingerprint_Stable(t *testing.T) {
+	t.Parallel()
+
 	key1 := scalarToECDSAKey(testKATFingerprintScalar())
 
 	scalar2 := make([]byte, 32)
@@ -64,6 +66,8 @@ func TestPublicKeyFingerprint_Stable(t *testing.T) {
 // precondition (non-nil *ecdsa.PublicKey) is enforced via panic with a
 // useful message rather than a nil-deref crash deep in copy().
 func TestPublicKeyFingerprint_PanicsOnNilPub(t *testing.T) {
+	t.Parallel()
+
 	assert.PanicsWithValue(
 		t,
 		"hush/keys: PublicKeyFingerprint: nil public key",
@@ -74,6 +78,8 @@ func TestPublicKeyFingerprint_PanicsOnNilPub(t *testing.T) {
 // TestPublicKeyFingerprint_PanicsOnNilXY asserts that a malformed pub with
 // nil X or Y triggers a clear panic instead of a nil-deref later.
 func TestPublicKeyFingerprint_PanicsOnNilXY(t *testing.T) {
+	t.Parallel()
+
 	t.Run("nil X", func(t *testing.T) {
 		pub := &ecdsa.PublicKey{Curve: secp256k1.S256(), X: nil, Y: big.NewInt(1)} //nolint:staticcheck // secp256k1 not in crypto/ecdh; S256() is the correct curve accessor
 		assert.PanicsWithValue(
@@ -97,6 +103,8 @@ func TestPublicKeyFingerprint_PanicsOnNilXY(t *testing.T) {
 // point but possible with a malformed input) triggers an explicit panic
 // rather than a negative-index slice panic in copy().
 func TestPublicKeyFingerprint_PanicsOnOversizedX(t *testing.T) {
+	t.Parallel()
+
 	// Build a 33-byte big.Int: a value > 2^256 - 1.
 	oversized := new(big.Int).Lsh(big.NewInt(1), 257)                                // 2^257
 	pub := &ecdsa.PublicKey{Curve: secp256k1.S256(), X: oversized, Y: big.NewInt(1)} //nolint:staticcheck // secp256k1 not in crypto/ecdh; S256() is the correct curve accessor
