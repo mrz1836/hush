@@ -71,13 +71,7 @@ func runHealth(ctx context.Context, stdout, stderr *Stream, serverURL string) er
 	}
 	target := strings.TrimRight(serverURL, "/") + "/hz"
 
-	client := &http.Client{
-		Timeout: healthTotalTimeout,
-		Transport: &http.Transport{
-			DisableKeepAlives:   true,
-			MaxIdleConnsPerHost: 1,
-		},
-	}
+	client := newHushHTTPClient(healthTotalTimeout)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {

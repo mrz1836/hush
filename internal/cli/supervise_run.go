@@ -50,19 +50,13 @@ func productionSuperviseDeps() (superviseRuntimeDeps, error) {
 	}
 	return superviseRuntimeDeps{
 		keychain: kc,
-		httpClient: &http.Client{
-			// 15 minutes covers a fully humane operator reaction window
-			// (server-side claim_approval_timeout caps at 10m) plus
-			// headroom for slow Discord round-trips. Per-request ctx
-			// further bounds individual calls; this is just the
-			// absolute ceiling so a wedged remote doesn't pin a goroutine
-			// indefinitely.
-			Timeout: 15 * time.Minute,
-			Transport: &http.Transport{
-				DisableKeepAlives:   true,
-				MaxIdleConnsPerHost: 1,
-			},
-		},
+		// 15 minutes covers a fully humane operator reaction window
+		// (server-side claim_approval_timeout caps at 10m) plus
+		// headroom for slow Discord round-trips. Per-request ctx
+		// further bounds individual calls; this is just the
+		// absolute ceiling so a wedged remote doesn't pin a goroutine
+		// indefinitely.
+		httpClient: newHushHTTPClient(15 * time.Minute),
 	}, nil
 }
 

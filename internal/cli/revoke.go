@@ -104,13 +104,7 @@ func runRevoke(ctx context.Context, stdout, stderr *Stream, deps revokeDeps, ser
 		deps.rand = rand.Reader
 	}
 	if deps.client == nil {
-		deps.client = &http.Client{
-			Timeout: revokeTotalTimeout,
-			Transport: &http.Transport{
-				DisableKeepAlives:   true,
-				MaxIdleConnsPerHost: 1,
-			},
-		}
+		deps.client = newHushHTTPClient(revokeTotalTimeout)
 	}
 	if deps.signKey == nil {
 		ephemeral, err := ephemeralRevokeKey(deps.rand)

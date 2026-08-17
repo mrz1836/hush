@@ -258,12 +258,9 @@ func productionRequestDeps() (requestDeps, error) {
 	}
 	return requestDeps{
 		keychain: kc,
-		httpClient: &http.Client{
-			Transport: &http.Transport{
-				DisableKeepAlives:   true,
-				MaxIdleConnsPerHost: 1,
-			},
-		},
+		// No client-level timeout: each request is bounded by its own
+		// per-request context instead.
+		httpClient:   newHushHTTPClient(0),
 		nowFn:        time.Now,
 		randReader:   rand.Reader,
 		hostnameFn:   os.Hostname,
