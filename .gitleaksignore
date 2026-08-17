@@ -94,3 +94,8 @@ internal/cli/wallet_test.go:generic-api-key:603
 # --- BSV tests ---
 internal/chain/bsv/tx_test_helpers_test.go:generic-api-key:161
 internal/chain/bsv/tx_test_helpers_test.go:generic-api-key:197
+
+# --- Redact fuzz/bench: token-shaped fixtures exercised by the redactor ---
+internal/redact/redact_bench_test.go:generic-api-key:17
+internal/redact/redact_fuzz_test.go:curl-auth-header:43
+internal/redact/redact_fuzz_test.go:curl-auth-header:47
