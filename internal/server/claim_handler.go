@@ -29,7 +29,7 @@ import (
 	"net/http"
 	"net/netip"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -931,7 +931,7 @@ func parseSessionType(raw string) SessionType {
 func sortedScope(in []string) []string {
 	out := make([]string, len(in))
 	copy(out, in)
-	sort.Strings(out)
+	slices.Sort(out)
 	return out
 }
 

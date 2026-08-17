@@ -289,7 +289,7 @@ func (c *touchCache) store(ctx context.Context, seed []byte) bool {
 		return false
 	}
 
-	expiry := c.now().Add(minDuration(c.ttl, config.MaxYubiKeyTouchTTL)).Unix()
+	expiry := c.now().Add(min(c.ttl, config.MaxYubiKeyTouchTTL)).Unix()
 	token, err := encodeTouchToken(seed, expiry, c.bindTag)
 	if err != nil {
 		c.warn("hush: serve: touch cache encode failed (non-fatal): %v\n", err)
@@ -308,7 +308,7 @@ func (c *touchCache) store(ctx context.Context, seed []byte) bool {
 		return false
 	}
 	if c.yubikeyOnly {
-		c.warn("hush: serve: ⚠ yubikey-only master seed cached — protected only by this binary's Keychain ACL for up to %s. Prefer password-and-yubikey.\n", minDuration(c.ttl, config.MaxYubiKeyTouchTTL))
+		c.warn("hush: serve: ⚠ yubikey-only master seed cached — protected only by this binary's Keychain ACL for up to %s. Prefer password-and-yubikey.\n", min(c.ttl, config.MaxYubiKeyTouchTTL))
 	}
 	return true
 }
@@ -327,12 +327,4 @@ func (c *touchCache) bestEffortDelete(ctx context.Context) {
 	if err := c.kc.Delete(ctx, c.service, c.account); err != nil && !errors.Is(err, keychain.ErrKeychainItemNotFound) {
 		c.warn("hush: serve: touch cache delete failed (non-fatal): %v\n", err)
 	}
-}
-
-// minDuration returns the smaller of a and b.
-func minDuration(a, b time.Duration) time.Duration {
-	if a < b {
-		return a
-	}
-	return b
 }

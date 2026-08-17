@@ -62,7 +62,7 @@ func resolveKeychainACL(
 	}
 	keychainPath := loginKeychainPath()
 
-	for attempt := 0; attempt < maxKeychainACLPanelIterations; attempt++ {
+	for range maxKeychainACLPanelIterations {
 		renderKeychainACLPanel(stderr, service, account, keychainPath)
 		ch, err := deps.promptRecovery(in, stderr.w, initMsgKeychainACLChoicePrompt)
 		if err != nil {

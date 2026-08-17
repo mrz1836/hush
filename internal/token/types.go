@@ -3,7 +3,7 @@ package token
 import (
 	"fmt"
 	"net/netip"
-	"sort"
+	"slices"
 )
 
 // ClientIP is the canonical netip-string form of a client IP address.
@@ -64,7 +64,7 @@ func NewScope(in []string) Scope {
 	if len(out) == 0 {
 		return nil
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	// Dedupe in place — out is sorted so duplicates are adjacent.
 	j := 0
 	for i := 1; i < len(out); i++ {

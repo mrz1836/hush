@@ -2,10 +2,11 @@ package sign
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"math"
 	"reflect"
-	"sort"
+	"slices"
 	"strconv"
 )
 
@@ -145,7 +146,7 @@ func encodeMap(buf *bytes.Buffer, v reflect.Value) error {
 	for _, k := range v.MapKeys() {
 		keys = append(keys, k.String())
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 
 	buf.WriteByte('{')
 	for i, k := range keys {
@@ -174,8 +175,8 @@ func encodeStruct(buf *bytes.Buffer, v reflect.Value) error {
 	fields := collectStructFields(t)
 
 	// Sort by resolved field name (alphabetical).
-	sort.Slice(fields, func(i, j int) bool {
-		return fields[i].name < fields[j].name
+	slices.SortFunc(fields, func(a, b structField) int {
+		return cmp.Compare(a.name, b.name)
 	})
 
 	buf.WriteByte('{')

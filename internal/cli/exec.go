@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 
 	"github.com/mrz1836/hush/internal/vault/securebytes"
@@ -122,14 +123,8 @@ func escapeShellSingleQuote(raw []byte) string {
 }
 
 // bytesContainsByte returns true when raw contains the supplied byte.
-// Avoids the bytes package import for one call.
 func bytesContainsByte(raw []byte, target byte) bool {
-	for _, c := range raw {
-		if c == target {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(raw, target)
 }
 
 // renderEvalLine returns one POSIX-shell-evalable export line for the

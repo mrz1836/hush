@@ -9,7 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -73,6 +73,6 @@ func EnumerateSupervisorSockets() ([]string, error) {
 		}
 		out = append(out, filepath.Join(root, name))
 	}
-	sort.Strings(out)
+	slices.Sort(out)
 	return out, nil
 }

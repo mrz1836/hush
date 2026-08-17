@@ -15,6 +15,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -26,7 +27,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -817,7 +817,7 @@ func runSecretList(ctx context.Context, stdout, stderr *Stream, in, stdoutFile *
 		}
 	}
 
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
+	slices.SortFunc(entries, func(a, b listEntry) int { return cmp.Compare(a.Name, b.Name) })
 
 	if deps.isStdoutTTY(stdoutFile) {
 		return renderListTTY(stdout, stderr, entries)

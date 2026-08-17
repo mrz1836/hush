@@ -77,15 +77,13 @@ func backoffDelay(failures uint32, base, maxDelay time.Duration) time.Duration {
 		maxDelay = 60 * time.Second
 	}
 	d := base
-	for i := uint32(0); i < failures; i++ {
+	for range failures {
 		if d >= maxDelay {
 			return maxDelay
 		}
 		d *= 2
 	}
-	if d > maxDelay {
-		d = maxDelay
-	}
+	d = min(d, maxDelay)
 	return d
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 )
 
 // CheckName is the locked slot identifier for a preflight check.
@@ -135,12 +136,7 @@ func (r *Registry) Run(ctx context.Context) Report {
 // knownSlot reports whether name is one of the locked slots in
 // [CheckOrder].
 func knownSlot(name CheckName) bool {
-	for _, n := range CheckOrder {
-		if n == name {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(CheckOrder, name)
 }
 
 // CheckFunc adapts a plain function into a [Check] so callers do
