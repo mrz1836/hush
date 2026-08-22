@@ -36,9 +36,9 @@ func freshSecp256k1Key() (*ecdsa.PrivateKey, error) {
 	pub := priv.PubKey()
 	return &ecdsa.PrivateKey{
 		PublicKey: ecdsa.PublicKey{
-			Curve: secp256k1.S256(), //nolint:staticcheck // secp256k1 not in crypto/ecdh
-			X:     new(big.Int).SetBytes(pub.X().Bytes()[:]),
-			Y:     new(big.Int).SetBytes(pub.Y().Bytes()[:]),
+			Curve: secp256k1.S256(),                          //nolint:staticcheck // secp256k1 not in crypto/ecdh
+			X:     new(big.Int).SetBytes(pub.X().Bytes()[:]), //nolint:staticcheck // secp256k1 not in crypto/ecdh; raw coords required
+			Y:     new(big.Int).SetBytes(pub.Y().Bytes()[:]), //nolint:staticcheck // secp256k1 not in crypto/ecdh; raw coords required
 		},
 		D: new(big.Int).SetBytes(priv.Serialize()),
 	}, nil

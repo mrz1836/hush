@@ -316,8 +316,8 @@ func TestECIES_EncryptRejectsOffCurvePub(t *testing.T) {
 
 	offCurve := &ecdsa.PublicKey{
 		Curve: secp256k1.S256(), //nolint:staticcheck // secp256k1 not in crypto/ecdh; S256() is the correct curve accessor
-		X:     big.NewInt(1),
-		Y:     big.NewInt(1),
+		X:     big.NewInt(1),    //nolint:staticcheck // secp256k1 not in crypto/ecdh; raw coords required for off-curve test
+		Y:     big.NewInt(1),    //nolint:staticcheck // secp256k1 not in crypto/ecdh; raw coords required for off-curve test
 	}
 	envelope, err := Encrypt(t.Context(), offCurve, []byte("plain"))
 	require.ErrorIs(t, err, ErrECIESInvalidRecipientKey)
@@ -333,8 +333,8 @@ func TestECIES_EncryptRejectsPointAtInfinity(t *testing.T) {
 
 	identity := &ecdsa.PublicKey{
 		Curve: secp256k1.S256(), //nolint:staticcheck // secp256k1 not in crypto/ecdh; S256() is the correct curve accessor
-		X:     big.NewInt(0),
-		Y:     big.NewInt(0),
+		X:     big.NewInt(0),    //nolint:staticcheck // secp256k1 not in crypto/ecdh; raw coords required for identity test
+		Y:     big.NewInt(0),    //nolint:staticcheck // secp256k1 not in crypto/ecdh; raw coords required for identity test
 	}
 	envelope, err := Encrypt(t.Context(), identity, []byte("plain"))
 	require.ErrorIs(t, err, ErrECIESInvalidRecipientKey)
@@ -352,8 +352,8 @@ func TestECIES_EncryptRejectsOutOfFieldCoords(t *testing.T) {
 	overP := new(big.Int).Add(p, big.NewInt(1)) // p + 1
 	pub := &ecdsa.PublicKey{
 		Curve: secp256k1.S256(), //nolint:staticcheck // secp256k1 not in crypto/ecdh; S256() is the correct curve accessor
-		X:     overP,
-		Y:     big.NewInt(1),
+		X:     overP,            //nolint:staticcheck // secp256k1 not in crypto/ecdh; raw coords required for out-of-field test
+		Y:     big.NewInt(1),    //nolint:staticcheck // secp256k1 not in crypto/ecdh; raw coords required for out-of-field test
 	}
 	envelope, err := Encrypt(t.Context(), pub, []byte("plain"))
 	require.ErrorIs(t, err, ErrECIESInvalidRecipientKey)

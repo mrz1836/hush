@@ -521,8 +521,8 @@ func decodeCompressedSecp256k1(s string) (*ecdsa.PublicKey, error) {
 	bigY := new(big.Int).SetBytes(y.Bytes()[:])
 	return &ecdsa.PublicKey{
 		Curve: secp256k1.S256(), //nolint:staticcheck // secp256k1 unsupported by crypto/ecdh
-		X:     bigX,
-		Y:     bigY,
+		X:     bigX,             //nolint:staticcheck // secp256k1 unsupported by crypto/ecdh; raw coords required
+		Y:     bigY,             //nolint:staticcheck // secp256k1 unsupported by crypto/ecdh; raw coords required
 	}, nil
 }
 

@@ -257,9 +257,9 @@ func decodeEphemeralPub(s string) (*ecdsa.PublicKey, error) {
 	}
 	x, y := pub.X(), pub.Y()
 	return &ecdsa.PublicKey{
-		Curve: secp256k1.S256(), //nolint:staticcheck // secp256k1 not in crypto/ecdh
-		X:     new(big.Int).SetBytes(x.Bytes()[:]),
-		Y:     new(big.Int).SetBytes(y.Bytes()[:]),
+		Curve: secp256k1.S256(),                    //nolint:staticcheck // secp256k1 not in crypto/ecdh
+		X:     new(big.Int).SetBytes(x.Bytes()[:]), //nolint:staticcheck // secp256k1 not in crypto/ecdh; raw coords required
+		Y:     new(big.Int).SetBytes(y.Bytes()[:]), //nolint:staticcheck // secp256k1 not in crypto/ecdh; raw coords required
 	}, nil
 }
 
