@@ -117,7 +117,7 @@ func (p *Proxy) Start(ctx context.Context) error {
 	}
 
 	rp := &httputil.ReverseProxy{
-		Director:     p.director,
+		Rewrite:      p.rewrite,
 		ErrorHandler: p.errorHandler,
 		// Discard the default stdlib logger so internal proxy errors
 		// (closed connections during swap) do not leak to stderr. The
@@ -228,29 +228,34 @@ func (p *Proxy) serve(l net.Listener, srv *http.Server) {
 	}
 }
 
-// director is the per-request rewrite hook. It rewrites the URL to point
-// at the active backend (read once via atomic.Load) and clears any
-// hop-by-hop headers httputil.ReverseProxy does not already strip.
+// rewrite is the per-request rewrite hook (the Rewrite replacement for the
+// deprecated Director). It rewrites the outbound URL to point at the active
+// backend (read once via atomic.Load).
 //
-// When no backend is set, director leaves the request URL pointed at a
+// SetXForwarded reproduces the X-Forwarded-* headers Director set
+// automatically; unlike Director's append behavior it also strips any
+// client-supplied values, so a downstream caller cannot spoof them.
+//
+// When no backend is set, rewrite leaves the outbound URL pointed at a
 // sentinel host so ErrorHandler can return 503 without attempting a dial.
-func (p *Proxy) director(req *http.Request) {
+func (p *Proxy) rewrite(pr *httputil.ProxyRequest) {
+	pr.SetXForwarded()
 	b := p.backend.Load()
 	if b == nil {
 		// Sentinel URL so the transport's dial fails fast; ErrorHandler
 		// converts the resulting error to a 503.
-		req.URL.Scheme = "http"
-		req.URL.Host = "127.0.0.1:0"
-		req.Host = req.URL.Host
+		pr.Out.URL.Scheme = "http"
+		pr.Out.URL.Host = "127.0.0.1:0"
+		pr.Out.Host = pr.Out.URL.Host
 		// Tag the context so ErrorHandler can distinguish "no backend"
 		// from a normal upstream failure.
-		ctx := context.WithValue(req.Context(), proxyNoBackendKey{}, true)
-		*req = *req.WithContext(ctx)
+		ctx := context.WithValue(pr.Out.Context(), proxyNoBackendKey{}, true)
+		pr.Out = pr.Out.WithContext(ctx)
 		return
 	}
-	req.URL.Scheme = b.url.Scheme
-	req.URL.Host = b.url.Host
-	req.Host = b.url.Host
+	pr.Out.URL.Scheme = b.url.Scheme
+	pr.Out.URL.Host = b.url.Host
+	pr.Out.Host = b.url.Host
 }
 
 // proxyNoBackendKey is the context key used to flag a request that hit
