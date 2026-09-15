@@ -2,10 +2,18 @@ package keys
 
 import (
 	"crypto/ecdsa"
+	"errors"
+	"fmt"
 
 	secp256k1 "github.com/decred/dcrd/dcrec/secp256k1/v4"
 	"github.com/decred/dcrd/hdkeychain/v3"
 )
+
+// ErrScalarTooLong is returned when a BIP32 private scalar exceeds the canonical
+// 32-byte width. hdkeychain.SerializedPrivKey can only ever strip leading zero
+// bytes (never add them), so an over-length scalar signals upstream corruption
+// and must not be silently truncated into an AES/ECDSA key.
+var ErrScalarTooLong = errors.New("hush/keys: private scalar too long")
 
 // BIP32 derivation constants for the hush key hierarchy (coin-type 7743').
 const (
@@ -104,17 +112,48 @@ func scalarToECDSAKey(scalar []byte) *ecdsa.PrivateKey {
 	return secp256k1.PrivKeyFromBytes(scalar).ToECDSA()
 }
 
-// serializedChildKey extracts the 32-byte private scalar from a BIP32 extended
-// key into a fresh, independent buffer. hdkeychain.SerializedPrivKey returns an
-// alias into child.key, so the copy here is what protects callers from a
-// downstream child.Zero() racing with use of the returned slice.
+// scalarLen is the canonical byte length of a BIP32 / secp256k1 private scalar
+// (ser256): a fixed-width, big-endian 256-bit integer.
+const scalarLen = 32
+
+// serializedChildKey extracts the private scalar from a BIP32 extended key into
+// a fresh, independent buffer that is ALWAYS exactly scalarLen (32) bytes,
+// left-padded with leading zeros.
+//
+// This padding is load-bearing, not cosmetic. hdkeychain.SerializedPrivKey
+// returns an alias into child.key whose length is NOT fixed: the Decred variant
+// strips leading zero bytes from the child scalar for legacy-wallet
+// compatibility (see hdkeychain extendedkey.go: "the Decred variation strips
+// leading zeros"). So a scalar whose most-significant byte is 0x00 comes back as
+// 31 bytes (~1/256 of derivations), 30 bytes, and so on. Callers that feed the
+// result straight into a fixed-size primitive — notably DeriveVaultEncKey, which
+// uses it as a 32-byte AES-256 key — would otherwise fail intermittently with
+// "crypto/aes: invalid key size 31". Left-padding restores the canonical ser256
+// form; because it preserves the big-endian integer value, the ECDSA callers
+// (which reduce the bytes mod N via SetByteSlice) derive the identical key, so
+// this is fully backward compatible.
+//
+// The copy also protects callers from a downstream child.Zero() racing with use
+// of the returned slice.
 func serializedChildKey(child *hdkeychain.ExtendedKey) ([]byte, error) {
 	raw, err := child.SerializedPrivKey()
 	if err != nil {
 		return nil, err
 	}
-	out := make([]byte, len(raw))
-	copy(out, raw)
+	return leftPadScalar(raw)
+}
+
+// leftPadScalar returns raw as a fresh, canonical scalarLen-byte big-endian
+// buffer, prepending leading zero bytes when raw is shorter. A raw slice longer
+// than scalarLen is rejected: SerializedPrivKey can only ever strip bytes (never
+// add them), so an over-length scalar signals corruption upstream and must not
+// be silently truncated into an AES/ECDSA key.
+func leftPadScalar(raw []byte) ([]byte, error) {
+	if len(raw) > scalarLen {
+		return nil, fmt.Errorf("%w: %d bytes (max %d)", ErrScalarTooLong, len(raw), scalarLen)
+	}
+	out := make([]byte, scalarLen)
+	copy(out[scalarLen-len(raw):], raw)
 	return out, nil
 }
 

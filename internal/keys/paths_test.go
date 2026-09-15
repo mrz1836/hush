@@ -2,6 +2,8 @@ package keys
 
 import (
 	"context"
+	"crypto/aes"
+	"encoding/hex"
 	"testing"
 
 	secp256k1 "github.com/decred/dcrd/dcrec/secp256k1/v4"
@@ -79,7 +81,96 @@ func TestDeriveVaultEncKey_Length(t *testing.T) {
 		raw, err := child.SerializedPrivKey()
 		require.NoError(t, err)
 
-		assert.Equal(t, raw, enc)
+		// DeriveVaultEncKey canonicalizes to a fixed 32-byte big-endian scalar;
+		// raw may be shorter when the scalar has leading zero bytes (the Decred
+		// hdkeychain strips them), so compare against the left-padded form.
+		padded, err := leftPadScalar(raw)
+		require.NoError(t, err)
+		assert.Equal(t, padded, enc)
+	})
+}
+
+// TestDeriveVaultEncKey_ShortScalarIsLeftPadded is the regression guard for the
+// intermittent CI failure "crypto/aes: invalid key size 31". The seed below was
+// found by brute force: its vault child scalar (m/44'/7743'/1') has a 0x00
+// most-significant byte, so the Decred hdkeychain strips it and
+// SerializedPrivKey returns 31 bytes. DeriveVaultEncKey must left-pad it back to
+// a usable 32-byte AES-256 key rather than hand 31 bytes to crypto/aes.
+func TestDeriveVaultEncKey_ShortScalarIsLeftPadded(t *testing.T) {
+	seed, err := hex.DecodeString("9800000000000000000000000000000000000000000000000000000000000000")
+	require.NoError(t, err)
+
+	// Precondition: this seed really does produce a short (stripped) raw scalar,
+	// so the test would fail without the padding fix.
+	child, err := deriveHDChild(seed, hdkeychain.HardenedKeyStart+idxVault)
+	require.NoError(t, err)
+	raw, err := child.SerializedPrivKey()
+	require.NoError(t, err)
+	require.Less(t, len(raw), scalarLen, "fixture seed must yield a stripped scalar to exercise padding")
+
+	enc, err := DeriveVaultEncKey(seed)
+	require.NoError(t, err)
+	require.Len(t, enc, scalarLen, "vault key must be a full 32 bytes")
+
+	// It must be a valid AES-256 key (the exact failure mode seen in CI).
+	_, err = aes.NewCipher(enc)
+	require.NoError(t, err, "derived vault key must be accepted by AES-256")
+
+	// And the padding must preserve the integer value: left-padded raw == enc.
+	want := make([]byte, scalarLen)
+	copy(want[scalarLen-len(raw):], raw)
+	assert.Equal(t, want, enc)
+}
+
+// TestDeriveVaultEncKey_AlwaysAESKeyLength sweeps many seeds and asserts the
+// vault key is unconditionally a 32-byte AES-256 key, so a leading-zero scalar
+// can never again reach crypto/aes as a short key.
+func TestDeriveVaultEncKey_AlwaysAESKeyLength(t *testing.T) {
+	seed := make([]byte, 32)
+	for i := 0; i < 2000; i++ {
+		for j := 0; j < 8; j++ {
+			seed[j] = byte(i >> (8 * j))
+		}
+		enc, err := DeriveVaultEncKey(seed)
+		require.NoErrorf(t, err, "seed %d", i)
+		require.Lenf(t, enc, scalarLen, "seed %d produced a %d-byte key", i, len(enc))
+		_, err = aes.NewCipher(enc)
+		require.NoErrorf(t, err, "seed %d produced a key AES rejected", i)
+	}
+}
+
+// TestLeftPadScalar exercises leftPadScalar directly: short input is
+// zero-padded on the left (preserving value), an exact-length input is copied
+// unchanged, and an over-length input is rejected rather than truncated.
+func TestLeftPadScalar(t *testing.T) {
+	t.Run("pads short input on the left", func(t *testing.T) {
+		out, err := leftPadScalar([]byte{0x01, 0x02})
+		require.NoError(t, err)
+		require.Len(t, out, scalarLen)
+		want := make([]byte, scalarLen)
+		want[scalarLen-2], want[scalarLen-1] = 0x01, 0x02
+		assert.Equal(t, want, out)
+	})
+
+	t.Run("returns a fresh copy for exact-length input", func(t *testing.T) {
+		in := make([]byte, scalarLen)
+		in[0] = 0xAB
+		out, err := leftPadScalar(in)
+		require.NoError(t, err)
+		assert.Equal(t, in, out)
+		out[0] = 0x00 // mutating the result must not touch the input
+		assert.Equal(t, byte(0xAB), in[0])
+	})
+
+	t.Run("rejects over-length input", func(t *testing.T) {
+		_, err := leftPadScalar(make([]byte, scalarLen+1))
+		require.ErrorIs(t, err, ErrScalarTooLong)
+	})
+
+	t.Run("handles empty input", func(t *testing.T) {
+		out, err := leftPadScalar(nil)
+		require.NoError(t, err)
+		assert.Equal(t, make([]byte, scalarLen), out)
 	})
 }
 
