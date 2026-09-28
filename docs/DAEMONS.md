@@ -141,7 +141,7 @@ only refills secrets under the session the supervisor already holds.
 
 ### Day 2, 14:30 — secret rotated mid-session
 
-- Operator runs `hush secret rotate ANTHROPIC_API_KEY` on the vault host.
+- Operator runs `hush secret update ANTHROPIC_API_KEY` on the vault host.
 - Vault file is atomically rewritten; SIGHUP triggers an atomic
   `atomic.Pointer[Vault]` swap on the running server.
 - Operator runs `hush client refresh --supervisor <daemon>` on the agent
@@ -155,7 +155,7 @@ only refills secrets under the session the supervisor already holds.
   failure and exits with `code 78` (`EX_CONFIG`).
 - Supervisor unconditionally enters `awaiting-approval`, regardless of TTL.
 - A `[STALE] Child Exit 78` Discord alert lands.
-- Operator rotates the secret in the vault (`hush secret rotate`) and runs
+- Operator rotates the secret in the vault (`hush secret update <name>`) and runs
   `hush client refresh --supervisor <daemon>`.
 - Supervisor re-fetches, validates, restarts the child. (Scenario 5)
 
@@ -332,7 +332,7 @@ reissue (a distinct `standing-reissue` audit event), and revocable in one
 operator action.
 
 The lifecycle is: **provision** (vault the scoped secret, set the flag, start
-the supervisor, tap Approve once), **rotate** (`hush secret rotate` +
+the supervisor, tap Approve once), **rotate** (`hush secret update <name>` +
 `hush client refresh` — no re-establishment needed), **revoke** (`hush revoke`
 the active session, drop the flag, reload — claims return to the 24h human
 floor), **monitor** (the `standing-reissue` audit events, watchdog `401`
@@ -408,7 +408,7 @@ validators, and gracefully restarts the child under the existing approved
 session. It is a silent secret refill: no fresh `/claim` is issued and no
 Discord approval prompt is sent. Use this:
 
-- After `hush secret rotate <name>` on the vault host (Scenario 13).
+- After `hush secret update <name>` on the vault host (Scenario 13).
 - After a `[STALE] Child Exit 78` alert if you've fixed the underlying
   credential and want to recover under the current session.
 

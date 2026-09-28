@@ -238,7 +238,7 @@ Every hush subcommand at a glance — every entry below is real today.
 | `hush smoke` | Guided end-to-end test with a fake secret — start here |
 | `hush init server` / `hush init client` | Bootstrap a vault host / enroll an agent host |
 | `hush serve` | Run the vault server (Tailscale-only) |
-| `hush secret add` / `list` / `remove` / `rotate` | Manage vault entries (rotate re-encrypts and hot-reloads) |
+| `hush secret add` / `update` / `list` / `remove` / `rotate` | Manage vault entries (`update NAME` changes an existing value; `rotate` re-encrypts; both hot-reload) |
 | `hush vault rekey` | Change the vault passphrase — rotates the root of trust (TTY-only) |
 | `hush vault enroll-yubikey` | Protect the vault with a YubiKey (password+YubiKey or YubiKey-only; TTY-only) |
 | `hush request --exec …` | One-shot interactive fetch + child exec |
@@ -308,6 +308,10 @@ hush init server                       # interactive preflight + prompts
 hush secret add ANTHROPIC_API_KEY      # then OPENAI_API_KEY, GEMINI_API_KEY, …
 hush serve                             # binds Tailscale, brokers approvals
 ```
+
+Changing a secret later? Use `hush secret update ANTHROPIC_API_KEY` — it
+replaces the value in place and hot-reloads `hush serve`. (`hush secret add`
+refuses a name that already exists and points you here.)
 
 > 🛰️ **Listen on the vault host's Tailscale IPv4 — not your laptop IP.**
 > When `hush init server` asks for a listen address, run
@@ -474,7 +478,8 @@ fail loudly instead of breaking your daemon at 3am. Full guide in
 
 - `hush health --server "$(hush server-url)"` — one-shot reachability + clock-skew check.
 - `hush secret list` — enumerate vault entries (TTY: `NAME — description`; pipe-friendly).
-- `hush secret rotate` — re-encrypt the vault and hot-reload `hush serve` (SIGHUP, no downtime).
+- `hush secret update NAME` — change an existing entry's value (and optionally its description), then hot-reload `hush serve` (SIGHUP, no downtime). `hush secret rotate NAME` is the same operation. Not to be confused with `hush update`, which upgrades the hush binary.
+- `hush secret rotate` — re-encrypt the vault under the same passphrase (values unchanged) and hot-reload `hush serve`. To change the passphrase itself, use `hush vault rekey`.
 - `hush vault rekey` — change the vault passphrase itself; snapshots the old vault and prints a restart-required reminder. See [`docs/VAULT-REKEY.md`](docs/VAULT-REKEY.md).
 - `hush server-url` — print the canonical server URL from your TOML config, perfect for `$(…)` substitution.
 - `hush revoke --jti <uuid>` — kill an active JWT before its TTL expires.

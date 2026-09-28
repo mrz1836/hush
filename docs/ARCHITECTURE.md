@@ -261,7 +261,7 @@ eval $(hush request --scope ... --reason ... --format eval)
 1. Child exits with `code 78` (`EX_CONFIG`).
 2. Supervisor unconditionally enters `awaiting-approval`, regardless of TTL.
 3. Discord alert: `[STALE] Child Exit 78`.
-4. The operator runs `hush secret rotate <name>` on the vault host, then
+4. The operator runs `hush secret update <name>` on the vault host, then
    `hush client refresh --supervisor <name>` on the agent host.
 5. Supervisor refetches under the existing session and forks a fresh child.
    If the operator wants a fresh approval boundary instead, they run
@@ -296,7 +296,7 @@ on-host plaintext surface (child + supervisor); see `docs/SECURITY.md` §
 | Boot ordering (hush before Tailscale) | Backoff up to `boot_retry_timeout` (default 10m), log WARN at each attempt. On exhaustion, exit non-zero so launchd retries. |
 | Clock skew at supervisor or server | Refuse to start if `systemsetup -getusingnetworktime` / `timedatectl show` reports unsynced. |
 | Split-brain launchd restart | PID file + flock at `~/.hush/run/supervise-{name}.pid`. Second instance waits or exits cleanly. |
-| Vault secret rotation mid-session | Child still has old value. `hush secret rotate` triggers SIGHUP on server. Then `hush client refresh --supervisor X` makes the supervisor refetch under the existing session and gracefully restart the child. Use `hush client renew --supervisor X` when the operator also wants a fresh Discord approval. |
+| Vault secret rotation mid-session | Child still has old value. `hush secret update <name>` (alias: `hush secret rotate <name>`) triggers SIGHUP on server. Then `hush client refresh --supervisor X` makes the supervisor refetch under the existing session and gracefully restart the child. Use `hush client renew --supervisor X` when the operator also wants a fresh Discord approval. |
 | Discord DM rate-limit | Supervisor self-caps at 1 prompt per 5min per supervisor. Excess prompts log WARN and drop. |
 | Bot token theft + competing instance | Server detects unexpected WebSocket disconnect → log WARN + audit event + refuse `/claim` until reconnect (legitimate bot reconnects; rogue bot would have to keep displacing it, all visibly). |
 

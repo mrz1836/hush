@@ -6,7 +6,7 @@
 > when policy mandates a periodic rotation, or when migrating between
 > passphrase managers. If you only want to refresh the encrypted-vault
 > nonce under the same passphrase-derived key, use `hush secret rotate`
-> instead.
+> instead. To change a single secret's value, use `hush secret update NAME`.
 
 ---
 
@@ -17,7 +17,7 @@ material. Pick the one whose effect actually matches what you need.
 
 | Property                       | `hush secret rotate`                                     | `hush vault rekey`                                        |
 |--------------------------------|----------------------------------------------------------|-----------------------------------------------------------|
-| What changes                   | Vault nonce (re-encryption under same key)               | Vault salt + key + ciphertext (re-encryption under new key) |
+| What changes                   | Vault nonce (re-encryption under same key); with `NAME` (= `secret update NAME`), also that entry's value | Vault salt + key + ciphertext (re-encryption under new key) |
 | Passphrase prompt              | Current passphrase only                                  | Current passphrase, then new + confirmation               |
 | Root-of-trust effect           | None — the BIP32 master seed is unchanged                | Full — every derived key (JWT signing, vault, audit, client keys) is rotated |
 | Running daemon                 | Hot reload via SIGHUP (no restart needed)                | **Restart required** — no signal is sent                  |

@@ -261,7 +261,7 @@ Expected outcomes:
 ## Scenario 13 — secret rotated on vault host during active daemon session
 
 Flow:
-1. the operator updates a secret via `hush secret rotate ...`
+1. the operator updates a secret via `hush secret update <name>` (alias: `hush secret rotate <name>`)
 2. vault file is atomically rewritten
 3. server reloads vault via SIGHUP or equivalent atomic swap path
 4. running child still has old env vars until next restart/refetch
