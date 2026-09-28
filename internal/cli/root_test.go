@@ -50,6 +50,56 @@ func TestRoot_VerboseQuietConflict_ExitInputErr(t *testing.T) {
 	}
 }
 
+// TestRoot_UsageErrorsAreReported asserts cobra arg/flag/command
+// validation failures print a message (instead of exiting silently under
+// SilenceErrors) and map to ExitInputErr.
+func TestRoot_UsageErrorsAreReported(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"secret", "rotate", "A", "B"}, "hush: secret rotate: accepts at most 1 arg(s), received 2\nRun 'hush secret rotate --help' for usage.\n"},
+		{[]string{"secret", "update"}, "hush: secret update: accepts 1 arg(s), received 0\nRun 'hush secret update --help' for usage.\n"},
+		{[]string{"secret", "update", "A", "B"}, "hush: secret update: accepts 1 arg(s), received 2\nRun 'hush secret update --help' for usage.\n"},
+		{[]string{"secret", "remove"}, "hush: secret remove: accepts 1 arg(s), received 0\nRun 'hush secret remove --help' for usage.\n"},
+		{[]string{"secret", "add", "--bogus", "X"}, "hush: secret add: unknown flag: --bogus\nRun 'hush secret add --help' for usage.\n"},
+		{[]string{"bogus"}, "hush: unknown command \"bogus\" for \"hush\"\nRun 'hush --help' for usage.\n"},
+	}
+	for _, tc := range cases {
+		t.Run(strings.Join(tc.args, "_"), func(t *testing.T) {
+			t.Parallel()
+			root := newRootCmd(&outputContext{stdout: newStream(&bytes.Buffer{}, false, true), stderr: newStream(&bytes.Buffer{}, false, true)})
+			root.SetArgs(tc.args)
+			root.SetContext(t.Context())
+			err := root.Execute()
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if got := mapErr(err); got != ExitInputErr {
+				t.Errorf("mapErr = %d, want %d", got, ExitInputErr)
+			}
+			var buf bytes.Buffer
+			reportUsageError(newStream(&buf, false, false), err)
+			if buf.String() != tc.want {
+				t.Errorf("stderr = %q, want %q", buf.String(), tc.want)
+			}
+		})
+	}
+}
+
+// TestRoot_NonUsageErrorsNotReported asserts reportUsageError stays quiet
+// for errors that subcommands already rendered themselves.
+func TestRoot_NonUsageErrorsNotReported(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	reportUsageError(newStream(&buf, false, false), errSecretExists)
+	reportUsageError(newStream(&buf, false, false), nil)
+	if buf.Len() != 0 {
+		t.Errorf("stderr = %q, want empty", buf.String())
+	}
+}
+
 // TestNoViperImport asserts no source file under internal/cli or
 // cmd/hush imports github.com/spf13/viper. Constitution VII.
 //
