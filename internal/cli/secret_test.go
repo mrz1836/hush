@@ -160,7 +160,7 @@ func readVaultEntries(t *testing.T, path string, key *securebytes.SecureBytes) [
 
 func TestSecret_HelpDoesNotMentionValueFlags(t *testing.T) {
 	t.Parallel()
-	verbs := []string{"add", "remove", "list", "rotate"}
+	verbs := []string{"add", "update", "remove", "list", "rotate"}
 	banned := []string{"--value", "--secret", "--password", "--description", "--force", "--yes", "--no-confirm"}
 	for _, v := range verbs {
 		root := newSecretCmd()
@@ -191,10 +191,11 @@ func TestSecret_RootMounts(t *testing.T) {
 		subs[name] = true
 	}
 	require.True(t, subs["add"])
+	require.True(t, subs["update"])
 	require.True(t, subs["remove"])
 	require.True(t, subs["list"])
 	require.True(t, subs["rotate"])
-	require.Len(t, subs, 4)
+	require.Len(t, subs, 5)
 }
 
 func TestSecret_RegistersUnderRoot(t *testing.T) {
@@ -217,6 +218,7 @@ func TestSecret_NoSecretFlagsDeclared(t *testing.T) {
 	t.Parallel()
 	cmds := []*cobra.Command{
 		newSecretAddCmd(),
+		newSecretUpdateCmd(),
 		newSecretRemoveCmd(),
 		newSecretListCmd(),
 		newSecretRotateCmd(),
@@ -371,10 +373,30 @@ func TestSecret_AddDuplicateRefuses(t *testing.T) {
 
 	want := fmt.Sprintf(secretMsgExistsFmt+"\n", "EXISTING_KEY")
 	require.Equal(t, want, fx.stderr.String())
+	require.Contains(t, want, "use 'hush secret update EXISTING_KEY' to change its value")
 	testutil.AssertSentinelAbsent(t, secretSentinel, fx.stderr.String())
 
 	postBytes, _ := os.ReadFile(fx.vaultPath)
 	require.True(t, bytes.Equal(preBytes, postBytes))
+}
+
+// TestSecret_AddDuplicateRefusesBeforeValuePrompt — a taken name is
+// rejected right after the vault unlocks, before the operator types the
+// value (twice) and description.
+func TestSecret_AddDuplicateRefusesBeforeValuePrompt(t *testing.T) {
+	t.Parallel()
+	fx := newSecretFixture(t, []testutil.VaultEntry{{Name: "EXISTING_KEY", Value: "v"}})
+	fx.deps.promptSecret = func(_ *os.File, _ io.Writer, _ string) (*securebytes.SecureBytes, error) {
+		t.Fatal("value prompt must NOT fire for an existing entry")
+		return nil, errSyntheticTest
+	}
+	fx.deps.promptLine = func(_ *os.File, _ io.Writer, _ string) (string, error) {
+		t.Fatal("description prompt must NOT fire for an existing entry")
+		return "", errSyntheticTest
+	}
+
+	err := runSecretAdd(context.Background(), fx.stderrS, fx.stdinFile, fx.deps, []string{"EXISTING_KEY"})
+	require.ErrorIs(t, err, errSecretExists)
 }
 
 func TestSecret_AddPassphraseFailureSurfacesAuthCode(t *testing.T) {
@@ -531,7 +553,7 @@ func TestSecret_RotateRefusesPipedStdin(t *testing.T) {
 	fx := newSecretFixture(t, nil)
 	fx.deps.isStdinTTY = func(_ *os.File) bool { return false }
 
-	err := runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps)
+	err := runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps, nil)
 	require.True(t, errors.Is(err, errNoTTY))
 }
 
@@ -544,7 +566,7 @@ func TestSecret_RotateAtomic(t *testing.T) {
 	})
 	preBytes, _ := os.ReadFile(fx.vaultPath)
 
-	err := runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps)
+	err := runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps, nil)
 	require.NoError(t, err)
 
 	postBytes, _ := os.ReadFile(fx.vaultPath)
@@ -564,6 +586,240 @@ func TestSecret_RotateAtomic(t *testing.T) {
 
 	require.Contains(t, fx.logBuf.String(), "vault_rotated")
 	require.Contains(t, fx.logBuf.String(), "outcome=success")
+}
+
+func TestSecret_RotateNamedReplacesValue(t *testing.T) {
+	t.Parallel()
+	fx := newSecretFixture(t, []testutil.VaultEntry{
+		{Name: "ALPHA", Description: "a", Value: "v1"},
+		{Name: "BRAVO", Description: "b", Value: secretSentinel},
+		{Name: "CHARLIE", Description: "c", Value: "v3"},
+	})
+	fx.deps.promptSecret = scriptedSecretReader(t, []string{"new-bravo", "new-bravo"})
+	fx.deps.promptLine = scriptedLineReader(t, []string{""})
+
+	err := runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps, []string{"BRAVO"})
+	require.NoError(t, err)
+
+	// Replaced in place (order preserved); blank description keeps the old
+	// one; sibling entries untouched.
+	require.Equal(t, []testutil.VaultEntry{
+		{Name: "ALPHA", Description: "a", Value: "v1"},
+		{Name: "BRAVO", Description: "b", Value: "new-bravo"},
+		{Name: "CHARLIE", Description: "c", Value: "v3"},
+	}, readVaultEntries(t, fx.vaultPath, fx.vaultKey))
+
+	info, err := os.Stat(fx.vaultPath)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+
+	require.Equal(t, secretMsgPidAbsent+"\n", fx.stderr.String())
+	require.Contains(t, fx.logBuf.String(), "secret_rotated")
+	require.Contains(t, fx.logBuf.String(), "name=BRAVO")
+	require.NotContains(t, fx.logBuf.String(), "vault_rotated")
+	testutil.AssertSentinelAbsent(t, secretSentinel, fx.stderr.String())
+	testutil.AssertSentinelAbsent(t, secretSentinel, fx.logBuf.String())
+}
+
+func TestSecret_RotateNamedUpdatesDescription(t *testing.T) {
+	t.Parallel()
+	fx := newSecretFixture(t, []testutil.VaultEntry{{Name: "FOO", Description: "old", Value: "v"}})
+	fx.deps.promptSecret = scriptedSecretReader(t, []string{"v2", "v2"})
+	fx.deps.promptLine = scriptedLineReader(t, []string{"updated 9-28"})
+
+	require.NoError(t, runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps, []string{"FOO"}))
+	require.Equal(t, []testutil.VaultEntry{{Name: "FOO", Description: "updated 9-28", Value: "v2"}},
+		readVaultEntries(t, fx.vaultPath, fx.vaultKey))
+}
+
+func TestSecret_RotateNamedNotFound(t *testing.T) {
+	t.Parallel()
+	fx := newSecretFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}})
+	fx.deps.promptSecret = func(_ *os.File, _ io.Writer, _ string) (*securebytes.SecureBytes, error) {
+		t.Fatal("value prompt must NOT fire for a missing entry")
+		return nil, errSyntheticTest
+	}
+
+	preBytes, _ := os.ReadFile(fx.vaultPath)
+	err := runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps, []string{"NOPE"})
+	require.ErrorIs(t, err, vault.ErrSecretNotFound)
+	require.Equal(t, ExitNotFound, mapErr(err))
+	require.Equal(t, fmt.Sprintf(secretMsgRotateNotFoundFmt+"\n", "NOPE"), fx.stderr.String())
+	require.Contains(t, fx.stderr.String(), "use 'hush secret add NOPE' to create it")
+
+	postBytes, _ := os.ReadFile(fx.vaultPath)
+	require.True(t, bytes.Equal(preBytes, postBytes))
+}
+
+func TestSecret_RotateNamedConfirmationMismatch(t *testing.T) {
+	t.Parallel()
+	fx := newSecretFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}})
+	fx.deps.promptSecret = scriptedSecretReader(t, []string{"secret123", "secret124"})
+
+	preBytes, _ := os.ReadFile(fx.vaultPath)
+	err := runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps, []string{"FOO"})
+	require.ErrorIs(t, err, errSecretValueMismatch)
+	require.Equal(t, ExitInputErr, mapErr(err))
+	require.Equal(t, secretMsgValueMismatch+"\n", fx.stderr.String())
+	require.Contains(t, fx.logBuf.String(), "verb=rotate")
+
+	postBytes, _ := os.ReadFile(fx.vaultPath)
+	require.True(t, bytes.Equal(preBytes, postBytes))
+}
+
+func TestSecret_RotateNamedInvalidName(t *testing.T) {
+	t.Parallel()
+	fx := newSecretFixture(t, nil)
+	err := runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps, []string{"bad-name"})
+	require.ErrorIs(t, err, errInvalidSecretName)
+	require.Equal(t, secretMsgInvalidName+"\n", fx.stderr.String())
+}
+
+func TestSecret_RotateNamedSaveFailsLeavesVault(t *testing.T) {
+	t.Parallel()
+	fx := newSecretFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}})
+	fx.deps.saveVault = func(_ context.Context, _ string, _ *securebytes.SecureBytes, _ []byte, _ []vault.Secret) error {
+		return errSyntheticTest
+	}
+	preBytes, _ := os.ReadFile(fx.vaultPath)
+	err := runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps, []string{"FOO"})
+	require.ErrorIs(t, err, errSyntheticTest)
+	postBytes, _ := os.ReadFile(fx.vaultPath)
+	require.True(t, bytes.Equal(preBytes, postBytes))
+}
+
+// ----------------------- update NAME tests -----------------------
+
+// TestSecret_AddThenUpdateFlow — the operator's real path: `add` on a
+// taken name points at `update`, and `update` then changes the value.
+func TestSecret_AddThenUpdateFlow(t *testing.T) {
+	t.Parallel()
+	fx := newSecretFixture(t, []testutil.VaultEntry{
+		{Name: "GO_INVOICE_WIRE", Description: "wire info", Value: secretSentinel},
+	})
+
+	err := runSecretAdd(context.Background(), fx.stderrS, fx.stdinFile, fx.deps, []string{"GO_INVOICE_WIRE"})
+	require.ErrorIs(t, err, errSecretExists)
+	require.Contains(t, fx.stderr.String(), "use 'hush secret update GO_INVOICE_WIRE' to change its value")
+
+	fx.stderr.Reset()
+	fx.deps.promptPassphrase = scriptedSecretReader(t, []string{"correctbatterystaple"})
+	fx.deps.promptSecret = scriptedSecretReader(t, []string{"new-wire", "new-wire"})
+	fx.deps.promptLine = scriptedLineReader(t, []string{"updated wire info from 9-28-26"})
+	err = runSecretUpdate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps, []string{"GO_INVOICE_WIRE"})
+	require.NoError(t, err)
+
+	require.Equal(t, []testutil.VaultEntry{
+		{Name: "GO_INVOICE_WIRE", Description: "updated wire info from 9-28-26", Value: "new-wire"},
+	}, readVaultEntries(t, fx.vaultPath, fx.vaultKey))
+	testutil.AssertSentinelAbsent(t, secretSentinel, fx.stderr.String())
+	testutil.AssertSentinelAbsent(t, secretSentinel, fx.logBuf.String())
+}
+
+func TestSecret_UpdateReplacesValueKeepsOthers(t *testing.T) {
+	t.Parallel()
+	fx := newSecretFixture(t, []testutil.VaultEntry{
+		{Name: "ALPHA", Description: "a", Value: "v1"},
+		{Name: "BRAVO", Description: "b", Value: "v2"},
+	})
+	fx.deps.promptSecret = scriptedSecretReader(t, []string{"new-alpha", "new-alpha"})
+	fx.deps.promptLine = scriptedLineReader(t, []string{""})
+
+	err := runSecretUpdate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps, []string{"ALPHA"})
+	require.NoError(t, err)
+	require.Equal(t, []testutil.VaultEntry{
+		{Name: "ALPHA", Description: "a", Value: "new-alpha"},
+		{Name: "BRAVO", Description: "b", Value: "v2"},
+	}, readVaultEntries(t, fx.vaultPath, fx.vaultKey))
+
+	log := fx.logBuf.String()
+	require.Contains(t, log, "secret_updated")
+	require.Contains(t, log, "verb=update")
+	require.Contains(t, log, "name=ALPHA")
+	require.NotContains(t, log, "secret_rotated")
+	require.NotContains(t, log, "vault_rotated")
+}
+
+func TestSecret_UpdateSendsSIGHUP(t *testing.T) {
+	t.Parallel()
+	fx := newSecretFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}})
+	require.NoError(t, os.WriteFile(filepath.Join(fx.tempDir, pidFilename), []byte("4242\n"), 0o600))
+	fx.deps.readPIDFile = os.ReadFile
+	var sigs []syscall.Signal
+	fx.deps.kill = func(_ int, sig syscall.Signal) error {
+		sigs = append(sigs, sig)
+		return nil
+	}
+
+	require.NoError(t, runSecretUpdate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps, []string{"FOO"}))
+	require.Equal(t, []syscall.Signal{0, syscall.SIGHUP}, sigs)
+	require.Contains(t, fx.stderr.String(), "signalled running server (pid=4242)")
+	require.Contains(t, fx.logBuf.String(), "signalled=true")
+}
+
+func TestSecret_UpdateNotFound(t *testing.T) {
+	t.Parallel()
+	fx := newSecretFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}})
+	fx.deps.promptSecret = func(_ *os.File, _ io.Writer, _ string) (*securebytes.SecureBytes, error) {
+		t.Fatal("value prompt must NOT fire for a missing entry")
+		return nil, errSyntheticTest
+	}
+
+	preBytes, _ := os.ReadFile(fx.vaultPath)
+	err := runSecretUpdate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps, []string{"NOPE"})
+	require.ErrorIs(t, err, vault.ErrSecretNotFound)
+	require.Equal(t, ExitNotFound, mapErr(err))
+	require.Equal(t, fmt.Sprintf(secretMsgRotateNotFoundFmt+"\n", "NOPE"), fx.stderr.String())
+
+	postBytes, _ := os.ReadFile(fx.vaultPath)
+	require.True(t, bytes.Equal(preBytes, postBytes))
+}
+
+func TestSecret_UpdateConfirmationMismatch(t *testing.T) {
+	t.Parallel()
+	fx := newSecretFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}})
+	fx.deps.promptSecret = scriptedSecretReader(t, []string{"secret123", "secret124"})
+
+	preBytes, _ := os.ReadFile(fx.vaultPath)
+	err := runSecretUpdate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps, []string{"FOO"})
+	require.ErrorIs(t, err, errSecretValueMismatch)
+	require.Equal(t, ExitInputErr, mapErr(err))
+	require.Contains(t, fx.logBuf.String(), "verb=update")
+
+	postBytes, _ := os.ReadFile(fx.vaultPath)
+	require.True(t, bytes.Equal(preBytes, postBytes))
+}
+
+func TestSecret_UpdateRefusesPipedStdin(t *testing.T) {
+	t.Parallel()
+	fx := newSecretFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}})
+	fx.deps.isStdinTTY = func(_ *os.File) bool { return false }
+
+	err := runSecretUpdate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps, []string{"FOO"})
+	require.ErrorIs(t, err, errNoTTY)
+	require.Equal(t, secretMsgNoTTY+"\n", fx.stderr.String())
+	require.Contains(t, fx.logBuf.String(), "verb=update")
+}
+
+func TestSecret_UpdateInvalidName(t *testing.T) {
+	t.Parallel()
+	fx := newSecretFixture(t, nil)
+	err := runSecretUpdate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps, []string{"bad-name"})
+	require.ErrorIs(t, err, errInvalidSecretName)
+	require.Equal(t, secretMsgInvalidName+"\n", fx.stderr.String())
+}
+
+func TestSecret_UpdateAuthFailed(t *testing.T) {
+	t.Parallel()
+	fx := newSecretFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}})
+	fx.deps.loadSecrets = func(_ context.Context, _ string, _ *securebytes.SecureBytes) ([]vault.Secret, error) {
+		return nil, fmt.Errorf("decrypt: %w", vault.ErrAuthFailed)
+	}
+	err := runSecretUpdate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps, []string{"FOO"})
+	require.ErrorIs(t, err, vault.ErrAuthFailed)
+	require.Equal(t, ExitAuth, mapErr(err))
+	require.Contains(t, fx.logBuf.String(), "secret_passphrase_failed")
+	require.Contains(t, fx.logBuf.String(), "verb=update")
 }
 
 func TestSecret_RotateSendsSIGHUP(t *testing.T) {
@@ -586,7 +842,7 @@ func TestSecret_RotateSendsSIGHUP(t *testing.T) {
 	}
 	fx.deps.readPIDFile = os.ReadFile
 
-	err := runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps)
+	err := runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps, nil)
 	require.NoError(t, err)
 
 	// Probe (kill 0) + SIGHUP delivery → 2 invocations.
@@ -605,7 +861,7 @@ func TestSecret_RotateMissingPIDTolerant(t *testing.T) {
 	fx := newSecretFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}})
 	preBytes, _ := os.ReadFile(fx.vaultPath)
 
-	err := runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps)
+	err := runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps, nil)
 	require.NoError(t, err)
 	require.Equal(t, secretMsgPidAbsent+"\n", fx.stderr.String())
 
@@ -624,7 +880,7 @@ func TestSecret_RotateStalePIDTolerant(t *testing.T) {
 	fx.deps.readPIDFile = os.ReadFile
 	fx.deps.kill = func(_ int, _ syscall.Signal) error { return syscall.ESRCH }
 
-	err := runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps)
+	err := runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps, nil)
 	require.NoError(t, err)
 	require.Equal(t, secretMsgPidStale+"\n", fx.stderr.String())
 }
@@ -638,7 +894,7 @@ func TestSecret_RotateUnreadablePIDTolerant(t *testing.T) {
 
 	fx.deps.readPIDFile = os.ReadFile
 
-	err := runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps)
+	err := runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps, nil)
 	require.NoError(t, err)
 	require.Equal(t, secretMsgPidUnreadable+"\n", fx.stderr.String())
 }
@@ -653,7 +909,7 @@ func TestSecret_RotateNotOurUserTolerant(t *testing.T) {
 	fx.deps.readPIDFile = os.ReadFile
 	fx.deps.kill = func(_ int, _ syscall.Signal) error { return syscall.EPERM }
 
-	err := runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps)
+	err := runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps, nil)
 	require.NoError(t, err)
 	require.Equal(t, secretMsgPidNotOurUser+"\n", fx.stderr.String())
 }
@@ -711,6 +967,7 @@ func TestSecret_RemoveAbsent(t *testing.T) {
 	require.True(t, errors.Is(err, vault.ErrSecretNotFound))
 	require.Equal(t, ExitNotFound, mapErr(err))
 	require.False(t, promptCalled, "confirmation prompt must NOT fire before not-found check")
+	require.Equal(t, fmt.Sprintf(secretMsgNotFoundFmt+"\n", "NOPE"), fx.stderr.String())
 
 	postBytes, _ := os.ReadFile(fx.vaultPath)
 	require.True(t, bytes.Equal(preBytes, postBytes))
@@ -765,7 +1022,7 @@ func TestSecret_AuditLogOmitsSecretBytes(t *testing.T) {
 
 	// rotate path
 	fx4 := newSecretFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: secretSentinel + "_rotate"}})
-	require.NoError(t, runSecretRotate(context.Background(), fx4.stderrS, fx4.stdinFile, fx4.deps))
+	require.NoError(t, runSecretRotate(context.Background(), fx4.stderrS, fx4.stdinFile, fx4.deps, nil))
 	testutil.AssertSentinelAbsent(t, secretSentinel+"_rotate", fx4.logBuf.String())
 	testutil.AssertSentinelAbsent(t, secretSentinel+"_rotate", fx4.stdout.String())
 	testutil.AssertSentinelAbsent(t, secretSentinel+"_rotate", fx4.stderr.String())
@@ -827,7 +1084,7 @@ func TestSecret_ErrorsDoNotLeakSecretBytes(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(fx.tempDir, pidFilename), []byte("999999\n"), 0o600))
 	fx.deps.readPIDFile = os.ReadFile
 	fx.deps.kill = func(_ int, _ syscall.Signal) error { return syscall.ESRCH }
-	err = runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps)
+	err = runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps, nil)
 	require.NoError(t, err)
 	testutil.AssertSentinelAbsent(t, sentinel, fx.stderr.String())
 }
@@ -848,7 +1105,7 @@ func TestSecret_FileModeAfterAdd(t *testing.T) {
 func TestSecret_FileModeAfterRotate(t *testing.T) {
 	t.Parallel()
 	fx := newSecretFixture(t, []testutil.VaultEntry{{Name: "FOO", Value: "v"}})
-	require.NoError(t, runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps))
+	require.NoError(t, runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps, nil))
 
 	info, err := os.Stat(fx.vaultPath)
 	require.NoError(t, err)
@@ -1136,7 +1393,7 @@ func TestSecret_RotatePromptError(t *testing.T) {
 	fx.deps.promptPassphrase = func(_ *os.File, _ io.Writer, _ string) (*securebytes.SecureBytes, error) {
 		return nil, errSyntheticTest
 	}
-	err := runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps)
+	err := runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps, nil)
 	require.Error(t, err)
 }
 
@@ -1144,7 +1401,7 @@ func TestSecret_RotateReadSaltError(t *testing.T) {
 	t.Parallel()
 	fx := newSecretFixture(t, nil)
 	fx.deps.readVaultSalt = func(_ string) ([]byte, error) { return nil, errSyntheticTest }
-	err := runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps)
+	err := runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps, nil)
 	require.Error(t, err)
 }
 
@@ -1154,7 +1411,7 @@ func TestSecret_RotateDeriveSeedError(t *testing.T) {
 	fx.deps.deriveMasterSeed = func(_ context.Context, _, _ []byte) ([]byte, error) {
 		return nil, errSyntheticTest
 	}
-	err := runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps)
+	err := runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps, nil)
 	require.Error(t, err)
 }
 
@@ -1164,7 +1421,7 @@ func TestSecret_RotateAuthFailed(t *testing.T) {
 	fx.deps.loadSecrets = func(_ context.Context, _ string, _ *securebytes.SecureBytes) ([]vault.Secret, error) {
 		return nil, fmt.Errorf("decrypt: %w", vault.ErrAuthFailed)
 	}
-	err := runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps)
+	err := runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps, nil)
 	require.True(t, errors.Is(err, vault.ErrAuthFailed))
 }
 
@@ -1174,7 +1431,7 @@ func TestSecret_RotateSaveFails(t *testing.T) {
 	fx.deps.saveVault = func(_ context.Context, _ string, _ *securebytes.SecureBytes, _ []byte, _ []vault.Secret) error {
 		return errSyntheticTest
 	}
-	err := runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps)
+	err := runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps, nil)
 	require.Error(t, err)
 }
 
@@ -1195,7 +1452,7 @@ func TestSecret_RotateKillFailsAfterPidPresent(t *testing.T) {
 		return nil
 	}
 
-	err := runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps)
+	err := runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps, nil)
 	require.NoError(t, err)
 	require.Equal(t, secretMsgPidStale+"\n", fx.stderr.String())
 	require.Equal(t, 2, calls)
@@ -1219,6 +1476,17 @@ func TestSecret_CobraRunE_Add_HitsRunE(t *testing.T) {
 	err := cmd.Execute()
 	// Real production path: stdin is not a TTY in this test process,
 	// so we get errNoTTY (or earlier).
+	require.Error(t, err)
+}
+
+func TestSecret_CobraRunE_Update_HitsRunE(t *testing.T) {
+	t.Parallel()
+	cmd := newSecretUpdateCmd()
+	cmd.SetContext(context.Background())
+	cmd.SetArgs([]string{"FOO"})
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	err := cmd.Execute()
 	require.Error(t, err)
 }
 
