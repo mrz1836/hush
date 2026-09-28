@@ -238,7 +238,7 @@ accepted, opt-in trade-off.
 
 ### 6.2 Rotate
 
-Rotate the underlying secret with the normal path — `hush secret rotate
+Rotate the underlying secret with the normal path — `hush secret update
 EXAMPLE_DAEMON_TOKEN` on the vault host (SIGHUP atomic swap), then `hush client
 refresh --supervisor <daemon>` on the agent host. Rotation does **not** require
 re-establishing the lease; the standing grant continues to reissue the

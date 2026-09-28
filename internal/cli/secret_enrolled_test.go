@@ -181,13 +181,56 @@ func TestSecret_Enrolled_Rotate_StaysV2(t *testing.T) {
 		{Name: "TWO", Value: "2"},
 	}, tumbler.PolicyPasswordAndYubiKey)
 
-	err := runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps)
+	err := runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps, nil)
 	require.NoError(t, err)
 	require.Equal(t, vault.Version2, vaultVersionByte(t, fx.vaultPath), "rotate must not downgrade the vault")
 
 	secrets := openEnrolledVault(t, fx)
 	defer destroyAll(secrets)
 	require.ElementsMatch(t, []string{"ONE", "TWO"}, secretNames(secrets))
+}
+
+func TestSecret_Enrolled_RotateNamed_StaysV2(t *testing.T) {
+	fx := newEnrolledSecretFixture(t, []testutil.VaultEntry{
+		{Name: "ONE", Value: "1"},
+		{Name: "TWO", Value: "2"},
+	}, tumbler.PolicyPasswordAndYubiKey)
+	fx.deps.promptSecret = scriptedSecretReader(t, []string{"two-v2", "two-v2"})
+	fx.deps.promptLine = scriptedLineReader(t, []string{""})
+
+	err := runSecretRotate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps, []string{"TWO"})
+	require.NoError(t, err)
+	require.Equal(t, vault.Version2, vaultVersionByte(t, fx.vaultPath), "rotate NAME must not downgrade the vault")
+
+	secrets := openEnrolledVault(t, fx)
+	defer destroyAll(secrets)
+	require.ElementsMatch(t, []string{"ONE", "TWO"}, secretNames(secrets))
+	for _, s := range secrets {
+		if s.Name == "TWO" {
+			require.Equal(t, "two-v2", string(secureBytesContent(t, s.Value)))
+		}
+	}
+}
+
+func TestSecret_Enrolled_Update_StaysV2(t *testing.T) {
+	fx := newEnrolledSecretFixture(t, []testutil.VaultEntry{
+		{Name: "ONE", Value: "1"},
+		{Name: "TWO", Value: "2"},
+	}, tumbler.PolicyPasswordAndYubiKey)
+	fx.deps.promptSecret = scriptedSecretReader(t, []string{"one-v2", "one-v2"})
+	fx.deps.promptLine = scriptedLineReader(t, []string{""})
+
+	err := runSecretUpdate(context.Background(), fx.stderrS, fx.stdinFile, fx.deps, []string{"ONE"})
+	require.NoError(t, err)
+	require.Equal(t, vault.Version2, vaultVersionByte(t, fx.vaultPath), "update must not downgrade the vault")
+
+	secrets := openEnrolledVault(t, fx)
+	defer destroyAll(secrets)
+	for _, s := range secrets {
+		if s.Name == "ONE" {
+			require.Equal(t, "one-v2", string(secureBytesContent(t, s.Value)))
+		}
+	}
 }
 
 func TestSecret_Enrolled_WrongPassphrase_AuthFailed(t *testing.T) {

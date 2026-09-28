@@ -1,13 +1,16 @@
 // Package cli — `hush secret` subcommand: vault-entry management.
 //
 // Mounts on the cobra root via newSecretCmd() (no new
-// exported package-level symbols). Four verbs:
+// exported package-level symbols). Five verbs:
 //   - add NAME    — append a new entry (TTY-only; refuses piped stdin)
+//   - update NAME — replace an existing entry's value; same flow as
+//     `rotate NAME`
 //   - remove NAME — delete a named entry (typed-name confirmation)
 //   - list        — enumerate entries (text on TTY, JSON on pipe; never
 //     prints values)
-//   - rotate      — re-encrypt the vault and signal a running server
-//     via SIGHUP (tolerates missing PID)
+//   - rotate [NAME] — re-encrypt the vault and signal a running server
+//     via SIGHUP (tolerates missing PID); with NAME, first replace that
+//     entry's value (same prompts as `add`)
 //
 // The TTY-first refusal across every verb (including `list`) is the
 // documented defence against the "rogue process runs hush secret add"
@@ -50,7 +53,9 @@ const (
 	secretMsgNoTTY               = "hush: secret: this command requires an interactive TTY (rogue-process defence)"
 	secretMsgInvalidName         = "hush: secret: NAME must match ^[A-Z_][A-Z0-9_]*$ (1–64 chars)"
 	secretMsgValueMismatch       = "hush: secret: secret value confirmation does not match"
-	secretMsgExistsFmt           = "hush: secret: entry %s already exists; use 'hush secret rotate' to replace"
+	secretMsgExistsFmt           = "hush: secret: entry %[1]s already exists; use 'hush secret update %[1]s' to change its value"
+	secretMsgNotFoundFmt         = "hush: secret: entry %s not found"
+	secretMsgRotateNotFoundFmt   = "hush: secret: entry %[1]s not found; use 'hush secret add %[1]s' to create it"
 	secretMsgRemoveTokenMismatch = "hush: secret: typed name does not match the entry argument"
 	secretMsgEmptyVault          = "(vault is empty)"
 	secretMsgPidPresentFmt       = "hush: secret: signalled running server (pid=%d)"
@@ -65,6 +70,7 @@ const (
 	promptSecretValue        = "Secret value: "
 	promptConfirmSecretValue = "Confirm secret value: "
 	promptDescription        = "Description (optional): "
+	promptKeepDescription    = "Description (blank keeps current): "
 	promptRemoveConfirmName  = "Type the entry name to confirm: "
 )
 
@@ -108,7 +114,7 @@ var (
 	// errSecretExists surfaces an `add` for a name that already
 	// exists. Catch-all classification (ExitErr) — the operator-facing
 	// message is the contractual signal.
-	errSecretExists = errors.New("hush: secret: entry already exists; use 'hush secret rotate' to replace")
+	errSecretExists = errors.New("hush: secret: entry already exists; use 'hush secret update NAME' to change its value")
 )
 
 // pidStatus enumerates the PID-file outcomes that drive the rotate
@@ -202,9 +208,10 @@ func productionSecretDeps() *secretDeps {
 func newSecretCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "secret",
-		Short: "Manage vault entries (add, remove, list, rotate)",
+		Short: "Manage vault entries (add, update, remove, list, rotate)",
 	}
 	cmd.AddCommand(newSecretAddCmd())
+	cmd.AddCommand(newSecretUpdateCmd())
 	cmd.AddCommand(newSecretRemoveCmd())
 	cmd.AddCommand(newSecretListCmd())
 	cmd.AddCommand(newSecretRotateCmd())
@@ -298,6 +305,27 @@ func readSecretAddSecrets(path string) (pass, value *securebytes.SecureBytes, de
 	return pass, value, input.Description, nil
 }
 
+func newSecretUpdateCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "update NAME",
+		Short: "Change an existing entry's value (TTY only; signals a running server via SIGHUP)",
+		Long: `Prompt for a new value (entered twice) and an optional new description
+(blank keeps the current one), replace the named entry in place, re-encrypt
+the vault, and signal a running server via SIGHUP so it serves the new value.
+
+NAME must already exist; use 'hush secret add NAME' to create a new entry.
+Equivalent to 'hush secret rotate NAME'. Not to be confused with
+'hush update', which upgrades the hush binary itself.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			out := outputFromCmd(cmd)
+			deps := productionSecretDeps()
+			deps.configPath = readGlobalFlags(cmd).configPath
+			return runSecretUpdate(cmd.Context(), out.stderr, os.Stdin, deps, args)
+		},
+	}
+}
+
 func newSecretRemoveCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "remove NAME",
@@ -328,14 +356,22 @@ func newSecretListCmd() *cobra.Command {
 
 func newSecretRotateCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "rotate",
-		Short: "Re-encrypt the vault and signal a running server via SIGHUP",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		Use:   "rotate [NAME]",
+		Short: "Replace an entry's value (with NAME) or re-encrypt the vault; signals a running server via SIGHUP",
+		Long: `Without NAME, re-encrypt every entry under the same key (fresh nonce) and
+signal a running server via SIGHUP. Values are unchanged.
+
+With NAME, prompt for a new value (entered twice) and an optional new
+description (blank keeps the current one), replace that entry in place, then
+re-encrypt and signal the server the same way. NAME must already exist; use
+'hush secret add NAME' to create a new entry. 'hush secret update NAME' is the
+same operation.`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
 			out := outputFromCmd(cmd)
 			deps := productionSecretDeps()
 			deps.configPath = readGlobalFlags(cmd).configPath
-			return runSecretRotate(cmd.Context(), out.stderr, os.Stdin, deps)
+			return runSecretRotate(cmd.Context(), out.stderr, os.Stdin, deps, args)
 		},
 	}
 }
@@ -562,16 +598,17 @@ func resolveAddPassphrase(deps *secretDeps, in *os.File, stderr *Stream) (*secur
 	return deps.promptPassphrase(in, stderr.w, promptVaultPassphrase)
 }
 
-// promptAddValueAndDescription resolves the new secret's value and
-// description for the `add` flow. In non-interactive mode it sources from
-// deps.secretValue / deps.description. In interactive mode it prompts for
-// the value, prompts again to confirm, compares them in constant time,
-// then prompts for the description. On confirmation mismatch it emits the
-// secret_confirmation_mismatch audit and returns errSecretValueMismatch.
+// promptValueAndDescription resolves a secret's new value and description
+// for the `add` and `rotate NAME` flows. In non-interactive mode it sources
+// from deps.secretValue / deps.description. In interactive mode it prompts
+// for the value, prompts again to confirm, compares them in constant time,
+// then prompts for the description using descLabel. On confirmation
+// mismatch it emits the secret_confirmation_mismatch audit (tagged with
+// verb) and returns errSecretValueMismatch.
 //
 // Caller owns the returned value SecureBytes on success and must
 // Destroy() it. On any error the helper destroys what it allocated.
-func promptAddValueAndDescription(ctx context.Context, deps *secretDeps, in *os.File, stderr *Stream, name string) (*securebytes.SecureBytes, string, error) {
+func promptValueAndDescription(ctx context.Context, deps *secretDeps, in *os.File, stderr *Stream, verb, name, descLabel string) (*securebytes.SecureBytes, string, error) {
 	if deps.nonInteractive {
 		if deps.secretValue == nil {
 			return nil, "", fmt.Errorf("%w: secretValue", errMissingFlag)
@@ -602,12 +639,12 @@ func promptAddValueAndDescription(ctx context.Context, deps *secretDeps, in *os.
 	}
 	if !equal {
 		_ = stderr.WriteText(secretMsgValueMismatch)
-		auditEvent(ctx, deps.logger, slog.LevelWarn, "secret_confirmation_mismatch", "add", name, "value_mismatch")
+		auditEvent(ctx, deps.logger, slog.LevelWarn, "secret_confirmation_mismatch", verb, name, "value_mismatch")
 		_ = value.Destroy()
 		return nil, "", errSecretValueMismatch
 	}
 
-	description, descErr := deps.promptLine(in, stderr.w, promptDescription)
+	description, descErr := deps.promptLine(in, stderr.w, descLabel)
 	if descErr != nil {
 		_ = value.Destroy()
 		return nil, "", descErr
@@ -617,8 +654,12 @@ func promptAddValueAndDescription(ctx context.Context, deps *secretDeps, in *os.
 
 // runSecretAdd implements the `add` flow. Order:
 // stdin-TTY gate → name validation → passphrase prompt → derive vault
-// key → load vault → secret value prompt → confirm-value prompt →
-// description prompt → exists check → append → save → audit → ExitOK.
+// key → load vault → exists check → secret value prompt → confirm-value
+// prompt → description prompt → append → save → audit → ExitOK.
+//
+// The exists check runs before the value prompts so an operator who
+// picked a taken name is told immediately (and pointed at `rotate NAME`)
+// instead of after typing the secret twice.
 func runSecretAdd(ctx context.Context, stderr *Stream, in *os.File, deps *secretDeps, args []string) error {
 	if !deps.nonInteractive {
 		if err := enforceStdinTTY(ctx, in, deps, stderr, "add"); err != nil {
@@ -643,16 +684,16 @@ func runSecretAdd(ctx context.Context, stderr *Stream, in *os.File, deps *secret
 	defer func() { _ = vaultKey.Destroy() }()
 	defer destroySecrets(secrets)
 
-	value, description, err := promptAddValueAndDescription(ctx, deps, in, stderr, name)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = value.Destroy() }()
-
 	if slices.ContainsFunc(secrets, func(s vault.Secret) bool { return s.Name == name }) {
 		_ = stderr.WriteText(secretMsgExistsFmt, name)
 		return errSecretExists
 	}
+
+	value, description, err := promptValueAndDescription(ctx, deps, in, stderr, "add", name, promptDescription)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = value.Destroy() }()
 
 	// Append a fresh Secret carrying our typed value SecureBytes. The
 	// destroySecrets defer above only iterates the original pre-load
@@ -733,6 +774,7 @@ func runSecretRemove(ctx context.Context, stderr *Stream, in *os.File, deps *sec
 		}
 	}
 	if idx < 0 {
+		_ = stderr.WriteText(secretMsgNotFoundFmt, name)
 		return fmt.Errorf("hush: secret: %w", vault.ErrSecretNotFound)
 	}
 
@@ -853,14 +895,41 @@ func renderListTTY(stdout, stderr *Stream, entries []listEntry) error {
 	return nil
 }
 
-// runSecretRotate implements the `rotate` flow. Order:
-// stdin-TTY gate → passphrase → load → re-save (fresh nonce + salt)
-// → probe PID file → SIGHUP-or-warn → audit → ExitOK.
+// runSecretRotate implements the `rotate [NAME]` flow; see rewriteVault.
+func runSecretRotate(ctx context.Context, stderr *Stream, in *os.File, deps *secretDeps, args []string) error {
+	var name string
+	if len(args) > 0 {
+		name = args[0]
+	}
+	return rewriteVault(ctx, stderr, in, deps, "rotate", name)
+}
+
+// runSecretUpdate implements the `update NAME` flow — `rotate NAME` under
+// the verb operators reach for when changing a value; see rewriteVault.
+func runSecretUpdate(ctx context.Context, stderr *Stream, in *os.File, deps *secretDeps, args []string) error {
+	return rewriteVault(ctx, stderr, in, deps, "update", args[0])
+}
+
+// rewriteVault is the shared `rotate [NAME]` / `update NAME` flow. Order:
+// stdin-TTY gate → name validation (NAME only) → passphrase → load →
+// [NAME only: not-found check → value prompt → confirm-value prompt →
+// description prompt → replace in place] → re-save (fresh nonce) →
+// probe PID file → SIGHUP-or-warn → audit → ExitOK.
+//
+// Without NAME the plaintext set is preserved and the audit event is
+// vault_rotated; with NAME it is secret_rotated (verb rotate) or
+// secret_updated (verb update), carrying the name.
 //
 //nolint:gocognit,gocyclo,cyclop // sequential rotate flow with PID-status dispatch
-func runSecretRotate(ctx context.Context, stderr *Stream, in *os.File, deps *secretDeps) error {
-	if err := enforceStdinTTY(ctx, in, deps, stderr, "rotate"); err != nil {
+func rewriteVault(ctx context.Context, stderr *Stream, in *os.File, deps *secretDeps, verb, name string) error {
+	if err := enforceStdinTTY(ctx, in, deps, stderr, verb); err != nil {
 		return err
+	}
+	if name != "" {
+		if err := validateSecretName(name); err != nil {
+			_ = stderr.WriteText(secretMsgInvalidName)
+			return err
+		}
 	}
 
 	vaultPath, err := resolveVaultPath(ctx, deps)
@@ -900,11 +969,17 @@ func runSecretRotate(ctx context.Context, stderr *Stream, in *os.File, deps *sec
 	secrets, err := deps.loadSecrets(ctx, vaultPath, vaultKey)
 	if err != nil {
 		if errors.Is(err, vault.ErrAuthFailed) {
-			auditEvent(ctx, deps.logger, slog.LevelWarn, "secret_passphrase_failed", "rotate", "", "passphrase_failed")
+			auditEvent(ctx, deps.logger, slog.LevelWarn, "secret_passphrase_failed", verb, name, "passphrase_failed")
 		}
 		return err
 	}
 	defer destroySecrets(secrets)
+
+	if name != "" {
+		if err := replaceSecretValue(ctx, deps, in, stderr, secrets, verb, name); err != nil {
+			return err
+		}
+	}
 
 	// Re-save with the file's existing salt so the salt → KDF → vaultKey
 	// chain stays coherent across rotate. The nonce is freshly minted
@@ -935,7 +1010,44 @@ func runSecretRotate(ctx context.Context, stderr *Stream, in *os.File, deps *sec
 		_ = stderr.WriteText(secretMsgPidUnreadable)
 	}
 
-	auditEvent(ctx, deps.logger, slog.LevelInfo, "vault_rotated", "rotate", "", "success", "signalled", signalled)
+	event := "vault_rotated"
+	switch {
+	case name == "":
+	case verb == "update":
+		event = "secret_updated"
+	default:
+		event = "secret_rotated"
+	}
+	auditEvent(ctx, deps.logger, slog.LevelInfo, event, verb, name, "success", "signalled", signalled)
+	return nil
+}
+
+// replaceSecretValue swaps the value (and, when a non-blank one is
+// entered, the description) of the named entry inside secrets, in place so
+// entry order is preserved. The replaced value SecureBytes is destroyed
+// immediately; the new one is owned by the slice and destroyed by the
+// caller's destroySecrets defer. A missing entry prints a hint pointing at
+// `add` and returns vault.ErrSecretNotFound (ExitNotFound) before any value
+// prompt.
+func replaceSecretValue(ctx context.Context, deps *secretDeps, in *os.File, stderr *Stream, secrets []vault.Secret, verb, name string) error {
+	idx := slices.IndexFunc(secrets, func(s vault.Secret) bool { return s.Name == name })
+	if idx < 0 {
+		_ = stderr.WriteText(secretMsgRotateNotFoundFmt, name)
+		return fmt.Errorf("hush: secret: %w", vault.ErrSecretNotFound)
+	}
+
+	value, description, err := promptValueAndDescription(ctx, deps, in, stderr, verb, name, promptKeepDescription)
+	if err != nil {
+		return err
+	}
+
+	if old := secrets[idx].Value; old != nil {
+		_ = old.Destroy()
+	}
+	secrets[idx].Value = value
+	if strings.TrimSpace(description) != "" {
+		secrets[idx].Description = description
+	}
 	return nil
 }
 

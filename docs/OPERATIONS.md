@@ -97,6 +97,7 @@ hush smoke clean --state-dir ~/.hush-release-validation
 hush init server                         # guided / interactive (default)
 hush serve --reload-on-vault-change      # binds Tailscale interface, brokers approvals
 hush secret add OPENAI_API_KEY
+hush secret update OPENAI_API_KEY        # later: change the value in place + hot-reload
 ```
 
 `hush init server` is the bootstrap entry point for the vault host. It is
@@ -379,6 +380,7 @@ different material. Pick by the question you are answering.
 
 | Question | Command |
 |----------|---------|
+| "Change one entry's value (e.g. a rotated API key) and hot-reload `hush serve`." | `hush secret update NAME` (same as `hush secret rotate NAME`) |
 | "Re-encrypt the vault under the same passphrase-derived key (refresh nonces; hot-reload `hush serve`)." | `hush secret rotate` |
 | "Change the vault passphrase itself; rotate the root of trust for every BIP32-derived key." | `hush vault rekey` |
 
@@ -522,7 +524,7 @@ hush init server \
 ```
 
 `--non-interactive` is the only supported path for unattended setup.
-Anything that needs a TTY (secret add / list, passphrase entry) is
+Anything that needs a TTY (secret add / update / list, passphrase entry) is
 intentionally TTY-only as rogue-process defence.
 
 ---
@@ -538,7 +540,7 @@ The operational topics every hush install eventually needs:
 - Daemon supervisor deployment — one supervisor TOML per long-running daemon
 - Zero-downtime daemon reload for HTTP services (see
   [`docs/SUPERVISE-RELOAD.md`](SUPERVISE-RELOAD.md))
-- Vault secret rotation (`hush secret rotate`)
+- Vault secret value changes (`hush secret update NAME`)
 - Vault root-key rotation (`hush vault rekey`, see
   [`docs/VAULT-REKEY.md`](VAULT-REKEY.md))
 - `hush client renew` flow for fresh daemon re-approval

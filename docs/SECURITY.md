@@ -71,7 +71,7 @@ find ~ -name "signing.key" -o -name "*.pem" -o -name "*.key"
 | Malware reads Keychain for vault passphrase | **Mitigated.** Keychain items created with a per-binary `-T` ACL for the installed hush binary path. Other processes trigger a system Keychain prompt. Management commands require interactive TTY passphrase. |
 | Discord bot token stolen → auto-approve sessions | **Mitigated.** Bot token in Keychain by default (see §2.4 for the env-token fallback positioning). Server monitors WebSocket disconnect — unexpected disconnect → WARN log + audit + refusal of new `/claim`. Attacker's competing bot would have to keep displacing the real one, which is detectable. |
 | Discord API outage → no new sessions | **Accepted.** Existing sessions continue. New sessions blocked with 503. Plan TTLs for full-day coverage. |
-| Rogue process runs `hush secret add` on vault host | **Mitigated.** Management commands refuse piped stdin and Keychain reads. Only an interactive TTY can modify secrets. |
+| Rogue process runs `hush secret add` / `update` on vault host | **Mitigated.** Management commands refuse piped stdin and Keychain reads. Only an interactive TTY can modify secrets. |
 
 ---
 

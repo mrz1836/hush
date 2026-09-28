@@ -226,7 +226,8 @@ func mapErr(err error) int {
 
 	// Input errors — operator typed something wrong.
 	switch {
-	case errors.Is(err, errFlagConflict),
+	case asUsageError(err) != nil,
+		errors.Is(err, errFlagConflict),
 		errors.Is(err, errMissingFlag),
 		errors.Is(err, errConfigUnreadable),
 		errors.Is(err, errInvalidJTI),

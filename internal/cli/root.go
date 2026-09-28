@@ -2,8 +2,10 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -30,6 +32,7 @@ func Execute(ctx context.Context) int {
 	root.SetContext(ctx)
 
 	err := root.ExecuteContext(ctx)
+	reportUsageError(stderr, err)
 	return mapErr(err)
 }
 
@@ -68,7 +71,81 @@ func newRootCmd(initialOut *outputContext) *cobra.Command {
 	// real release apart from a development build.
 	attachUpdateCommand(root)
 
+	wireUsageErrors(root)
+
 	return root
+}
+
+// usageError marks a cobra argument or flag validation failure (wrong
+// positional-arg count, unknown flag, unknown command). The root sets
+// SilenceErrors so subcommands own their locked stderr messages; without
+// this marker those cobra-generated failures would exit non-zero with no
+// output at all. Mapped to [ExitInputErr] by [mapErr].
+type usageError struct {
+	cmdPath string
+	err     error
+}
+
+func (e *usageError) Error() string { return e.err.Error() }
+func (e *usageError) Unwrap() error { return e.err }
+
+// wireUsageErrors wraps every command's positional-arg validator and the
+// root's flag-error hook so cobra usage failures surface as *usageError.
+// Must run after the command tree is fully built.
+func wireUsageErrors(root *cobra.Command) {
+	root.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
+		return &usageError{cmdPath: cmd.CommandPath(), err: err}
+	})
+	var wrap func(*cobra.Command)
+	wrap = func(c *cobra.Command) {
+		if validate := c.Args; validate != nil {
+			c.Args = func(cmd *cobra.Command, args []string) error {
+				if err := validate(cmd, args); err != nil {
+					return &usageError{cmdPath: cmd.CommandPath(), err: err}
+				}
+				return nil
+			}
+		}
+		for _, sub := range c.Commands() {
+			wrap(sub)
+		}
+	}
+	wrap(root)
+}
+
+// asUsageError returns err as a *usageError, or nil if it is not a usage
+// failure. cobra's own "unknown command" error for the root is raised
+// during command lookup, before any validator hook runs, so it is
+// recognized by its stable prefix.
+func asUsageError(err error) *usageError {
+	if err == nil {
+		return nil
+	}
+	var usage *usageError
+	if errors.As(err, &usage) {
+		return usage
+	}
+	if strings.HasPrefix(err.Error(), "unknown command ") {
+		return &usageError{cmdPath: "hush", err: err}
+	}
+	return nil
+}
+
+// reportUsageError prints a usage failure as
+// "hush: <command path>: <cobra message>" plus a --help pointer. Other
+// errors are left to the subcommand that raised them.
+func reportUsageError(stderr *Stream, err error) {
+	usage := asUsageError(err)
+	if usage == nil {
+		return
+	}
+	path := strings.TrimPrefix(usage.cmdPath, "hush")
+	path = strings.TrimSpace(path)
+	prefix := "hush: "
+	if path != "" {
+		prefix += path + ": "
+	}
+	_ = stderr.WriteText("%s%s\nRun '%s --help' for usage.", prefix, usage.err.Error(), usage.cmdPath)
 }
 
 // persistentPreRun runs before every subcommand: validates the
