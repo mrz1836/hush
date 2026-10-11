@@ -19,11 +19,21 @@ import (
 	"github.com/mrz1836/hush/internal/yubikey"
 )
 
-// deriveVaultKey builds the vault encryption key from a passphrase+salt via
-// the legacy path, returning an owned SecureBytes.
+// newTestYubiKeyStore builds a yubikey.Store on slot 2 of tr with a cheap
+// passphrase KDF, so 2FA enroll/unlock round trips stay fast and light under
+// -race. The production Argon2id cost is pinned in internal/yubikey.
+func newTestYubiKeyStore(tr transport.Transport) *yubikey.Store {
+	s := yubikey.NewStore(tr, 2)
+	s.SetKDFForTesting(tumbler.NewArgon2idKDF(1, 64, 1))
+	return s
+}
+
+// deriveVaultKeyForTest builds the vault encryption key from a passphrase+salt
+// via the legacy path (with the fast KDF stand-in), returning an owned
+// SecureBytes.
 func deriveVaultKeyForTest(t *testing.T, ctx context.Context, passphrase, salt []byte) *securebytes.SecureBytes {
 	t.Helper()
-	seed, err := keys.DeriveMasterSeed(ctx, passphrase, salt)
+	seed, err := fastDeriveMasterSeed(ctx, passphrase, salt)
 	require.NoError(t, err)
 	defer func() {
 		for i := range seed {
@@ -67,7 +77,7 @@ func TestMigrateVaultToYubiKey_EndToEnd(t *testing.T) {
 
 	// 3. Migrate to password-and-yubikey with a recovery code.
 	fake := transport.NewFakeTransport(2, []byte("device-hmac-secret-20"))
-	store := yubikey.NewStore(fake, 2)
+	store := newTestYubiKeyStore(fake)
 	recoveryCode, err := migrateVaultToYubiKey(ctx, vaultPath, dir, loaded, store,
 		tumbler.PolicyPasswordAndYubiKey, yubikey.EnrollOptions{Passphrase: passphrase, WithRecovery: true})
 	require.NoError(t, err)
@@ -89,7 +99,7 @@ func TestMigrateVaultToYubiKey_EndToEnd(t *testing.T) {
 	defer func() { _ = passSB.Destroy() }()
 
 	newSeed, err := unlockMasterSeed(ctx, dir, passSB, salt,
-		func() (masterSeedUnlocker, error) { return yubikey.NewStore(fake, 2), nil })
+		func() (masterSeedUnlocker, error) { return newTestYubiKeyStore(fake), nil })
 	require.NoError(t, err)
 	newRaw, err := keys.DeriveVaultEncKey(newSeed)
 	require.NoError(t, err)
@@ -136,7 +146,7 @@ func TestMigrateVaultToYubiKey_RecoveryUnlock(t *testing.T) {
 	_ = loadKey.Destroy()
 
 	fake := transport.NewFakeTransport(2, []byte("secret"))
-	store := yubikey.NewStore(fake, 2)
+	store := newTestYubiKeyStore(fake)
 	rc, err := migrateVaultToYubiKey(ctx, vaultPath, dir, loaded, store,
 		tumbler.PolicyYubiKeyOnly, yubikey.EnrollOptions{WithRecovery: true})
 	require.NoError(t, err)
