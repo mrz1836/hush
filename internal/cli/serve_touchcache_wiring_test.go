@@ -37,7 +37,7 @@ func (c *countingSeedUnlocker) Unlock(_ context.Context, _ []byte, _ func() ([]b
 // Argon2id) unless a passphrase policy is requested.
 func enrollKeyslots(t *testing.T, dir string, policy tumbler.Policy) []byte {
 	t.Helper()
-	store := yubikey.NewStore(transport.NewFakeTransport(2, []byte(enrolledFixtureFakeSecret)), 2)
+	store := newTestYubiKeyStore(transport.NewFakeTransport(2, []byte(enrolledFixtureFakeSecret)))
 	opts := yubikey.EnrollOptions{}
 	if policy == tumbler.PolicyPasswordAndYubiKey {
 		opts.Passphrase = []byte("enroll-pass")

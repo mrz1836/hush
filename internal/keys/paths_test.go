@@ -1,7 +1,6 @@
 package keys
 
 import (
-	"context"
 	"crypto/aes"
 	"encoding/hex"
 	"testing"
@@ -12,10 +11,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// testSeed returns a deterministic 64-byte seed used by path derivation tests.
+// testSeed returns a deterministic 64-byte seed used by path derivation tests:
+// the frozen DeriveMasterSeed output for katPassphrase + testKATSalt(). The KAT
+// subtest pins that equivalence, so path tests skip a 256 MiB Argon2id run each.
 func testSeed(t *testing.T) []byte {
 	t.Helper()
-	seed, err := DeriveMasterSeed(context.Background(), []byte(katPassphrase), testKATSalt())
+	seed, err := hex.DecodeString(katSeedHex)
 	require.NoError(t, err)
 	return seed
 }

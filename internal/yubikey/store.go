@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"testing"
 
 	tumbler "github.com/mrz1836/go-tumbler"
 	"github.com/mrz1836/go-tumbler/securebytes"
@@ -40,6 +41,7 @@ type Store struct {
 	transport transport.Transport
 	slot      uint8
 	onTouch   func()
+	kdf       tumbler.KDF // nil = the pinned production Argon2id cost
 }
 
 // NewStore builds a store from an explicit transport (tests inject a fake).
@@ -63,6 +65,19 @@ func NewStoreFromConfig(ykmanPath string, slot uint8) (*Store, error) {
 // starts blinking for a touch (after any passphrase prompt and key
 // derivation), so the CLI can print "touch your key now" at the right time.
 func (s *Store) SetTouchPrompt(fn func()) { s.onTouch = fn }
+
+// SetKDFForTesting overrides the passphrase-factor KDF used when enrolling a
+// password-and-yubikey slot (Enroll, RewrapPassphrase), so test suites can
+// build real 2FA envelopes without paying the 256 MiB Argon2id cost on every
+// enroll and unlock (Unlock reads the params back from the envelope). It
+// panics outside a `go test` binary, so production can never weaken the
+// passphrase factor.
+func (s *Store) SetKDFForTesting(kdf tumbler.KDF) {
+	if !testing.Testing() {
+		panic("hush/yubikey: SetKDFForTesting called outside a test binary")
+	}
+	s.kdf = kdf
+}
 
 // EnrollOptions controls the primary factor and extra slots.
 type EnrollOptions struct {
@@ -269,6 +284,15 @@ func singlePasswordYubiKeySlot(env *tumbler.Envelope) ([8]byte, error) {
 	return id, nil
 }
 
+// passphraseKDF returns the KDF for a new password-and-yubikey slot: the
+// pinned production Argon2id cost unless a test overrode it.
+func (s *Store) passphraseKDF() tumbler.KDF {
+	if s.kdf != nil {
+		return s.kdf
+	}
+	return tumbler.NewArgon2idKDF(argon2Time, argon2MemKiB, argon2Threads)
+}
+
 func (s *Store) primaryMethod(policy tumbler.Policy, passphrase []byte) (tumbler.Method, *securebytes.SecureBytes, error) {
 	touch := tumbler.WithTouchAnnounce(s.onTouch)
 	//nolint:exhaustive // only 2FA and yubikey-only are enrollable here; default rejects the rest
@@ -285,7 +309,7 @@ func (s *Store) primaryMethod(policy tumbler.Policy, passphrase []byte) (tumbler
 		}
 		m := tumbler.NewYubiKeyMethod(s.transport, tumbler.YubiKeyConfig{
 			Slot: s.slot,
-			KDF:  tumbler.NewArgon2idKDF(argon2Time, argon2MemKiB, argon2Threads),
+			KDF:  s.passphraseKDF(),
 		}, pw, touch)
 		return m, pw, nil
 	default:

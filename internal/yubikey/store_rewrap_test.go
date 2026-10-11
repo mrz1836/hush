@@ -94,6 +94,7 @@ func TestRewrapPassphrase_MultiPrimary_Unsupported(t *testing.T) {
 	ctx := context.Background()
 	fake := transport.NewFakeTransport(2, []byte("device-hmac-secret-20"))
 	store := yubikey.NewStore(fake, 2)
+	store.SetKDFForTesting(cheapKDF())
 
 	// A malformed/unsupported envelope with TWO password-and-yubikey slots is
 	// rejected before any YubiKey interaction.
@@ -116,7 +117,7 @@ func buildTwoPrimaryEnvelope(t *testing.T, fake *transport.FakeTransport) []byte
 		require.NoError(t, pErr)
 		return tumbler.NewYubiKeyMethod(fake, tumbler.YubiKeyConfig{
 			Slot: 2,
-			KDF:  tumbler.NewArgon2idKDF(4, 256*1024, 4),
+			KDF:  cheapKDF(),
 		}, pw)
 	}
 

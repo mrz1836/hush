@@ -13,9 +13,21 @@ import (
 	"github.com/mrz1836/hush/internal/yubikey"
 )
 
-func newStore() *yubikey.Store {
+// cheapKDF keeps 2FA enroll/unlock round trips fast and light under -race.
+// The production Argon2id cost is exercised by TestEnrollUnlock_TwoFactor and
+// pinned by TestPassphraseKDF_DefaultIsPinnedProductionCost.
+func cheapKDF() tumbler.KDF { return tumbler.NewArgon2idKDF(1, 64, 1) }
+
+// newProductionStore builds a store with the pinned production KDF cost.
+func newProductionStore() *yubikey.Store {
 	fake := transport.NewFakeTransport(2, []byte("device-hmac-secret-20"))
 	return yubikey.NewStore(fake, 2)
+}
+
+func newStore() *yubikey.Store {
+	store := newProductionStore()
+	store.SetKDFForTesting(cheapKDF())
+	return store
 }
 
 func TestEnroll_GeneratesRandom64ByteSeed(t *testing.T) {
@@ -33,9 +45,11 @@ func TestEnroll_GeneratesRandom64ByteSeed(t *testing.T) {
 	assert.False(t, bytes.Equal(res.MasterSeed, res2.MasterSeed))
 }
 
+// TestEnrollUnlock_TwoFactor runs the real production Argon2id cost (slow and
+// ~256 MiB per derivation); every other 2FA test uses cheapKDF.
 func TestEnrollUnlock_TwoFactor(t *testing.T) {
 	ctx := context.Background()
-	store := newStore()
+	store := newProductionStore()
 	pass := []byte("correct-horse-battery-staple")
 
 	res, err := store.Enroll(ctx, tumbler.PolicyPasswordAndYubiKey, yubikey.EnrollOptions{Passphrase: pass})

@@ -32,7 +32,7 @@ func newEnrolledVaultFixture(t *testing.T, entries []testutil.VaultEntry, policy
 	loaded, err := vault.LoadSecrets(ctx, fx.vaultPath, fx.vaultKey)
 	require.NoError(t, err)
 
-	store := yubikey.NewStore(transport.NewFakeTransport(2, []byte(enrolledFixtureFakeSecret)), 2)
+	store := newTestYubiKeyStore(transport.NewFakeTransport(2, []byte(enrolledFixtureFakeSecret)))
 	opts := yubikey.EnrollOptions{WithRecovery: true}
 	if policy == tumbler.PolicyPasswordAndYubiKey {
 		opts.Passphrase = []byte(vaultRekeyTestCurrentPass)
@@ -47,7 +47,7 @@ func newEnrolledVaultFixture(t *testing.T, entries []testutil.VaultEntry, policy
 	require.True(t, keyslots.Exists(fx.tempDir))
 
 	fx.deps.newRewrapper = func(onTouch func()) (passphraseRewrapper, error) {
-		s := yubikey.NewStore(transport.NewFakeTransport(2, []byte(enrolledFixtureFakeSecret)), 2)
+		s := newTestYubiKeyStore(transport.NewFakeTransport(2, []byte(enrolledFixtureFakeSecret)))
 		if onTouch != nil {
 			s.SetTouchPrompt(onTouch)
 		}
@@ -80,7 +80,7 @@ func unlockEnvelopeSeed(t *testing.T, stateDir, pass string) []byte {
 	t.Helper()
 	envelope, _, err := keyslots.Load(stateDir)
 	require.NoError(t, err)
-	store := yubikey.NewStore(transport.NewFakeTransport(2, []byte(enrolledFixtureFakeSecret)), 2)
+	store := newTestYubiKeyStore(transport.NewFakeTransport(2, []byte(enrolledFixtureFakeSecret)))
 	seed, err := store.Unlock(context.Background(), envelope, func() ([]byte, error) {
 		return []byte(pass), nil
 	})

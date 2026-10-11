@@ -13,7 +13,10 @@ import (
 func TestDeriveClientKey_MachineIndexIsolation(t *testing.T) {
 	seed1 := testSeed(t)
 
-	seed2, err := DeriveMasterSeed(context.Background(), []byte("a-different-passphrase!"), testKATSalt())
+	// A distinct seed is all this test needs; cheap Argon2id params skip a
+	// 256 MiB derivation (the locked params are pinned by the KAT).
+	seed2, err := deriveMasterSeed(context.Background(), []byte("a-different-passphrase!"), testKATSalt(),
+		fuzzArgon2Time, fuzzArgon2MemoryK, fuzzArgon2Threads)
 	require.NoError(t, err)
 
 	// serializePriv extracts the 32-byte scalar via secp256k1 to avoid the
