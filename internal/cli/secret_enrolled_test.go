@@ -39,7 +39,7 @@ func newEnrolledSecretFixture(t *testing.T, entries []testutil.VaultEntry, polic
 	loaded, err := vault.LoadSecrets(ctx, fx.vaultPath, fx.vaultKey)
 	require.NoError(t, err)
 
-	store := yubikey.NewStore(transport.NewFakeTransport(2, []byte(enrolledFixtureFakeSecret)), 2)
+	store := newTestYubiKeyStore(transport.NewFakeTransport(2, []byte(enrolledFixtureFakeSecret)))
 	opts := yubikey.EnrollOptions{WithRecovery: true}
 	if policy == tumbler.PolicyPasswordAndYubiKey {
 		opts.Passphrase = []byte(enrolledFixturePassphrase)
@@ -56,7 +56,7 @@ func newEnrolledSecretFixture(t *testing.T, entries []testutil.VaultEntry, polic
 
 	// Enveloped branch: unlock via a fresh store on the SAME fake secret.
 	fx.deps.newUnlocker = func(onTouch func()) (masterSeedUnlocker, error) {
-		s := yubikey.NewStore(transport.NewFakeTransport(2, []byte(enrolledFixtureFakeSecret)), 2)
+		s := newTestYubiKeyStore(transport.NewFakeTransport(2, []byte(enrolledFixtureFakeSecret)))
 		if onTouch != nil {
 			s.SetTouchPrompt(onTouch)
 		}
@@ -93,7 +93,7 @@ func openEnrolledVault(t *testing.T, fx *secretFixture) []vault.Secret {
 	defer func() { _ = pass.Destroy() }()
 
 	seed, err := unlockMasterSeed(ctx, fx.tempDir, pass, salt, func() (masterSeedUnlocker, error) {
-		return yubikey.NewStore(transport.NewFakeTransport(2, []byte(enrolledFixtureFakeSecret)), 2), nil
+		return newTestYubiKeyStore(transport.NewFakeTransport(2, []byte(enrolledFixtureFakeSecret))), nil
 	})
 	require.NoError(t, err)
 	defer zeroBytes(seed)
@@ -272,7 +272,7 @@ func TestSecret_Enrolled_YubiKeyOnly_PassphraseFnNeverCalled(t *testing.T) {
 
 	counter := &countingUnlocker{}
 	fx.deps.newUnlocker = func(_ func()) (masterSeedUnlocker, error) {
-		counter.inner = yubikey.NewStore(transport.NewFakeTransport(2, []byte(enrolledFixtureFakeSecret)), 2)
+		counter.inner = newTestYubiKeyStore(transport.NewFakeTransport(2, []byte(enrolledFixtureFakeSecret)))
 		return counter, nil
 	}
 	// A wrong passphrase must not matter for yubikey-only.
