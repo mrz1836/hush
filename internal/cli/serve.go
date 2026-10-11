@@ -160,13 +160,32 @@ func newServeCmd() *cobra.Command {
 			deps.allowClockSkew, _ = cmd.Flags().GetBool("allow-clock-skew")
 			deps.reloadOnVaultChange, _ = cmd.Flags().GetBool("reload-on-vault-change")
 			deps.noCache, _ = cmd.Flags().GetBool("no-cache")
-			return runServe(cmd.Context(), out.stdout, out.stderr, deps)
+			err := runServe(cmd.Context(), out.stdout, out.stderr, deps)
+			printServeErr(out.stderr, err)
+			return err
 		},
 	}
 	cmd.Flags().Bool("allow-clock-skew", false, "Downgrade a failing clock-sync startup check to a logged warning + audit event (no auto-sudo)")
 	cmd.Flags().Bool("reload-on-vault-change", false, "Automatically reload the vault when secrets.vault changes")
 	cmd.Flags().Bool("no-cache", false, "Disable the YubiKey touch cache for this run (overrides [yubikey] cache_touch)")
 	return cmd
+}
+
+// printServeErr writes a serve failure to stderr as one line. The root command
+// silences cobra's error printing, and the vault is unlocked before serve's
+// logger exists, so without this a startup failure (most often a mistyped
+// passphrase) exits with only a status code — invisible to an operator reading
+// the daemon's log. A rejected passphrase also gets an actionable next step.
+// Clean shutdown (context canceled) and usage errors (already reported by the
+// root command) print nothing.
+func printServeErr(stderr *Stream, err error) {
+	if err == nil || errors.Is(err, context.Canceled) || asUsageError(err) != nil {
+		return
+	}
+	printErr(stderr, "serve: %s", strings.ReplaceAll(err.Error(), "\n", " "))
+	if errors.Is(err, vault.ErrAuthFailed) {
+		_ = stderr.WriteText("  next: the vault passphrase was rejected (secrets.vault did not decrypt); nothing changed — retry with the correct passphrase.")
+	}
 }
 
 // runServe is the chassis-composition path. Each step's failure is
