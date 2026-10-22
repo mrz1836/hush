@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -78,7 +77,9 @@ func newTestUpdateConfig(t *testing.T, tag, dir string) (selfupdate.Config, stri
 // flags, update command, and usage-error wiring, then reports and maps the
 // error exactly as Execute does — so "printed once" holds for the whole
 // pipeline. The root has no persistentPreRun, which would rebind the
-// injected buffers to the process streams.
+// injected buffers to the process streams. Cobra's error stream, where
+// go-selfupdate reports update failures, is routed into the same stderr
+// buffer.
 func runUpdate(t *testing.T, cfg selfupdate.Config, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
 	var outBuf, errBuf bytes.Buffer
@@ -94,6 +95,7 @@ func runUpdate(t *testing.T, cfg selfupdate.Config, args ...string) (stdout, std
 		stdout: newStream(&outBuf, false, true),
 		stderr: errStream,
 	})
+	root.SetErr(&errBuf)
 	root.SetArgs(args)
 	err := root.ExecuteContext(ctx)
 	reportUsageError(errStream, err)
@@ -106,39 +108,6 @@ func skipInstallOnWindows(t *testing.T) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("self-update install is not supported on windows")
-	}
-}
-
-// TestPrintUpdateErr locks the one-line stderr report a failed update leaves
-// behind, so a self-update failure is never a silent non-zero exit.
-func TestPrintUpdateErr(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name string
-		err  error
-		want string // the full report; "" means no output at all
-	}{
-		{name: "nil", err: nil},
-		{name: "usage error already reported", err: &usageError{cmdPath: "hush update", err: errors.New("bad flag")}},
-		{
-			name: "library error verbatim",
-			err:  fmt.Errorf("%w: status 503", selfupdate.ErrChecksumFetchFailed),
-			want: "hush: update: go-selfupdate: failed to fetch checksums file: status 503\n",
-		},
-		{
-			name: "multi-line error flattened to one line",
-			err:  errors.New("download failed\nretry later"),
-			want: "hush: update: download failed retry later\n",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			var buf bytes.Buffer
-			printUpdateErr(newStream(&buf, false, true), tt.err)
-			assert.Equal(t, tt.want, buf.String())
-		})
 	}
 }
 
@@ -231,7 +200,7 @@ func TestUpdateCmd_UpToDateWritesNoStderr(t *testing.T) {
 
 // TestUpdateCmd_UsageErrorReportedOnce asserts a usage error on update is
 // reported only by the root handler: cobra rejects it before RunE, so the
-// wrapper never runs.
+// library's error reporting never runs.
 func TestUpdateCmd_UsageErrorReportedOnce(t *testing.T) {
 	t.Parallel()
 
@@ -243,8 +212,8 @@ func TestUpdateCmd_UsageErrorReportedOnce(t *testing.T) {
 	assert.NotContains(t, stderr, "hush: update: go-selfupdate:")
 }
 
-// TestUpdateCmd_KeepsLibraryShape asserts wrapping RunE leaves the rest of the
-// library's command intact: it is registered on root with the upgrade alias,
+// TestUpdateCmd_KeepsLibraryShape asserts hush's adjustments leave the rest of
+// the library's command intact: it is registered on root with the upgrade alias,
 // keeps the annotation that keeps the passive banner quiet during an update,
 // and has --check's -c shorthand dropped so the global --config keeps it.
 func TestUpdateCmd_KeepsLibraryShape(t *testing.T) {
