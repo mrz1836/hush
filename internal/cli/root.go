@@ -69,7 +69,7 @@ func newRootCmd(initialOut *outputContext) *cobra.Command {
 	// notice. Wired here, after root's persistent hooks are set, because the
 	// banner chains onto them and needs the resolved build version to tell a
 	// real release apart from a development build.
-	attachUpdateCommand(root)
+	attachUpdateCommand(root, newUpdateConfig())
 
 	wireUsageErrors(root)
 
