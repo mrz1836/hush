@@ -46,8 +46,8 @@ github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
 github.com/klauspost/cpuid/v2 v2.0.9 h1:lgaqFMSdTdQYdZ04uHyN2d/eKdOMyi2YLSvlQIBFYa4=
 github.com/klauspost/cpuid/v2 v2.0.9/go.mod h1:FInQzS24/EEf25PyTYn52gqo7WaD8xa0213Md/qVLRg=
-github.com/mrz1836/go-selfupdate v0.1.4 h1:WXlZShndYe7GROnVufKJOeFPvnQrNyU5fTTdUQFGGpQ=
-github.com/mrz1836/go-selfupdate v0.1.4/go.mod h1:yREEv9yuDdiZ/inozWcfD39dNATgtEr7wpcszmbxupw=
+github.com/mrz1836/go-selfupdate v0.1.5 h1:mM4I7GtWuqTn/SlwUc1n1iY0SFUHgxmv/s4Sz1JFxl4=
+github.com/mrz1836/go-selfupdate v0.1.5/go.mod h1:yREEv9yuDdiZ/inozWcfD39dNATgtEr7wpcszmbxupw=
 github.com/mrz1836/go-tumbler v0.2.0 h1:tzT0xujsmxwbCImCftKZ+WhnkX85HtLHhz2zGDd9Cw4=
 github.com/mrz1836/go-tumbler v0.2.0/go.mod h1:LNVpZcWMrOs/SriD6yA2MywxawqgLUlCcjTEcJ22pLE=
 github.com/pelletier/go-toml/v2 v2.4.3 h1:GTRvJQutkOSftxIFD5xw9aepkYNuPWmVJpffdDPYVpY=

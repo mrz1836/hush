@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"strings"
-
 	selfupdate "github.com/mrz1836/go-selfupdate"
 	"github.com/mrz1836/go-selfupdate/cobracmd"
 	"github.com/spf13/cobra"
@@ -27,7 +25,8 @@ func newUpdateConfig() selfupdate.Config {
 // the passive "a new version is available" notice, both derived from cfg
 // (production passes [newUpdateConfig]). cfg is injected so tests can supply a
 // fake release source, transport, and target path. The registered command is
-// returned with its RunE wrapped so a failure is reported on stderr.
+// returned; a failed update is reported on stderr by go-selfupdate's error
+// reporting.
 func attachUpdateCommand(root *cobra.Command, cfg selfupdate.Config) *cobra.Command {
 	// One call registers the `update` command (alias `upgrade`, flags
 	// --check/--force/--verbose) and the passive "a new version is available"
@@ -38,19 +37,10 @@ func attachUpdateCommand(root *cobra.Command, cfg selfupdate.Config) *cobra.Comm
 	// HUSH_ env prefix (opt out with HUSH_NO_UPDATE_CHECK; the shared
 	// NO_UPDATE_CHECK and CI also disable it). The deprecated --use-binary flag
 	// is kept, hidden and inert, so old invocations do not error now that a
-	// release archive is the only install route.
-	cmd := cobracmd.Attach(root, cfg, cobracmd.WithDeprecatedUseBinaryFlag())
-
-	// The library's command returns its errors without printing them, and the
-	// root silences cobra's error output, so report a failure here. Only RunE
-	// is swapped: the command keeps the library's annotation, so the passive
-	// banner still stays quiet during an update.
-	run := cmd.RunE
-	cmd.RunE = func(c *cobra.Command, args []string) error {
-		err := run(c, args)
-		printUpdateErr(outputFromCmd(c).stderr, err)
-		return err
-	}
+	// release archive is the only install route. The root silences cobra's
+	// error output, so the library reports a failed update itself as one
+	// `hush: update: <error>` line, printed under `update` even via `upgrade`.
+	cmd := cobracmd.Attach(root, cfg, cobracmd.WithDeprecatedUseBinaryFlag(), cobracmd.WithErrorReporting())
 
 	// hush's global --config already owns the -c shorthand; the library's
 	// --check flag ships -c too. Strip --check's shorthand so cobra can merge the
@@ -64,21 +54,6 @@ func attachUpdateCommand(root *cobra.Command, cfg selfupdate.Config) *cobra.Comm
   hush update --force    # reinstall the latest even if already current`
 
 	return cmd
-}
-
-// printUpdateErr writes an update failure to stderr as one line. The root
-// command silences cobra's error printing, and the go-selfupdate command
-// returns its errors without printing them, so without this a failed update
-// (a blocked checksum download, a refused install directory) exits with only
-// a status code. The library's message is kept verbatim behind an
-// "update" prefix — even when invoked as `upgrade` — so it stays greppable.
-// Usage errors print nothing: the root command has already reported them.
-// The caller returns err unwrapped, so exit codes are unchanged.
-func printUpdateErr(stderr *Stream, err error) {
-	if err == nil || asUsageError(err) != nil {
-		return
-	}
-	printErr(stderr, "update: %s", strings.ReplaceAll(err.Error(), "\n", " "))
 }
 
 // flagCheck is the library's dry-run flag whose default -c shorthand collides
