@@ -595,8 +595,11 @@ func buildSupervisorConfig(t *testing.T, opts SupervisorOpts) (*superviseconfig.
 
 	// Child command: the scripted TestChild's argv when supplied, the
 	// reload-child binary when reload-eligible mode is requested, else a
-	// long-lived no-op loop.
-	childCmd := []string{"/bin/sh", "-c", "while true; do sleep 1; done"}
+	// long-lived no-op loop. The loop runs only while its parent, the
+	// test binary, is alive: the child has its own process group and
+	// darwin has no Pdeathsig, so a `while true` child outlives a killed
+	// or timed-out run and keeps holding the checkout.
+	childCmd := []string{"/bin/sh", "-c", "while kill -0 $PPID 2>/dev/null; do sleep 1; done"}
 	envPassthrough := `["PATH"]`
 	var reloadFrag reloadTOMLFragments
 	if opts.Child != nil {

@@ -28,9 +28,21 @@ func shortChildCmd(t *testing.T, exitCode int) []string {
 }
 
 // longChildCmd returns a long-running child (sleeps for the whole test).
+//
+// The loop runs only while its parent, the test binary, is alive. The
+// child gets its own process group, so a signal to the test run never
+// reaches it, and darwin has no Pdeathsig: when a test run is killed or
+// times out, a `while true` child would be orphaned to launchd and keep
+// running, holding its working directory (the checkout) indefinitely.
 func longChildCmd() []string {
-	return []string{"/bin/sh", "-c", "while true; do sleep 0.05; done"}
+	return []string{"/bin/sh", "-c", parentBoundLoop}
 }
+
+// parentBoundLoop loops until the shell's parent process is gone.
+// $PPID is fixed when the shell starts, so after the parent exits and
+// the shell is reparented, `kill -0` fails and the loop ends within one
+// sleep.
+const parentBoundLoop = "while kill -0 $PPID 2>/dev/null; do sleep 0.05; done"
 
 // runWithCancel starts Run in a goroutine and returns the cancel + a
 // channel that delivers the Run-exit error.
